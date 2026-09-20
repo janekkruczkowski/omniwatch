@@ -169,6 +169,11 @@ const TOKENS_PER_FRAME = 170;
 const TOKENS_OUT = 1400;
 /** YouTube's own cap on a short, used as the length when the shorts tab reports none. */
 const SHORT_CEILING = 180;
+/** Mirrors MAX_FRAMES in the engine, which is not exported. Read the same way rather
+ *  than hardcoded, because lowering OMNI_MAX_FRAMES splits a video into more parts,
+ *  each of which is answered and billed — and an estimate that had 2400 baked into it
+ *  would then quote fewer parts than the run actually has. */
+const MAX_FRAMES = Math.max(300, Number(process.env.OMNI_MAX_FRAMES || 2400));
 
 /** Mirrors SHORT_MAX in the engine: below it the sampling rate is 10 fps, above it 2. */
 const FPS_CLIFF = 180;
@@ -185,7 +190,7 @@ export function estimate(seconds: number): number {
   // is priced on the expensive side of it: this tool may only ever overquote.
   const s = Math.abs(seconds - FPS_CLIFF) <= 5 ? Math.min(seconds, FPS_CLIFF) : seconds;
   const frames = Math.max(1, Math.round(s * fpsFor(s)));
-  const parts = Math.max(1, Math.ceil(frames / 2400));
+  const parts = Math.max(1, Math.ceil(frames / MAX_FRAMES));
   return frames * TOKENS_PER_FRAME * PRICE_IN + parts * TOKENS_OUT * PRICE_OUT;
 }
 
@@ -275,8 +280,13 @@ export async function listChannel(acc: Account, order: Order, limit: Limit): Pro
       .filter((v) => v.url.startsWith("http"));
     for (const r of raw) if (r.author) { account = String(r.author); break; }
     for (const r of raw) if (Number(r.fans)) { fans = Number(r.fans); break; }
+    // Said plainly, because both limitations are invisible otherwise: the Apify scan
+    // asks for a fixed 25 per profile, so "all" and "most popular" both only ever see
+    // that window, and the durations it reports are rough enough that some rows come
+    // back with no price at all.
     return finish({ platform: "instagram", handle: acc.handle, account, fans, videos }, order, limit,
-      "Instagram was read through Hermes' Apify plugin — the durations it reports can be rough.");
+      "read through Hermes' Apify plugin, which returns the 25 most recent — so this is not the whole account, "
+      + "and the lengths it reports are rough");
   }
 
   if (!rows.length) {

@@ -44,6 +44,7 @@ const MAX_FRAMES = Math.max(300, Number(process.env.OMNI_MAX_FRAMES || 2400));
 const OSS_TTL = 47 * 3600 * 1000; // oss:// URLs live 48 h; refresh an hour early
 const CACHE_TTL = parseFloat(process.env.OMNI_CACHE_HOURS || "48") * 3600 * 1000;
 const MAX_TOKENS = Number(process.env.OMNI_MAX_TOKENS || 4000);
+const PRESENCE_PENALTY = Number(process.env.OMNI_PRESENCE_PENALTY ?? 0.3);
 const SHORT_MAX = 3 * 60; // shorts/reels/TikToks: fast cuts, so sample at the API maximum
 const FPS_SHORT = 10;
 const FPS_LONG = 2; // the API default for normal videos
@@ -326,8 +327,15 @@ async function attemptOmni(key: string, content: Content[], onToken?: (s: string
       // unrelated words. Without a cap that burns wall-clock and money with nothing to
       // show. A full teardown lands around 2.5k tokens, so 4k leaves real headroom.
       max_tokens: MAX_TOKENS,
-      // Nudges the model away from exactly that loop.
-      presence_penalty: 1.05,
+      // Was 1.05, to push the model out of a repetition loop. That reasoning does not
+      // survive looking at the actual failure: the collapse is not repetition, it is a
+      // thesaurus chain, each word different from the last. presence_penalty punishes
+      // tokens that have already appeared, so against this symptom it is not neutral —
+      // it rewards reaching for rarer and rarer vocabulary, which is the drift itself.
+      // Lowered, and left adjustable so the two can be compared on the same video
+      // rather than argued about. trimRunOn() is the guard that does not depend on
+      // getting this number right.
+      presence_penalty: PRESENCE_PENALTY,
       }),
     });
   } catch (e) {
@@ -519,6 +527,49 @@ export function shiftTimestamps(text: string, offset: number, length: number): s
   });
 }
 
+/** Cut a line that has stopped saying anything.
+ *
+ *  The failure looks like this, verbatim from a real run: a bullet about transitions
+ *  runs out of substance and keeps going — "thusly therefore consequently subsequently
+ *  thereafter followingward onwards upward onward forward ahead aheadward foreward" —
+ *  emitting a thesaurus chain until it hits the token ceiling. The reader's verdict was
+ *  that it says nothing, and they were right: past a point it literally does not.
+ *
+ *  This is a guard, not a cure, and it is deliberately dumb: whatever makes the model
+ *  drift, a clause running this long without punctuation is not prose any more. Cutting
+ *  at the last sentence that ended properly leaves the part that was still saying
+ *  something and drops the rest, with a line admitting it happened — a silent truncation
+ *  would just be a quieter way of printing nonsense.
+ */
+export function trimRunOn(text: string, maxSentenceWords = 120): string {
+  let cut = false;
+  const out = text.split("\n").map((line) => {
+    // Length alone is the wrong test — a healthy paragraph can run long, and an early
+    // version of this guard mangled good text for exactly that reason. The signal that
+    // actually separates the two is punctuation: normal prose comes up for air, and the
+    // collapse does not. Six hundred words without a full stop is the collapse; six
+    // hundred words containing forty sentences is just a long paragraph.
+    //
+    // 120 is chosen from the gap, not from taste: across the saved runs the longest
+    // sentence anyone actually wrote was 69 words, and the collapse was 602. There is
+    // no real prose in between, so the threshold sits in the empty middle with room
+    // on both sides.
+    const sentences = line.split(/(?<=[.!?])\s+/);
+    const bad = sentences.findIndex((s) => s.split(/\s+/).filter(Boolean).length > maxSentenceWords);
+    if (bad === -1) return line;
+    cut = true;
+    const kept = sentences.slice(0, bad).join(" ").trimEnd();
+    // Keep the opening words of the offending sentence: it usually starts as a real
+    // answer ("Hard cuts dominate…") and only drifts later, and throwing the whole
+    // thing away would lose the part that was true.
+    const opening = sentences[bad].split(/\s+/).filter(Boolean).slice(0, 25).join(" ");
+    return `${kept}${kept ? " " : ""}${opening} …`.trimStart();
+  }).join("\n");
+  return cut
+    ? `${out}\n\n_One passage was cut here: the model stopped forming sentences and ran on into unrelated words._`
+    : out;
+}
+
 const videoPart = (url: string, fps: number): Content => ({ type: "video_url", video_url: { url }, fps });
 
 // ── the main job ───────────────────────────────────────────────────────────────
@@ -566,7 +617,9 @@ export async function watch(
     const r = await streamOmni(key, [{ type: "text", text: tpl(MERGE, { ...v, n: ps.length, notes: joined }) }], ev.onToken);
     answer = r.text; tokens.in += r.usage.in; tokens.out += r.usage.out;
   }
-  return { answer, stats: { parts: ps.length, fps, reused, ...tokens } };
+  // Last thing before it is shown, cached or written to the vault: a collapsed passage
+  // must not reach any of the three, because all three are read as if they meant something.
+  return { answer: trimRunOn(answer), stats: { parts: ps.length, fps, reused, ...tokens } };
 }
 
 // ── the Obsidian vault ─────────────────────────────────────────────────────────
