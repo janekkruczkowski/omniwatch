@@ -294,3 +294,48 @@ Degeneration hits — prose: 0, JSON: 0
 Output length — prose: 4959 chars / 1255 tokens, JSON: 12898 chars / 3566 tokens
 
 This retry's cost: $0.0567 (363088 in / 4821 out tokens)
+---
+
+# Wnioski S7 — zmierzone, 2026-09-20
+
+Wszystkie cztery pytania z PLAN.md mają odpowiedź. Liczby pochodzą z dwóch przebiegów
+tego skryptu na plikach z cache; nic tu nie jest oszacowane.
+
+**1. Czy `dashscope-intl` przyjmuje wymuszony JSON razem ze strumieniowaniem i wideo —
+TAK.** `response_format: {"type":"json_object"}` + `stream: true` + `modalities:["text"]`
++ wejście wideo: HTTP 200, odpowiedź sparsowana. To był warunek, który mógł zabić cały
+pomysł, i nie zabił. Koszt sprawdzenia: 0,0037 $.
+
+**2. Czy sam prompt wystarcza — TAK, 10/10.** Dziesięć prób na 47-sekundowym filmie,
+każda odpowiedź sparsowała się za pierwszym razem. Koszt: 0,0440 $ za jedenaście wywołań.
+
+**3. Czy jakość treści spada — nie w tym, co model zauważa, ale w tym, ile to zajmuje.**
+Ta sama karta o tym samym 968-sekundowym filmie: **proza 4959 znaków / 1255 tokenów
+wyjścia, JSON 12 898 znaków / 3566 tokenów**. JSON widzi to samo i mówi to samo, tylko
+płaci za to prawie trzykrotnie więcej tokenów wyjścia.
+
+**4. Czy JSON ogranicza rozpad — NIE.** W dziesięciu odpowiedziach JSON-owych znalazły
+się **4 zlepki** (ponad 120 słów bez znaku końca zdania). Struktura opakowuje rozpad,
+nie zapobiega mu — pole `text` potrafi się rozsypać dokładnie tak samo jak akapit.
+
+## Rozstrzygnięcie: NIE wchodzimy, nie w tej postaci
+
+Haczyk zapisany w planie zmaterializował się przy pierwszym długim filmie. **JSON na
+968-sekundowym filmie się nie sparsował** — 3566 tokenów wyjścia przy suficie 4000,
+odpowiedź urwana w środku, błąd parsera na pozycji 12 628. Proza na tym samym filmie
+zmieściła się z zapasem w 1255 tokenach.
+
+To jest ta asymetria, którą przewidzieliśmy, tylko zmierzona: urwana proza to dokument
+czytelny do miejsca urwania, urwany JSON to zero. A JSON zużywa 2,8× więcej wyjścia,
+czyli **trafia w sufit właśnie na tych filmach, gdzie najbardziej go potrzebujemy** —
+długich, z wieloma scenami.
+
+Warunki wejścia, gdyby ktoś chciał do tego wrócić — wszystkie trzy, nie jeden z trzech:
+
+1. Podniesiony sufit wyjścia dla tej ścieżki i zmierzone, czy model go honoruje.
+2. Naprawa niedomkniętego JSON-a (domykanie nawiasów) albo przebieg zapasowy na prozę.
+3. Ograniczenie schematu — dzisiejsze pola `text` po 300 znaków są tym, co generuje
+   tę trzykrotność.
+
+Do tego czasu zostaje to, co już mamy: karta z zamkniętymi wartościami parsowana
+z markdownu. Kosztuje nas jeden parser, ale psuje się łagodnie.

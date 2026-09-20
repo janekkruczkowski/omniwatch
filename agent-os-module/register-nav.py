@@ -255,9 +255,229 @@ def patch_assemble_route():
     return "seconds override + slice(0, 60) cap applied"
 
 
+BROLL_HEADER_OLD = (
+    '// Body:\n'
+    '//   { title, brand?, mode: "avatar"|"voiceover",\n'
+    '//     narrationUrl,            // avatar mp4 (avatar mode) OR voiceover audio (voiceover mode)\n'
+    '//     avatarUrl?,              // avatar mp4 for the picture-in-picture bug (avatar mode)\n'
+    '//     scenes: [{ caption, narration_line, brollUrl? }] }\n'
+    '//\n'
+    '// Layout: intro card → b-roll sequence (looped to narration length) full-bleed,\n'
+    '// captions lower-third synced to narration, avatar PiP bottom-right, continuous\n'
+    '// narration audio, outro card. Everything saved to the project\'s assets/.')
+BROLL_HEADER_NEW = (
+    '// Body:\n'
+    '//   { title, brand?, mode: "avatar"|"voiceover",\n'
+    '//     narrationUrl,            // avatar mp4 (avatar mode) OR voiceover audio (voiceover mode)\n'
+    '//     avatarUrl?,              // avatar mp4 for the picture-in-picture bug (avatar mode)\n'
+    '//     scenes: [{ caption, narration_line, brollUrl?, seconds? }] }\n'
+    '//\n'
+    '// Layout: intro card → b-roll full-bleed, captions lower-third synced to narration,\n'
+    '// avatar PiP bottom-right, continuous narration audio, outro card. Everything saved\n'
+    '// to the project\'s assets/.\n'
+    '//\n'
+    '// B-roll placement has two modes. Normally the downloaded clips are looped back to\n'
+    '// back across the whole narration, independent of scene boundaries — there\'s no\n'
+    '// per-scene timing to follow. But when every scene carries `seconds` AND at least\n'
+    '// one carries `brollUrl`, the cut has to follow the copied rhythm too, not just the\n'
+    '// captions: scene i\'s own clip fills exactly scene i\'s normalised window (see\n'
+    '// per-scene branch in buildHtml).')
+
+# Anchors below assume the S4 seconds patch (SCENE_*) already changed the doc
+# comment's scenes line and the SceneIn interface — but this patch is guarded
+# by its own sentinel (PLACEMENT_CEILING) and applies independently of whether
+# that one has already run, so an install patched with an older register-nav.py
+# (S4 only, no per-scene broll) still picks this up on the next run.
+BROLL_INTERFACES_OLD = (
+    'interface BrollClip { src: string; dur: number }\n'
+    'interface SceneTimed { caption: string; start: number; dur: number }\n'
+    '\n'
+    'function buildHtml(opts: {\n'
+    '  title: string; brand: string; total: number; narrDur: number;\n'
+    '  hasAudio: boolean; audioSrc: string; pipSrc: string | null;\n'
+    '  broll: BrollClip[]; scenes: SceneTimed[];\n'
+    '}): string {\n'
+    '  const { title, brand, total, narrDur, hasAudio, audioSrc, pipSrc, broll, scenes } = opts;\n'
+    '\n'
+    '  // ---- b-roll placements: loop the available clips back-to-back across the body ----\n'
+    '  const bodyStart = INTRO, bodyEnd = INTRO + narrDur;\n'
+    '  const placements: { src: string; start: number; dur: number; i: number }[] = [];\n'
+    '  if (broll.length) {\n'
+    '    let t = bodyStart, k = 0;\n'
+    '    while (t < bodyEnd - 0.05) {\n'
+    '      const clip = broll[k % broll.length];\n'
+    '      const dur = Math.min(clip.dur, bodyEnd - t);\n'
+    '      placements.push({ src: clip.src, start: r2(t), dur: r2(dur), i: placements.length });\n'
+    '      t += dur; k++;\n'
+    '      if (placements.length > 200) break; // safety\n'
+    '    }\n'
+    '  }')
+BROLL_INTERFACES_NEW = (
+    'interface BrollClip { src: string; dur: number }\n'
+    '// brollSrc/brollDur are only populated for the per-scene placement mode below —\n'
+    '// the plain "loop across the body" mode ignores them entirely.\n'
+    'interface SceneTimed { caption: string; start: number; dur: number; brollSrc?: string; brollDur?: number }\n'
+    '\n'
+    '// Safety ceiling for the per-scene tiling loop. Worst case is bounded by\n'
+    '// narrDur (clamped to 900s max) divided by the shortest possible clip (1.5s,\n'
+    '// the floor applied when probing durations below) plus one short remainder\n'
+    '// tile per scene (60 max) — about 900/1.5 + 60 = 660. 1000 leaves headroom\n'
+    '// over that measured worst case without being effectively unlimited.\n'
+    'const PLACEMENT_CEILING = 1000;\n'
+    '\n'
+    'function buildHtml(opts: {\n'
+    '  title: string; brand: string; total: number; narrDur: number;\n'
+    '  hasAudio: boolean; audioSrc: string; pipSrc: string | null;\n'
+    '  broll: BrollClip[]; scenes: SceneTimed[]; perSceneBroll: boolean;\n'
+    '}): string {\n'
+    '  const { title, brand, total, narrDur, hasAudio, audioSrc, pipSrc, broll, scenes, perSceneBroll } = opts;\n'
+    '\n'
+    '  const bodyStart = INTRO, bodyEnd = INTRO + narrDur;\n'
+    '  const placements: { src: string; start: number; dur: number; i: number }[] = [];\n'
+    '  if (perSceneBroll) {\n'
+    '    // ---- b-roll placements: scene i\'s own clip fills scene i\'s normalised window ----\n'
+    '    // Tiled (looped) back-to-back within the scene when the clip is shorter than the\n'
+    '    // slot, trimmed to the slot when longer. This is the whole point of accepting\n'
+    '    // `seconds`: the picture now cuts on the same rhythm as the captions, not on its\n'
+    '    // own independent schedule.\n'
+    '    for (const s of scenes) {\n'
+    '      if (!s.brollSrc) continue; // no clip and no earlier one to fall back to — aura shows through\n'
+    '      const clipDur = s.brollDur || DEFAULT_BROLL;\n'
+    '      const segEnd = s.start + s.dur;\n'
+    '      let t = s.start;\n'
+    '      while (t < segEnd - 0.05) {\n'
+    '        const dur = Math.min(clipDur, segEnd - t);\n'
+    '        placements.push({ src: s.brollSrc, start: r2(t), dur: r2(dur), i: placements.length });\n'
+    '        t += dur;\n'
+    '        if (placements.length > PLACEMENT_CEILING) break; // safety\n'
+    '      }\n'
+    '      if (placements.length > PLACEMENT_CEILING) break; // safety\n'
+    '    }\n'
+    '  } else if (broll.length) {\n'
+    '    // ---- b-roll placements: loop the available clips back-to-back across the body ----\n'
+    '    let t = bodyStart, k = 0;\n'
+    '    while (t < bodyEnd - 0.05) {\n'
+    '      const clip = broll[k % broll.length];\n'
+    '      const dur = Math.min(clip.dur, bodyEnd - t);\n'
+    '      placements.push({ src: clip.src, start: r2(t), dur: r2(dur), i: placements.length });\n'
+    '      t += dur; k++;\n'
+    '      if (placements.length > 200) break; // safety\n'
+    '    }\n'
+    '  }')
+
+BROLL_DOWNLOAD_OLD = (
+    '  // ---- pull b-roll clips down + probe durations ----\n'
+    '  const broll: BrollClip[] = [];\n'
+    '  for (let i = 0; i < scenesIn.length; i++) {\n'
+    '    const url = scenesIn[i].brollUrl;\n'
+    '    if (!url) continue;\n'
+    '    const file = path.join(assets, `broll-${i}.mp4`);\n'
+    '    if (await downloadTo(url, file, origin)) {\n'
+    '      const d = (await probeDuration(file)) ?? DEFAULT_BROLL;\n'
+    '      broll.push({ src: `assets/broll-${i}.mp4`, dur: r2(Math.max(1.5, Math.min(20, d))) });\n'
+    '    }\n'
+    '  }')
+BROLL_DOWNLOAD_NEW = (
+    '  // ---- pull b-roll clips down + probe durations ----\n'
+    '  // brollByIndex mirrors scenesIn 1:1 (null where a scene has no clip or the\n'
+    '  // download failed) so the per-scene placement mode below can find scene i\'s\n'
+    '  // own clip; `broll` stays the flat compacted list the legacy loop-mode uses.\n'
+    '  const broll: BrollClip[] = [];\n'
+    '  const brollByIndex: (BrollClip | null)[] = new Array(scenesIn.length).fill(null);\n'
+    '  for (let i = 0; i < scenesIn.length; i++) {\n'
+    '    const url = scenesIn[i].brollUrl;\n'
+    '    if (!url) continue;\n'
+    '    const file = path.join(assets, `broll-${i}.mp4`);\n'
+    '    if (await downloadTo(url, file, origin)) {\n'
+    '      const d = (await probeDuration(file)) ?? DEFAULT_BROLL;\n'
+    '      const clip = { src: `assets/broll-${i}.mp4`, dur: r2(Math.max(1.5, Math.min(20, d))) };\n'
+    '      broll.push(clip);\n'
+    '      brollByIndex[i] = clip;\n'
+    '    }\n'
+    '  }')
+
+BROLL_SCENES_OLD = (
+    '  const wsum = weights.reduce((a, b) => a + b, 0) || scenesIn.length;\n'
+    '  let acc = INTRO;\n'
+    '  const scenesTimed: SceneTimed[] = scenesIn.map((s, i) => {\n'
+    '    const dur = (weights[i] / wsum) * narrDur!;\n'
+    '    const seg = { caption: s.caption ?? "", start: r2(acc), dur: r2(dur) };\n'
+    '    acc += dur;\n'
+    '    return seg;\n'
+    '  });\n'
+    '\n'
+    '  const total = r2(INTRO + narrDur + OUTRO);\n'
+    '  const html = buildHtml({ title, brand, total, narrDur, hasAudio, audioSrc, pipSrc, broll, scenes: scenesTimed });')
+BROLL_SCENES_NEW = (
+    '  const wsum = weights.reduce((a, b) => a + b, 0) || scenesIn.length;\n'
+    '  let acc = INTRO;\n'
+    '  const scenesTimed: SceneTimed[] = scenesIn.map((s, i) => {\n'
+    '    const dur = (weights[i] / wsum) * narrDur!;\n'
+    '    const seg = { caption: s.caption ?? "", start: r2(acc), dur: r2(dur) };\n'
+    '    acc += dur;\n'
+    '    return seg;\n'
+    '  });\n'
+    '\n'
+    '  // Per-scene b-roll only kicks in when the caller committed to a full rhythm\n'
+    '  // (every scene has `seconds`, so scenesTimed\'s windows are the copied cuts, not a\n'
+    '  // word-count guess) and there is at least one clip to place. A scene missing its\n'
+    '  // own clip falls back to the nearest earlier one rather than leaving a hole.\n'
+    '  const allHaveSeconds = scenesIn.length > 0 && scenesIn.every(\n'
+    '    (s) => typeof s.seconds === "number" && Number.isFinite(s.seconds) && s.seconds > 0\n'
+    '  );\n'
+    '  const perSceneBroll = allHaveSeconds && broll.length > 0;\n'
+    '  if (perSceneBroll) {\n'
+    '    let lastClip: BrollClip | null = null;\n'
+    '    for (let i = 0; i < scenesTimed.length; i++) {\n'
+    '      const own = brollByIndex[i];\n'
+    '      if (own) lastClip = own;\n'
+    '      const clip = own ?? lastClip;\n'
+    '      if (clip) { scenesTimed[i].brollSrc = clip.src; scenesTimed[i].brollDur = clip.dur; }\n'
+    '    }\n'
+    '  }\n'
+    '\n'
+    '  const total = r2(INTRO + narrDur + OUTRO);\n'
+    '  const html = buildHtml({ title, brand, total, narrDur, hasAudio, audioSrc, pipSrc, broll, scenes: scenesTimed, perSceneBroll });')
+
+
+def patch_assemble_route_broll():
+    """Make b-roll follow the same copied rhythm as the captions.
+
+    The S4 seconds patch (patch_assemble_route above) drives caption timing from
+    `seconds` when every scene has one, but left the b-roll loop untouched — it
+    still tiled clips back to back across the whole body, independent of scene
+    boundaries. That means the picture kept cutting on its own schedule while the
+    captions followed the copied one, and the cut point is the one thing this
+    feature exists to transfer. This patch makes scene i's own clip fill exactly
+    scene i's normalised window (tiled if short, trimmed if long, falling back to
+    the nearest earlier clip when a scene has none) whenever every scene carries
+    `seconds` and at least one carries `brollUrl`. Independent sentinel from the
+    seconds patch, so it applies whether or not that one already ran.
+    """
+    route = f"{src}/src/app/api/video/auto/assemble/route.ts"
+    try:
+        s = read(route)
+    except OSError:
+        return None
+    if "PLACEMENT_CEILING" in s:
+        return "already patched"
+
+    if BROLL_HEADER_OLD not in s or BROLL_INTERFACES_OLD not in s \
+            or BROLL_DOWNLOAD_OLD not in s or BROLL_SCENES_OLD not in s:
+        return None
+
+    s = s.replace(BROLL_HEADER_OLD, BROLL_HEADER_NEW, 1)
+    s = s.replace(BROLL_INTERFACES_OLD, BROLL_INTERFACES_NEW, 1)
+    s = s.replace(BROLL_DOWNLOAD_OLD, BROLL_DOWNLOAD_NEW, 1)
+    s = s.replace(BROLL_SCENES_OLD, BROLL_SCENES_NEW, 1)
+    write(route, s)
+    return "per-scene b-roll placement applied"
+
+
 mounted = patch_hermes()
 print(f"  · Hermes:  {mounted or 'could not mount — Scout stays a top-level tab'}")
 print(f"  · Sidebar: {patch_sidebar(scout_top_level=mounted is None)}")
 print(f"  · TopBar:  {patch_topbar(scout_top_level=mounted is None)}")
 print(f"  · Astros:  {patch_astros() or 'skipped — AstrosView does not look the way we expect'}")
 print(f"  · Assemble: {patch_assemble_route() or 'skipped — assemble/route.ts does not look the way we expect'}")
+print(f"  · Assemble broll: {patch_assemble_route_broll() or 'skipped — assemble/route.ts does not look the way we expect'}")
