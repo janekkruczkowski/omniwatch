@@ -38,11 +38,20 @@ interface ScanSummary {
   cost: number; topic?: string;
 }
 
+// Ordered by what it costs to LOOK, not alphabetically. The first two read the account
+// locally through yt-dlp and cost nothing; the last three go through Apify, which bills
+// for the listing itself. Someone scanning down this row should meet the free ones
+// first, and the note under the box says which side of the line they landed on.
 const PLATFORMS = [
-  { id: "youtube", label: "YouTube" },
-  { id: "tiktok", label: "TikTok" },
-  { id: "instagram", label: "Instagram" },
+  { id: "youtube", label: "YouTube", free: true },
+  { id: "tiktok", label: "TikTok", free: true },
+  { id: "instagram", label: "Instagram", free: false },
+  { id: "x", label: "X", free: false },
+  { id: "ads", label: "Meta ads", free: false },
 ] as const;
+
+/** Reading the account is free only where yt-dlp can do it locally. */
+const FREE_TO_LIST = (p: string) => p === "youtube" || p === "tiktok";
 
 type Limit = number | "all";
 const COUNTS: Limit[] = [5, 10, 20, 30, "all"];
@@ -226,7 +235,9 @@ export default function ChannelScan({ lang }: { lang: string }) {
             placeholder={
               platform === "youtube" ? "youtube.com/@handle — or just the handle"
                 : platform === "tiktok" ? "tiktok.com/@handle — or just the handle"
-                  : "instagram.com/handle — or just the handle"
+                  : platform === "x" ? "x.com/handle — or just the handle"
+                    : platform === "ads" ? "a brand name to search for, or a Facebook Page ID"
+                      : "instagram.com/handle — or just the handle"
             }
             className="flex-1 bg-transparent outline-none text-sm min-w-0"
             style={{ color: "var(--cream)" }}
@@ -274,9 +285,13 @@ export default function ChannelScan({ lang }: { lang: string }) {
         <p className="text-xs mt-3" style={{ color: "var(--cream-mute)" }}>
           {platform === "instagram"
             ? "Instagram cannot be read locally, so this listing goes through Hermes' Apify plugin — that call itself costs, before you pick anything. YouTube and TikTok are free to list."
-            : "Listing an account is free — nothing is watched until you say so on the next screen."}
+            : platform === "x"
+              ? "X will not let anyone enumerate a timeline anonymously, so this listing goes through Apify and is billed before you pick anything. YouTube and TikTok are free to list."
+              : platform === "ads"
+                ? "Meta's ad library is searched through Apify — roughly $0.30 per 1,000 results, charged for the listing itself. This is the only source here where looking costs money."
+                : "Listing an account is free — nothing is watched until you say so on the next screen."}
         </p>
-        {limit === "all" && platform !== "instagram" && (
+        {limit === "all" && FREE_TO_LIST(platform) && (
           <p className="text-xs mt-2" style={{ color: "var(--gold-soft)" }}>
             ALL reads the entire account, however many that is — the listing itself is still free and can
             take a few minutes on a big channel. The total on the next screen is the number to look at:

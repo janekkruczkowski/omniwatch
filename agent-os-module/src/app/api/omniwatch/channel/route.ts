@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { startJob, getJob } from "@/lib/omniwatchJobs";
 import { apiKey, fetchVideo, watch, save, logToVault, fmt, lang, PRICE_IN, PRICE_OUT } from "@/lib/omniwatch";
+import { listAds, ADS_LISTING_NOTICE } from "@/lib/omniwatchAds";
 import {
   listChannel, listScans, parseAccount, readScan, saveScan,
   type ChannelListing, type Limit, type Order,
@@ -81,18 +82,41 @@ export async function GET(req: Request) {
   }
 
   const raw = String(q.get("url") || "").trim();
-  const hint = (["youtube", "tiktok", "instagram"] as const)
+  const hint = (["youtube", "tiktok", "instagram", "x"] as const)
     .find((p) => p === q.get("platform")) as Platform | undefined;
   const order: Order = q.get("order") === "newest" ? "newest" : "popular";
   const limit: Limit = q.get("limit") === "all"
     ? "all"
     : Math.min(200, Math.max(1, Number(q.get("limit")) || 10));
 
+  // Meta's ad library is not an account, so it does not go through parseAccount: you
+  // search it by brand or by Page ID. It is also the one source here where LISTING is
+  // billed, so the estimate travels back with the results and the screen says so before
+  // anything is spent. Everywhere else, looking is free and only watching costs.
+  if (q.get("platform") === "ads") {
+    const limitN = limit === "all" ? 200 : limit;
+    try {
+      const ads = await listAds({
+        query: /^\d{6,}$/.test(raw) ? undefined : raw,
+        pageId: /^\d{6,}$/.test(raw) ? raw : undefined,
+        limit: limitN,
+        country: q.get("country") || undefined,
+      });
+      return NextResponse.json({
+        platform: "ads", handle: ads.pageId || ads.query, account: ads.pageId || ads.query,
+        fans: 0, scanned: ads.scanned, videos: ads.videos,
+        note: `${ads.note} ${ADS_LISTING_NOTICE}`, listCost: ads.listCost,
+      });
+    } catch (e) {
+      return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 502 });
+    }
+  }
+
   const acc = parseAccount(raw, hint);
   if (!acc) {
     return NextResponse.json({
       error: "That does not look like an account. Paste the channel page — "
-        + "youtube.com/@name, tiktok.com/@name or instagram.com/name.",
+        + "youtube.com/@name, tiktok.com/@name, instagram.com/name or x.com/name.",
     }, { status: 400 });
   }
 

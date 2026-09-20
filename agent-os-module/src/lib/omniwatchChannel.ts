@@ -20,6 +20,7 @@ import path from "node:path";
 
 import { run, fpsFor, OMNI_ROOT, PRICE_IN, PRICE_OUT } from "@/lib/omniwatch";
 import { scrape, type Platform } from "@/lib/omniwatchScout";
+import { listX, X_LISTING_COST_NOTE } from "@/lib/omniwatchX";
 
 export type Order = "popular" | "newest";
 
@@ -143,6 +144,13 @@ export function parseAccount(input: string, hint?: Platform): Account | null {
     if (isHost(host, "instagram.com") && first && !["p", "reel", "reels", "tv"].includes(first)) {
       return { platform: "instagram", handle: first };
     }
+    // Both spellings still resolve and people paste both, so both are read. The
+    // reserved words are the site's own pages, which are not accounts however much
+    // they look like one in a URL.
+    if ((isHost(host, "x.com") || isHost(host, "twitter.com")) && first
+        && !["i", "home", "search", "explore", "notifications", "messages", "settings"].includes(first)) {
+      return { platform: "x", handle: first };
+    }
     return null;
   }
 
@@ -263,6 +271,15 @@ export async function listChannel(acc: Account, order: Order, limit: Limit): Pro
     const r = await flat(`https://www.tiktok.com/@${acc.handle}`, depth);
     if (r.account) account = r.account;
     rows = r.rows;
+  } else if (acc.platform === "x") {
+    // X posts video behind a player yt-dlp can read, but the timeline itself needs an
+    // account to enumerate, so listing goes through Apify like Instagram's. Unlike
+    // YouTube and TikTok, this listing costs money before a single video is watched —
+    // X_LISTING_COST_NOTE is what the screen says about that, and saying it is not
+    // optional: the whole promise of this tab is that you see the price first.
+    const videos = await listX(acc.handle, limit, order)
+      .catch((e: Error) => { throw new Error(`${e.message}`); });
+    return finish({ platform: "x", handle: acc.handle, account, fans, videos }, order, limit, X_LISTING_COST_NOTE);
   } else {
     // yt-dlp marks its Instagram profile extractor broken, and it is: it cannot read a
     // profile without cookies. Rather than ship something that fails for half the
