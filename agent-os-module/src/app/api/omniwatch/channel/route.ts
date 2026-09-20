@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
 import { startJob, getJob } from "@/lib/omniwatchJobs";
-import { apiKey, fetchVideo, watch, save, logToVault, fmt, PRICE_IN, PRICE_OUT } from "@/lib/omniwatch";
+import { apiKey, fetchVideo, watch, save, logToVault, fmt, lang, PRICE_IN, PRICE_OUT } from "@/lib/omniwatch";
 import {
   listChannel, listScans, parseAccount, readScan, saveScan,
   type ChannelListing, type Limit, type Order,
 } from "@/lib/omniwatchChannel";
 import type { Platform } from "@/lib/omniwatchScout";
 import { resolvePreset } from "@/lib/omniwatchPresets";
+import { parseSkeleton, type Skeleton } from "@/lib/omniwatchSkeleton";
 import I18N from "@/lib/omniwatchI18n";
 
 export const runtime = "nodejs";
@@ -40,6 +41,8 @@ export interface ChannelResult {
   text: string;
   cost?: number;
   error?: string;
+  /** the video's rhythm as data — present whenever the answer carried a beat list */
+  skeleton?: Skeleton;
 }
 export interface ChannelDone extends ChannelProgress {
   vault?: string | null;
@@ -159,6 +162,8 @@ export async function POST(req: Request) {
         p.cost = Number((p.cost + cost).toFixed(4));
         p.results.push({
           url, title: info.title, duration: info.duration, text: answer, cost,
+          // Parsed from the answer we already paid for, so it can never disagree with it.
+          skeleton: parseSkeleton(answer, info.duration || 0, lang(l).sections.beats) || undefined,
         });
       } catch (e) {
         // A channel scan is a batch, and a batch that throws away fourteen good
