@@ -52,6 +52,36 @@
   font-size: 9px; line-height: 15px; text-align: center; font-weight: 800;
 }
 
+/* Channel scan — one row per video you are about to pay for, so the list reads as a
+   bill: what it is, how long, how well it did, what it costs. */
+.ow-rows { display: flex; flex-direction: column; }
+.ow-row {
+  display: grid; grid-template-columns: 18px 1fr 56px 54px 62px;
+  gap: 10px; align-items: center; cursor: pointer;
+  padding: .5rem .25rem; border-bottom: 1px solid var(--line-deep);
+  color: var(--cream-dim); font-size: .88rem;
+}
+.ow-row:last-child { border-bottom: 0; }
+.ow-row:hover { background: var(--bg-elev); }
+.ow-row.on { color: var(--cream-soft); }
+.ow-row input { accent-color: var(--gold); cursor: pointer; }
+.ow-row-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ow-row.on .ow-row-title { color: var(--cream); }
+.ow-row .metric { font-size: .72rem; text-align: right; color: var(--cream-mute); }
+.ow-row-cost { color: var(--gold-soft) !important; }
+
+/* A past scan is a button, not a checkbox row, so it needs the button reset. */
+.ow-row-past {
+  width: 100%; text-align: left; background: none; border: 0;
+  border-bottom: 1px solid var(--line-deep); font: inherit;
+}
+.ow-row-past:hover .ow-row-title { color: var(--gold-soft); }
+
+@media (max-width: 640px) {
+  .ow-row { grid-template-columns: 18px 1fr 62px; }
+  .ow-row-dur, .ow-row-views { display: none; }
+}
+
 /* The answer itself */
 .ow-md { font-size: 0.97rem; line-height: 1.7; color: var(--cream-soft); }
 .ow-md h2 {

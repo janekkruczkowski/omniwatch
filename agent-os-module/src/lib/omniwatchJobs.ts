@@ -26,9 +26,22 @@ export interface Job<P = unknown, R = unknown> {
 const JOBS = new Map<string, Job>();
 const TTL_MS = 60 * 60_000; // an hour after finishing, then it is swept
 
+// A job that is still running is never swept on its age. Sweeping it on startedAt is
+// what the obvious version does, and it is wrong in the one case that matters: a scan
+// that takes longer than the TTL would have its own poll delete it, answer 404, and
+// tell the tab the dashboard restarted — while the worker carries on downloading,
+// uploading and spending, now with nothing watching it. Running jobs are held until
+// they finish, with a far outer bound so a wedged one cannot leak forever.
+const RUNNING_MAX_MS = 24 * 3600_000;
+
 function sweep() {
-  const cutoff = Date.now() - TTL_MS;
-  for (const [id, j] of JOBS) if ((j.finishedAt ?? j.startedAt) < cutoff) JOBS.delete(id);
+  const now = Date.now();
+  for (const [id, j] of JOBS) {
+    const stale = j.finishedAt
+      ? j.finishedAt < now - TTL_MS
+      : j.startedAt < now - RUNNING_MAX_MS;
+    if (stale) JOBS.delete(id);
+  }
 }
 
 export function getJob<P, R>(id: string): Job<P, R> | null {

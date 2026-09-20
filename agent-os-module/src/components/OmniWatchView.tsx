@@ -1,16 +1,24 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Eye, Wrench, Link2, Loader2, Play, KeyRound, TerminalSquare, ArrowRight } from "lucide-react";
+import { Eye, Wrench, Link2, Loader2, Play, KeyRound, TerminalSquare, ArrowRight, Users } from "lucide-react";
 import OmniMarkdown, { TS_RE, toSec } from "./OmniMarkdown";
+import ChannelScan from "./ChannelScan";
 import "./OmniWatch.css";
 
 // OmniWatch — paste a link, Qwen Omni watches the video (picture AND sound) and
 // answers with timestamps plus the real frames as evidence.
 //
 // Ask mode answers a question about the video. Teardown mode explains how the video
-// is MADE — hook, beat by beat, editing, on-screen text, CTA — and writes a script
-// for your own topic. Teardown is the one you point at a competitor.
+// is MADE — hook, beat by beat, editing, on-screen text, CTA. Teardown is the one you
+// point at a competitor.
+//
+// Channel mode is the same teardown aimed at a whole account instead of one link: it
+// lists what the account published, prices it, and watches the ones you pick. It lives
+// here rather than in a tab of its own because it is the same question — how is this
+// made — asked of more than one video, and because a scan you trigger yourself belongs
+// where you are already standing. Scans that run on a schedule belong to Hermes, which
+// is where the scheduler is.
 
 interface Status {
   ready: boolean; key: boolean; ytDlp: boolean; ffmpeg: boolean;
@@ -24,6 +32,9 @@ interface Progress {
 }
 interface Stats { seconds: number; tokens: number; parts: number; reused: boolean; cost: number }
 interface Card { id: number; q: string; mode: "ask" | "teardown"; text: string; stats?: Stats; error?: string }
+/** What the tab is doing. The first two are jobs the engine understands; "channel" is
+ *  this tab pointed at an account, and never reaches the single-video job. */
+type UiMode = "ask" | "teardown" | "channel";
 
 type Locale = { name: string; sections: Record<string, string>; ui: Record<string, string | string[]> };
 
@@ -39,7 +50,7 @@ export default function OmniWatchView() {
   const [status, setStatus] = useState<Status | null>(null);
   const [i18n, setI18n] = useState<Record<string, Locale> | null>(null);
   const [lang, setLang] = useState("en");
-  const [mode, setMode] = useState<"ask" | "teardown">("teardown");
+  const [mode, setMode] = useState<UiMode>("teardown");
   const [url, setUrl] = useState("");
   const [question, setQuestion] = useState("");
   const [followUp, setFollowUp] = useState("");
@@ -90,10 +101,13 @@ export default function OmniWatchView() {
 
   // Start the job, then poll it. Nothing holds an HTTP request open for the minutes
   // this takes, so reloading the tab mid-run does not kill the work.
-  const ask = useCallback(async (q: string, target?: string) => {
+  const ask = useCallback(async (q: string, target?: string, force?: "ask" | "teardown") => {
     const link = (target ?? url).trim();
     if (!link || pollRef.current) return;
-    const runMode: "ask" | "teardown" = cards.length > 0 ? "ask" : mode; // follow-ups are always questions
+    // Follow-ups are always questions. `force` exists for callers that cannot wait for
+    // setMode to land — the deep link from Astros arrives and runs in the same tick.
+    const runMode: "ask" | "teardown" =
+      force ?? (cards.length > 0 ? "ask" : mode === "teardown" ? "teardown" : "ask");
     const id = ++cardId.current;
     setCards((c) => [{ id, q: q.trim(), mode: runMode, text: "" }, ...c]);
     setRunning(true); setStep("download"); setParts(0); setPartsDone(0); setReused(false); setHits([]); setFollowUp("");
@@ -164,8 +178,11 @@ export default function OmniWatchView() {
     if (!/^https?:\/\//i.test(link)) return;
     handedOver.current = true;
     setUrl(link);
+    setMode("teardown");
     window.history.replaceState(null, "", window.location.pathname);
-    ask("", link);
+    // Forced, because setMode above has not landed yet and the chip means "take this
+    // one apart" — not whatever mode the tab happened to be left in.
+    ask("", link, "teardown");
   }, [status, ask]);
 
   // ── onboarding ───────────────────────────────────────────────────────────────
@@ -175,24 +192,46 @@ export default function OmniWatchView() {
   const ui = T?.ui as Record<string, string> | undefined;
   const examples = (T?.ui.examples as string[]) || [];
 
+  const modes = (
+    <div className="flex flex-wrap items-center gap-2">
+      <button
+        onClick={() => setMode("teardown")}
+        className={`pill ${mode === "teardown" ? "pill-warn" : ""} flex items-center gap-1.5`}
+      >
+        <Wrench size={12} /> {ui?.modeTeardown || "Teardown"}
+      </button>
+      <button
+        onClick={() => setMode("ask")}
+        className={`pill ${mode === "ask" ? "pill-warn" : ""} flex items-center gap-1.5`}
+      >
+        <Eye size={12} /> {ui?.modeAsk || "Ask"}
+      </button>
+      <button
+        onClick={() => setMode("channel")}
+        className={`pill ${mode === "channel" ? "pill-warn" : ""} flex items-center gap-1.5`}
+        title="Point it at a whole account instead of one video"
+      >
+        <Users size={12} /> {ui?.modeChannel || "Whole channel"}
+      </button>
+    </div>
+  );
+
+  // Same tab, aimed at an account rather than a link. The mode row stays put so it is
+  // one switch away from the single-video box, not a different place to go.
+  if (mode === "channel") {
+    return (
+      <div className="space-y-5">
+        <div className="panel p-4 md:p-5">{modes}</div>
+        <ChannelScan lang={lang} />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       {/* the ask box */}
       <div className="panel p-4 md:p-5">
-        <div className="flex flex-wrap items-center gap-2 mb-3">
-          <button
-            onClick={() => setMode("teardown")}
-            className={`pill ${mode === "teardown" ? "pill-warn" : ""} flex items-center gap-1.5`}
-          >
-            <Wrench size={12} /> {ui?.modeTeardown || "Teardown"}
-          </button>
-          <button
-            onClick={() => setMode("ask")}
-            className={`pill ${mode === "ask" ? "pill-warn" : ""} flex items-center gap-1.5`}
-          >
-            <Eye size={12} /> {ui?.modeAsk || "Ask"}
-          </button>
-        </div>
+        <div className="mb-3">{modes}</div>
 
         <div className="flex items-center gap-2 pb-3 mb-3" style={{ borderBottom: "1px solid var(--line-soft)" }}>
           <Link2 size={15} style={{ color: "var(--cream-mute)", flex: "none" }} />
@@ -418,8 +457,15 @@ function Onboarding({ status }: { status: Status }) {
           <div className="flex gap-3 items-baseline text-sm">
             <span className="pill pill-warn flex-none" style={{ minWidth: 84, justifyContent: "center" }}>Teardown</span>
             <span style={{ color: "var(--cream-soft)" }}>
-              How a video is <i>made</i> — hook, beat by beat, editing, on-screen text, sound, CTA — plus a
-              shot-by-shot script for your own topic.
+              How a video is <i>made</i> — hook, beat by beat, editing, on-screen text, sound, CTA — and
+              what transfers to the thing you are about to film.
+            </span>
+          </div>
+          <div className="flex gap-3 items-baseline text-sm">
+            <span className="pill pill-warn flex-none" style={{ minWidth: 84, justifyContent: "center" }}>Channel</span>
+            <span style={{ color: "var(--cream-soft)" }}>
+              The same teardown aimed at a whole account. It lists what they published and prices it first,
+              so you see the bill before anything is watched.
             </span>
           </div>
         </div>
