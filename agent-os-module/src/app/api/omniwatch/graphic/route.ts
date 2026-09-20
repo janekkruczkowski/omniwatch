@@ -17,48 +17,18 @@ import { Readable } from "node:stream";
 import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 import path from "node:path";
 
-import { renderGraphic, GRAPHICS_ROOT, type GraphicSpec } from "@/lib/omniwatchGraphic";
+import { renderGraphic, parseByteRange, validateGraphicSpec, GRAPHICS_ROOT, type GraphicSpec } from "@/lib/omniwatchGraphic";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const KINDS = new Set(["ranking", "stat", "compare", "quote"]);
-
-function badSpec(body: unknown): string | null {
-  if (!body || typeof body !== "object") return "Body must be a GraphicSpec object.";
-  const b = body as Record<string, unknown>;
-  if (!KINDS.has(String(b.kind))) return `kind must be one of ${[...KINDS].join(", ")}.`;
-  if (!Number.isFinite(b.seconds) || Number(b.seconds) <= 0) return "seconds must be a positive number.";
-  if (b.kind === "ranking") {
-    if (typeof b.title !== "string" || !b.title.trim()) return "ranking needs a title.";
-    if (!Array.isArray(b.items) || !b.items.length) return "ranking needs at least one item.";
-    if (b.items.some((i) => typeof i !== "object" || typeof (i as { label?: unknown }).label !== "string")) {
-      return "every ranking item needs a string label.";
-    }
-  }
-  if (b.kind === "stat") {
-    if (typeof b.title !== "string" || !b.title.trim()) return "stat needs a title.";
-    if (typeof b.value !== "string" || !b.value.trim()) return "stat needs a value.";
-  }
-  if (b.kind === "compare") {
-    if (typeof b.title !== "string" || !b.title.trim()) return "compare needs a title.";
-    for (const side of ["left", "right"] as const) {
-      const s = b[side] as { label?: unknown; items?: unknown } | undefined;
-      if (!s || typeof s.label !== "string" || !s.label.trim()) return `compare.${side} needs a label.`;
-      if (!Array.isArray(s.items) || !s.items.every((x) => typeof x === "string")) {
-        return `compare.${side}.items must be a list of strings.`;
-      }
-    }
-  }
-  if (b.kind === "quote") {
-    if (typeof b.text !== "string" || !b.text.trim()) return "quote needs text.";
-  }
-  return null;
-}
-
 export async function POST(req: Request) {
   const body = await req.json().catch(() => null);
-  const err = badSpec(body);
+  // Validated in omniwatchGraphic.ts, next to the renderer that depends on the
+  // shape, and defensively non-throwing: this call sits outside the try below,
+  // so anything that throws here is a 500 instead of a 400 (that was the
+  // `items:[null]` bug — `typeof null === "object"` slipped past the item test).
+  const err = validateGraphicSpec(body);
   if (err) return NextResponse.json({ error: err }, { status: 400 });
 
   try {
@@ -86,18 +56,16 @@ export async function GET(req: Request) {
   const range = req.headers.get("range");
 
   if (range) {
-    const m = /^bytes=(\d*)-(\d*)$/.exec(range);
-    if (m) {
-      const start = m[1] === "" ? 0 : Number(m[1]);
-      const end = m[2] === "" ? total - 1 : Math.min(Number(m[2]), total - 1);
-      if (start <= end && start < total) {
-        const node = createReadStream(abs, { start, end });
-        return new Response(Readable.toWeb(node) as NodeReadableStream as ReadableStream, {
-          status: 206,
-          headers: { ...headers, "Content-Range": `bytes ${start}-${end}/${total}`, "Content-Length": String(end - start + 1) },
-        });
-      }
+    const parsed = parseByteRange(range, total);
+    if (parsed === "unsatisfiable") {
       return new Response("range not satisfiable", { status: 416, headers: { "Content-Range": `bytes */${total}` } });
+    }
+    if (parsed) {
+      const node = createReadStream(abs, { start: parsed.start, end: parsed.end });
+      return new Response(Readable.toWeb(node) as NodeReadableStream as ReadableStream, {
+        status: 206,
+        headers: { ...headers, "Content-Range": `bytes ${parsed.start}-${parsed.end}/${total}`, "Content-Length": String(parsed.end - parsed.start + 1) },
+      });
     }
   }
 

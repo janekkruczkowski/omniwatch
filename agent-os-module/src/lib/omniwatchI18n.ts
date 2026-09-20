@@ -94,7 +94,8 @@ const I18N: Record<string, Locale> = {
       "presetSettingLabel": "Setting & production",
       "presetSettingHint": "Where it was shot and with what — useful when deciding what you could actually reproduce.",
       "presetCustomLabel": "Something else…",
-      "presetCustomHint": "Say what you want pulled out of every video, in your own words."
+      "presetCustomHint": "Say what you want pulled out of every video, in your own words.",
+      "makeSimilarAngle": "Angle (optional) — e.g. the myth everyone repeats about it"
     }
   },
   "pl": {
@@ -183,7 +184,8 @@ const I18N: Record<string, Locale> = {
       "presetSettingLabel": "Plan zdjęciowy",
       "presetSettingHint": "Gdzie i czym to nakręcono — przydatne, gdy zastanawiasz się, co dałoby się odtworzyć.",
       "presetCustomLabel": "Coś innego…",
-      "presetCustomHint": "Powiedz własnymi słowami, co chcesz wyciągnąć z każdego filmu."
+      "presetCustomHint": "Powiedz własnymi słowami, co chcesz wyciągnąć z każdego filmu.",
+      "makeSimilarAngle": "Kąt (opcjonalnie) — np. mit, który wszyscy powtarzają"
     }
   },
   "de": {
@@ -272,7 +274,8 @@ const I18N: Record<string, Locale> = {
       "presetSettingLabel": "Drehort & Produktion",
       "presetSettingHint": "Wo und womit gedreht wurde — hilfreich, um einzuschätzen, was sich wirklich nachbauen lässt.",
       "presetCustomLabel": "Etwas anderes…",
-      "presetCustomHint": "Sag mit eigenen Worten, was aus jedem Video herausgezogen werden soll."
+      "presetCustomHint": "Sag mit eigenen Worten, was aus jedem Video herausgezogen werden soll.",
+      "makeSimilarAngle": "Blickwinkel (optional) — z. B. der Mythos, den alle wiederholen"
     }
   },
   "es": {
@@ -361,7 +364,8 @@ const I18N: Record<string, Locale> = {
       "presetSettingLabel": "Localización y producción",
       "presetSettingHint": "Dónde se grabó y con qué — útil para decidir qué podrías reproducir de verdad.",
       "presetCustomLabel": "Otra cosa…",
-      "presetCustomHint": "Di con tus propias palabras qué quieres sacar de cada vídeo."
+      "presetCustomHint": "Di con tus propias palabras qué quieres sacar de cada vídeo.",
+      "makeSimilarAngle": "Enfoque (opcional) — p. ej. el mito que todos repiten"
     }
   },
   "fr": {
@@ -450,7 +454,8 @@ const I18N: Record<string, Locale> = {
       "presetSettingLabel": "Lieu de tournage",
       "presetSettingHint": "Où et avec quoi c'est tourné — utile pour évaluer ce que tu pourrais vraiment reproduire.",
       "presetCustomLabel": "Autre chose…",
-      "presetCustomHint": "Dis avec tes propres mots ce que tu veux tirer de chaque vidéo."
+      "presetCustomHint": "Dis avec tes propres mots ce que tu veux tirer de chaque vidéo.",
+      "makeSimilarAngle": "Angle (facultatif) — par ex. le mythe que tout le monde répète"
     }
   }
 };

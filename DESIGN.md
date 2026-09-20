@@ -669,6 +669,20 @@ HyperFrames i tak renderuje do MP4: zero nowych zależności, zero setupu, i ani
 gratis, bo GSAP już tam jest. Generator ffmpegowy zostaje jako ścieżka dla maszyn, które
 mają pełny build, i mówi wprost, czego im brakuje.
 
+### Twardnienie wejść grafik (2026-09-20, po security review)
+
+`GraphicSpec` jest danymi od modelu, więc walidacja stoi teraz w `omniwatchGraphic.ts`
+(`validateGraphicSpec`), a nie w route: `renderGraphic` jest eksportowane, a walidacja
+w route biegnie **poza** `try`, więc każdy wyjątek stawał się 500. `items: [null]`
+robiło dokładnie to (`typeof null === "object"` przechodziło starą kontrolę).
+Opcjonalne `value`/`caption`/`attribution` są sprawdzane na typ i długość, listy i czas
+mają sufity, a `bytes=-N` w `GET ?file=` zwraca ostatnie N bajtów zamiast 0..N.
+
+Ograniczenie, którego nie da się obejść kodem: **ten ffmpeg nie ma `drawtext`**
+(build bez libfreetype), więc ffmpegowa ścieżka grafik jest pokryta testami walidacji,
+escapowania filtrów i range'ów, ale **nie renderem MP4**. Produkcyjnie karty idą jako
+HTML w kompozycji montażu — bez `ffmpeg-full`.
+
 ---
 
 ## 9. Co dalej

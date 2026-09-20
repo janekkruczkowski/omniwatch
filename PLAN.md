@@ -262,3 +262,36 @@ tylnymi drzwiami przez gotowy plan montażu byłoby tą samą rzeczą pod inną 
 3. **Test odbioru jako polecenie do uruchomienia**, nie jako opis.
 4. **Zakaz zmyślania liczb.** Wszystkie koszty i progi w tym module są mierzone. Jeśli
    agent czegoś nie zmierzył, ma napisać, że nie wie.
+
+---
+
+## Stan wykonania po sesji 2026-09-20 (wieczór UTC)
+
+**Cel bez zmian** — ten sam, który prowadził Claude: Astros → OmniWatch (rozbiórka) →
+Twój temat → brief → gotowy film (głos, b-roll, grafiki, montaż). To **nie** jest
+deklaracja ukończenia celu: integracja finalna i most do montażu są otwarte.
+
+Potwierdzone uruchomieniem (szczegóły i komendy w `STATUS.md`):
+
+- grafiki: walidacja wejść + `bytes=-N` naprawione; **72/72** testów
+  (`agent-os-module/test/graphics/graphics.test.mjs`), live POST 3/3 → 400, `tsc` 0 błędów;
+- karta A→B (`card-source`): 10/10 testów — raport agenta `fix_card_source`;
+- assembler: 21 testów + parity świeżego instalatora — raport agenta montażu;
+- recreate (sync): 18 testów — raport agenta recreate;
+- głos lokalny (`say` + ffmpeg): `available: true`, MP3, 4 live checks — raport agenta głosu;
+- HyperFrames zainstalowane; finalny MP4 **47,13 s** (`smoke-e2e/final-smoke.mp4`,
+  `ffprobe` → 47.133333 s, zmierzone przeze mnie); UI wpięte, `tsc` czysty.
+
+**CRITICAL OPEN:** autor skryptu (`auto/script`, angle/hints → Grok/Claude) **odrzucony
+przez approval** (wymaga jawnej zgody użytkownika na payload/destination) — to samo dla
+runtime Flasha; providerzy niedostępni (limit Claude, CLI Grok, Ollama), więc skrypt
+próbki napisał ręcznie agent Flash, nie runtime. `review_bridge` to proponowany patch w
+workspace, czeka na zatwierdzenie. Dlatego cel **nie** jest domknięty i nic nie idzie
+publicznie; bez commit/push.
+
+Otwarte / pending do potwierdzenia przez agentów: most do montażu w UI, instalator po
+zmianach, pozostałe bridge'y. Nic nie jest commitowane ani pushowane.
+
+Znane ograniczenie tej maszyny: ffmpeg bez `drawtext` (brak `ffmpeg-full`), więc
+ffmpegowa ścieżka grafik nie ma dowodu end-to-end; produkcyjnie karty renderuje HTML w
+kompozycji montażu.

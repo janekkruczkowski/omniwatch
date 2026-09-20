@@ -23,13 +23,13 @@
 
 import { NextResponse } from "next/server";
 import { existsSync } from "node:fs";
-import path from "node:path";
 
 import { cacheKey, videoDir, lang } from "@/lib/omniwatch";
 import { parseSkeleton, type Skeleton } from "@/lib/omniwatchSkeleton";
 import {
-  newBriefId, readBrief, listBriefs, saveBrief, groupIntoIdeas, rhythmFrom, visualFor,
-  type Brief, type BriefScene,
+  newBriefId, readBrief, listBriefs, saveBrief, ideaIds, rhythmFrom, visualFor, MAX_SCENES,
+  beatRole, evidenceFrom, normalizePurpose, probeSize, referenceFor, sourceFileIn,
+  type Brief, type BriefScene, type ClipQuality,
 } from "@/lib/omniwatchRecreate";
 
 export const runtime = "nodejs";
@@ -47,13 +47,20 @@ async function cuts(file: string): Promise<{ at: number; dur: number }[] | null>
 
 /** Pairs each shot with whatever the model said was happening at that second. The
  *  timing is ffmpeg's, the words are the model's, and neither is asked to do the
- *  other's job. */
+ *  other's job. The start is kept explicitly — `at` is the measurement, and a shot
+ *  list that is ever non-contiguous must not have its references shifted by summing
+ *  durations. */
 function layTextOnCuts(shots: { at: number; dur: number }[], sk: Skeleton | null): BriefScene[] {
   return shots.map((s) => {
     const beat = sk?.beats.filter((b) => b.start <= s.at + 0.5).slice(-1)[0];
-    return { seconds: s.dur, role: beat?.text?.slice(0, 120), narration_line: "", caption: "" };
+    return { seconds: s.dur, start: s.at, role: beatRole(beat?.text), narration_line: "", caption: "" };
   });
 }
+
+/** Which clock the references' bounds came off, for the brief to record per scene:
+ *  ffmpeg's cut list is a measurement, the parsed beat list is the model's own
+ *  timestamps, and the two are not interchangeable (see rhythmFrom). */
+type SceneTiming = "measured" | "estimated";
 
 export async function GET(req: Request) {
   const id = new URL(req.url).searchParams.get("id");
@@ -78,65 +85,117 @@ export async function POST(req: Request) {
   }
 
   const mode = body.mode === "voiceover" ? "voiceover" : "avatar";
+  // What the narration is allowed to be. Anything that is not "review" is "pattern",
+  // which is the shape this bridge has always had — see normalizePurpose.
+  const purpose = normalizePurpose(body.purpose);
   const l = lang(String(body.lang || "en"));
   const sk = teardown ? parseSkeleton(teardown, Number(body.seconds) || 0, l.sections.beats) : null;
 
-  const src = path.join(videoDir(cacheKey(url)), "source.mp4");
-  const shots = existsSync(src) ? await cuts(src) : null;
+  // The cache key is the id every other OmniWatch route already uses, and the only
+  // name a clip or frame URL is ever built from.
+  const id = cacheKey(url);
+  const dir = videoDir(id);
+  const cached = existsSync(dir) ? sourceFileIn(dir) : null;
+  const shots = cached ? await cuts(cached.file) : null;
+  const size = cached ? await probeSize(cached.file) : null;
 
   const seconds = Number(body.seconds) || sk?.seconds || 0;
   const rhythm = rhythmFrom(shots, sk?.beats, seconds);
 
   let scenes: BriefScene[];
+  let timing: SceneTiming;
   if (rhythm.from === "cuts" && shots && shots.length) {
     scenes = layTextOnCuts(shots, sk);
+    timing = "measured";
   } else if (sk && sk.beats.length) {
-    scenes = sk.beats.map((b) => ({ seconds: b.dur, role: b.text.slice(0, 120), narration_line: "", caption: "" }));
+    scenes = sk.beats.map((b) => ({ seconds: b.dur, start: b.start, role: beatRole(b.text), narration_line: "", caption: "" }));
+    timing = "estimated";
   } else if (shots && shots.length) {
     // ffmpeg says one long shot and there is no teardown to disagree with it. That is a
     // real answer for a static video, not a failure.
     scenes = layTextOnCuts(shots, sk);
+    timing = "measured";
   } else {
     return NextResponse.json({ error: "Nothing to copy the shape of — watch the video first." }, { status: 400 });
   }
   const measured = rhythm.from === "cuts";
 
-  // One asset per idea, not per cut. Three one-second shots of the same subject are one
-  // idea cut three times; asking a video generator for three clips there costs three
-  // times as much and looks worse. Every original shot keeps its own duration — the
-  // grouping decides what to fetch, never how long anything holds.
-  const ideas = groupIntoIdeas(scenes).map((g) => {
-    const role = g.find((s) => s.role)?.role;
-    return {
-      seconds: Number(g.reduce((a, s) => a + s.seconds, 0).toFixed(2)),
-      role,
-      narration_line: "",
-      caption: "",
-      visual: visualFor(role),
-    };
-  });
+  // Every shot stays its own scene, with its own `seconds`. This used to merge
+  // consecutive short shots into one scene and sum their durations, which turned the
+  // format this bridge exists for — a 47-second edit cut every 0.8 s — into a single
+  // scene, and gave a 2 s shot followed by three 0.5 s cuts back as one 3.5 s hold.
+  // The asset decision is metadata now: `idea` says which shots may share one fetched
+  // clip, and nothing is allowed to move the timing.
+  const ids = ideaIds(scenes);
+  // Each scene's evidence is attached here, from the start the clock gave us rather
+  // than from a running total. Nothing is clamped or rounded to fit: a 47-second brief
+  // over a 46.8-second file is rounding, and the stored estimate is what the teardown
+  // and the cut list actually said. The clip route is where that gets reconciled with
+  // the file, by clamping the request to the real duration and saying so in the
+  // response — the record keeps the number it was given.
+  const quality: ClipQuality | undefined = cached?.quality;
+  const plan: BriefScene[] = scenes.map((s, i) => ({
+    ...s,
+    idea: ids[i],
+    visual: visualFor(s.role),
+    ...(cached
+      ? {
+          reference: referenceFor({
+            sourceUrl: url,
+            cacheId: id,
+            start: s.start ?? 0,
+            end: (s.start ?? 0) + s.seconds,
+            description: s.role,
+            timing,
+            quality,
+          }),
+        }
+      : {}),
+  }));
+  const ideaCount = ids.length ? Math.max(...ids) + 1 : 0;
+  // A shot list longer than the pipeline's 60-scene ceiling is stored whole and the
+  // ceiling is recorded, so the Director can say so instead of dropping the tail in
+  // silence. The stored plan is never shortened.
+  const capped = plan.length > MAX_SCENES ? { max: MAX_SCENES, total: plan.length } : undefined;
 
   const brief: Brief = {
     id: newBriefId(),
     at: new Date().toISOString(),
-    source: { url, title: String(body.title || "") || undefined, seconds: seconds || undefined },
+    source: {
+      url,
+      title: String(body.title || "") || undefined,
+      seconds: seconds || undefined,
+      ...(cached ? { id, ...(size ? { width: size.width, height: size.height } : {}) } : {}),
+    },
     topic,
     angle: String(body.angle || "").trim() || undefined,
     mode,
+    purpose,
     measured,
     rhythm,
-    scenes: ideas,
+    scenes: plan,
+    ...(capped ? { capped } : {}),
     teardown: teardown || undefined,
+    evidence: evidenceFrom(teardown, l.sections),
   };
   await saveBrief(brief);
 
   return NextResponse.json({
     ok: true,
     id: brief.id,
+    purpose: brief.purpose,
     measured,
     rhythm: brief.rhythm,
     scenes: brief.scenes.length,
     shots: scenes.length,
+    ideas: ideaCount,
+    // Whether the source is still on disk and, if so, what the clips would be cut
+    // from. A `proxy` answer is the ~480p analysis download — fine to review against,
+    // not what a finished video should be cut from; POST /api/omniwatch/clip prepares
+    // a master beside it.
+    source: { cached: !!cached, ...(cached ? { id, quality } : {}), ...(size ? { width: size.width, height: size.height } : {}) },
+    references: brief.scenes.filter((s) => s.reference).length,
+    ...(capped ? { capped } : {}),
     seconds: Number(brief.scenes.reduce((a, s) => a + s.seconds, 0).toFixed(1)),
     // Where to send the person. The Director reads this parameter and fills its brief
     // stage from the stored plan.

@@ -52,6 +52,12 @@ python3 "$HERE/register-nav.py" "$SRC"
 # and because two things editing one registrar is how a module gets merged by hand.
 python3 "$HERE/patch-director.py" "$SRC"
 
+# v2 of the bridge UI, on top of the v1 the line above installs. Its own script
+# because it replaces the whole component instead of inserting into it, and because
+# it is guarded by the hash of the v1 file rather than by an anchor — a VideoDirector
+# that is neither v1 nor v2 is left alone and reported, never overwritten.
+python3 "$HERE/patch-director-ui-v2.py" "$SRC"
+
 echo
 echo "✓ Installed. Restart Agent OS. You now have:"
 echo "    OmniWatch — in the sidebar: paste a link, ask a question or take a video apart"

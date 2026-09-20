@@ -54,6 +54,133 @@ export type GraphicSpec =
   | { kind: "compare"; title: string; left: { label: string; items: string[] }; right: { label: string; items: string[] }; seconds: number }
   | { kind: "quote"; text: string; attribution?: string; seconds: number };
 
+// ── input validation ────────────────────────────────────────────────────────────
+// Everything below assumes the shape GraphicSpec promises: it trims text, reads
+// .length for font sizing and splits on whitespace. A caller-supplied body is
+// checked here first, in this file rather than in the route, for two reasons:
+// renderGraphic is exported and can be called directly, and
+// the route validates *outside* its try/catch, so anything the validator throws
+// becomes an unhandled 500 instead of a 400 — which is exactly what
+// `{kind:"ranking", items:[null]}` used to do, since `typeof null === "object"`
+// passed the old item test and the `.label` read on the next line blew up.
+//
+// The bounds are generous on purpose: they keep a malformed or hostile body from
+// reaching ffmpeg (one drawtext per row, one temp file per label) rather than
+// policing editorial choices. 12 rows is the most a ranking list or a compare
+// column can lay out at its minimum row height, and the string caps are several
+// times the widest text that fits on screen.
+export const GRAPHIC_KINDS = ["ranking", "stat", "compare", "quote"] as const;
+
+export const GRAPHIC_LIMITS = {
+  seconds: 600,      // a card, not a film
+  rows: 12,          // ranking items, compare items per side
+  title: 300,
+  label: 300,
+  value: 60,
+  caption: 300,
+  text: 800,
+  attribution: 200,
+} as const;
+
+const isObj = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+
+/** Optional text: absent (undefined/null) or a string. "" and " " are how a
+ *  caller says "no value/caption/attribution" today — the renderer tests these
+ *  for truthiness — so they stay valid. A number, array or object does not:
+ *  the renderer would call .trim() on it. */
+const optText = (v: unknown, max: number): boolean =>
+  v === undefined || v === null || (typeof v === "string" && v.length <= max);
+
+/** Rejects anything renderGraphic could not draw. Returns a reason, or null when
+ *  the body is safe. Never throws: every field is probed with typeof/isObj/
+ *  Array.isArray before it is touched, so a null, array or primitive anywhere
+ *  comes back as a message (the route turns that into a 400). */
+export function validateGraphicSpec(body: unknown): string | null {
+  if (!isObj(body)) return "Body must be a GraphicSpec object.";
+  const b = body;
+  if (typeof b.kind !== "string" || !(GRAPHIC_KINDS as readonly string[]).includes(b.kind)) {
+    return `kind must be one of ${GRAPHIC_KINDS.join(", ")}.`;
+  }
+  if (typeof b.seconds !== "number" || !Number.isFinite(b.seconds) || b.seconds <= 0) {
+    return "seconds must be a positive number.";
+  }
+  if (b.seconds > GRAPHIC_LIMITS.seconds) return `seconds must be ${GRAPHIC_LIMITS.seconds} or less.`;
+
+  if (b.kind === "ranking") {
+    if (typeof b.title !== "string" || !b.title.trim()) return "ranking needs a title.";
+    if (b.title.length > GRAPHIC_LIMITS.title) return `a ranking title is limited to ${GRAPHIC_LIMITS.title} characters.`;
+    if (!Array.isArray(b.items) || !b.items.length) return "ranking needs at least one item.";
+    if (b.items.length > GRAPHIC_LIMITS.rows) return `ranking takes at most ${GRAPHIC_LIMITS.rows} items.`;
+    for (const item of b.items) {
+      if (!isObj(item) || typeof item.label !== "string") return "every ranking item needs a string label.";
+      if (item.label.length > GRAPHIC_LIMITS.label) return `ranking item labels are limited to ${GRAPHIC_LIMITS.label} characters.`;
+      if (!optText(item.value, GRAPHIC_LIMITS.value)) return `a ranking item's value must be a string of at most ${GRAPHIC_LIMITS.value} characters.`;
+    }
+  }
+
+  if (b.kind === "stat") {
+    if (typeof b.title !== "string" || !b.title.trim()) return "stat needs a title.";
+    if (b.title.length > GRAPHIC_LIMITS.title) return `a stat title is limited to ${GRAPHIC_LIMITS.title} characters.`;
+    if (typeof b.value !== "string" || !b.value.trim()) return "stat needs a value.";
+    if (b.value.length > GRAPHIC_LIMITS.value) return `a stat value is limited to ${GRAPHIC_LIMITS.value} characters.`;
+    if (!optText(b.caption, GRAPHIC_LIMITS.caption)) return `a stat caption must be a string of at most ${GRAPHIC_LIMITS.caption} characters.`;
+  }
+
+  if (b.kind === "compare") {
+    if (typeof b.title !== "string" || !b.title.trim()) return "compare needs a title.";
+    if (b.title.length > GRAPHIC_LIMITS.title) return `a compare title is limited to ${GRAPHIC_LIMITS.title} characters.`;
+    for (const side of ["left", "right"] as const) {
+      const s = b[side];
+      if (!isObj(s) || typeof s.label !== "string" || !s.label.trim()) return `compare.${side} needs a label.`;
+      if (s.label.length > GRAPHIC_LIMITS.label) return `compare.${side}.label is limited to ${GRAPHIC_LIMITS.label} characters.`;
+      if (!Array.isArray(s.items) || !s.items.every((x) => typeof x === "string")) {
+        return `compare.${side}.items must be a list of strings.`;
+      }
+      if (s.items.length > GRAPHIC_LIMITS.rows) return `compare.${side}.items takes at most ${GRAPHIC_LIMITS.rows} entries.`;
+      if (s.items.some((x) => (x as string).length > GRAPHIC_LIMITS.label)) {
+        return `compare.${side} items are limited to ${GRAPHIC_LIMITS.label} characters each.`;
+      }
+    }
+  }
+
+  if (b.kind === "quote") {
+    if (typeof b.text !== "string" || !b.text.trim()) return "quote needs text.";
+    if (b.text.length > GRAPHIC_LIMITS.text) return `a quote is limited to ${GRAPHIC_LIMITS.text} characters.`;
+    if (!optText(b.attribution, GRAPHIC_LIMITS.attribution)) {
+      return `a quote attribution must be a string of at most ${GRAPHIC_LIMITS.attribution} characters.`;
+    }
+  }
+
+  return null;
+}
+
+/** Parses one `Range:` header against a known file size. `null` means "no range
+ *  we understand — serve the whole body" (an absent header, another unit, a
+ *  multi-range list); "unsatisfiable" means RFC 9110's 416. Suffix form
+ *  `bytes=-N` means the *last* N bytes — the previous inline version read the
+ *  empty first group as 0 and answered `bytes=-N` with bytes 0..N. */
+export type ByteRange = { start: number; end: number };
+
+export function parseByteRange(header: string | null | undefined, total: number): ByteRange | "unsatisfiable" | null {
+  if (!header) return null;
+  const m = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
+  if (!m) return null;
+  if (m[1] === "" && m[2] === "") return "unsatisfiable"; // "bytes=-" is not a range
+  if (m[1] === "") {
+    const n = Number(m[2]);
+    if (!Number.isFinite(n) || n <= 0) return "unsatisfiable"; // a suffix of 0 bytes is unsatisfiable
+    const start = Math.max(0, total - n);
+    if (start >= total) return "unsatisfiable";
+    return { start, end: total - 1 };
+  }
+  const start = Number(m[1]);
+  if (!Number.isFinite(start) || start >= total) return "unsatisfiable";
+  const end = m[2] === "" ? total - 1 : Math.min(Number(m[2]), total - 1);
+  if (!Number.isFinite(end) || end < start) return "unsatisfiable";
+  return { start, end };
+}
+
 // ── palette (see file header for provenance) ────────────────────────────────────
 const BG = "1a1208";          // literal, from .ow-ts:hover's text-on-gold color
 const BG_ELEV = "241b11";     // derived: BG lightened a few percent, for the card panel
@@ -203,7 +330,9 @@ function fade(seconds: number): string[] {
   return [`fade=t=in:st=0:d=${d}`, `fade=t=out:st=${Math.max(0, seconds - d)}:d=${d}`];
 }
 
-async function buildFilters(spec: GraphicSpec, font: { reg: string; bold: string }, ctx: TextCtx): Promise<string[]> {
+/** Exported so the escaping rules above can be tested without ffmpeg (it only
+ *  builds filter strings and writes the text files). */
+export async function buildFilters(spec: GraphicSpec, font: { reg: string; bold: string }, ctx: TextCtx): Promise<string[]> {
   const f: string[] = [...frame()];
 
   if (spec.kind === "ranking") {
@@ -360,9 +489,11 @@ async function hasDrawtext(): Promise<boolean> {
  *  in, same file out — a hash of the spec is the filename, so a repeat request is a
  *  cache hit rather than a re-render. */
 export async function renderGraphic(spec: GraphicSpec): Promise<string> {
-  if (!Number.isFinite(spec.seconds) || spec.seconds <= 0) {
-    throw new Error(`A graphic needs a positive duration; got ${spec.seconds}.`);
-  }
+  // The route already validated, but this is exported and can be called directly —
+  // and the hash/canonical step below reads spec.items[].label, so
+  // an unchecked spec would throw here rather than anywhere useful.
+  const bad = validateGraphicSpec(spec);
+  if (bad) throw new Error(bad);
   await mkdir(GRAPHICS_ROOT, { recursive: true });
   const hash = hashSpec(spec);
   const outPath = path.join(GRAPHICS_ROOT, `${spec.kind}-${hash}.mp4`);

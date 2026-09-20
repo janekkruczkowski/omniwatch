@@ -31,7 +31,22 @@ interface Progress {
   fps?: number; reused?: boolean; text?: string;
 }
 interface Stats { seconds: number; tokens: number; parts: number; reused: boolean; cost: number }
-interface Card { id: number; q: string; mode: "ask" | "teardown"; text: string; stats?: Stats; error?: string }
+/** Which video one card is about. Pinned to the card rather than read from the tab's
+ *  current state, because answers stay on screen while the tab moves on: watch video A,
+ *  then video B, and the still-visible card for A would otherwise build a brief out of
+ *  B — and draw A's evidence frames out of B's file. */
+export interface CardSource {
+  url: string; lang: string;
+  /** filled in by yt-dlp's first report, which lands after the card is on screen */
+  id?: string; title: string; seconds: number; channel?: string; duration?: string;
+}
+interface Card {
+  id: number; q: string; mode: "ask" | "teardown"; text: string; stats?: Stats; error?: string;
+  src?: CardSource;
+  /** the job that owns this card said it was finished. The text arrives streaming, so
+   *  "there is text" is not the same question as "this answer is complete". */
+  done?: boolean;
+}
 /** What the tab is doing. The first two are jobs the engine understands; "channel" is
  *  this tab pointed at an account, and never reaches the single-video job. */
 type UiMode = "ask" | "teardown" | "channel";
@@ -39,6 +54,48 @@ type UiMode = "ask" | "teardown" | "channel";
 type Locale = { name: string; sections: Record<string, string>; ui: Record<string, string | string[]> };
 
 const STEPS = ["download", "upload", "watch", "answer"] as const;
+
+/** One frame of one video — the card's video, never whatever the tab has open now. */
+export function frameUrl(src: CardSource | null | undefined, sec: number): string {
+  if (!src?.id) return "";
+  return `/api/omniwatch/media/frame/${src.id}/${Math.max(0, Math.floor(sec))}`;
+}
+
+/** May this card hand a brief to the Video tab?
+ *
+ *  Two ways to get this wrong, both of them real. The answer streams in, so a card with
+ *  text may be half-written: a brief built from a truncated teardown copies a shape the
+ *  video does not have. And until yt-dlp has reported, we do not know which video the
+ *  card is even about — no title to price it by, no length to lay the beats on. So the
+ *  button waits for the finished card and the resolved source. */
+export function canBuildBrief(card: Card, source: CardSource | null): boolean {
+  return !!(
+    card.mode === "teardown" && card.done && !card.error && card.text.trim() &&
+    source?.id && source.title && source.seconds > 0
+  );
+}
+
+/** What one card sends to /api/omniwatch/recreate. Split out so the A→B case — a card
+ *  still on screen after the tab has moved to another video — is testable without a
+ *  browser. */
+export function briefBody(
+  card: Card, source: CardSource, topic: string, angle: string, mode: "avatar" | "voiceover",
+) {
+  return {
+    url: source.url, title: source.title, seconds: source.seconds,
+    text: card.text, topic, angle: angle.trim(), mode, lang: source.lang,
+  };
+}
+
+/** The player is handed to a run on that run's first report, and never again.
+ *
+ *  A poll lands every 700 ms. If each one took the player, someone who had clicked back
+ *  to a timestamp on an older card would be dragged onto the new video a moment later,
+ *  and the seek they queued would fire into the wrong file. */
+export function pinPlayerForRun(alreadyPinned: boolean, metaId: string, currentId: string | null) {
+  if (alreadyPinned) return { id: currentId, moved: false };
+  return { id: metaId, moved: currentId !== metaId };
+}
 
 const fmt = (s: number) => {
   s = Math.floor(s);
@@ -65,11 +122,19 @@ export default function OmniWatchView() {
   const [elapsed, setElapsed] = useState(0);
   const [cards, setCards] = useState<Card[]>([]);
   const [hits, setHits] = useState<number[]>([]);
+  /** the video in the player. Normally the run that just reported; it follows a card
+   *  back when that card's own timestamps are clicked. */
+  const [playId, setPlayId] = useState<string | null>(null);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const playerRef = useRef<HTMLVideoElement | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const cardId = useRef(0);
+  const pendingSeek = useRef<number | null>(null);
+  // The same two ids the render uses, in refs, so the callbacks below read what is true
+  // now rather than whatever the last render captured.
+  const playIdRef = useRef<string | null>(null);
+  const metaIdRef = useRef<string | null>(null);
 
   const T = useMemo(() => (i18n ? (i18n[lang] || i18n.en) : null), [i18n, lang]);
 
@@ -91,12 +156,40 @@ export default function OmniWatchView() {
 
   const frame = useCallback((sec: number) => meta ? `/api/omniwatch/media/frame/${meta.id}/${Math.max(0, Math.floor(sec))}` : "", [meta]);
 
-  const seek = useCallback((sec: number) => {
+  /** Move the player. `clearPending` is for a run's first report: a seek queued for an
+   *  older card must not land on the new video. */
+  const setPlayer = useCallback((id: string | null, clearPending = false) => {
+    if (clearPending) pendingSeek.current = null;
+    playIdRef.current = id;
+    setPlayId(id);
+  }, []);
+
+  // A timestamp belongs to a video, so seeking takes the one it was read off. Asking the
+  // player to jump into a file it has not loaded is the old bug: it used to jump the
+  // video that happened to be open, at a second that meant something in another one.
+  const seek = useCallback((sec: number, id?: string) => {
     const p = playerRef.current;
-    if (!p) return;
+    const open = playIdRef.current || metaIdRef.current;
+    const target = id || metaIdRef.current;
+    if (!target) return;
+    if (!p || target !== open) {
+      pendingSeek.current = sec;
+      setPlayer(target);
+      p?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      return;
+    }
     p.currentTime = sec;
     p.play().catch(() => {});
     p.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, [setPlayer]);
+
+  // The player had to load a different file first; jump once it has.
+  const applyPendingSeek = useCallback(() => {
+    const p = playerRef.current;
+    if (!p || pendingSeek.current == null) return;
+    p.currentTime = pendingSeek.current;
+    pendingSeek.current = null;
+    p.play().catch(() => {});
   }, []);
 
   // Start the job, then poll it. Nothing holds an HTTP request open for the minutes
@@ -104,13 +197,19 @@ export default function OmniWatchView() {
   const ask = useCallback(async (q: string, target?: string, force?: "ask" | "teardown") => {
     const link = (target ?? url).trim();
     if (!link || pollRef.current) return;
-    // Follow-ups are always questions. `force` exists for callers that cannot wait for
-    // setMode to land — the deep link from Astros arrives and runs in the same tick.
-    const runMode: "ask" | "teardown" =
-      force ?? (cards.length > 0 ? "ask" : mode === "teardown" ? "teardown" : "ask");
+    // Every caller says which of the two it means: the form passes the mode you clicked,
+    // a follow-up is always a question, and the deep link from Astros is always a
+    // teardown. It used to guess — "there are cards, so this must be a follow-up" — which
+    // quietly turned the first teardown of a second video into a summary, and a summary
+    // has no MakeSimilar button because you cannot rebuild the shape of a video from what
+    // it says.
+    const runMode: "ask" | "teardown" = force ?? (mode === "teardown" ? "teardown" : "ask");
     const id = ++cardId.current;
-    setCards((c) => [{ id, q: q.trim(), mode: runMode, text: "" }, ...c]);
+    setCards((c) => [{ id, q: q.trim(), mode: runMode, text: "", src: { url: link, title: "", seconds: 0, lang } }, ...c]);
     setRunning(true); setStep("download"); setParts(0); setPartsDone(0); setReused(false); setHits([]); setFollowUp("");
+
+    // Per run, not per poll: the player follows this run's first report only.
+    let playerPinned = false;
 
     const t0 = Date.now();
     setElapsed(0);
@@ -146,7 +245,24 @@ export default function OmniWatchView() {
         if (r.status === 404) return fail("The dashboard restarted while this was running. Ask again — the video is cached, so it will be quick.");
         d = await r.json();
       } catch { return; } // a dropped poll is not a failed job; the next tick retries
-      if (d.meta) setMeta(d.meta);
+      if (d.meta) {
+        const m = d.meta;
+        metaIdRef.current = m.id;
+        const step = pinPlayerForRun(playerPinned, m.id, playIdRef.current);
+        playerPinned = true;
+        if (step.moved) setPlayer(m.id, true);
+        setMeta(m);
+        // The title and length only arrive once yt-dlp has looked, which is after the
+        // card is already on screen. The media id comes with them, and the card needs it
+        // too: without it the card's frames and timestamps have no video to point at.
+        patch((c) => ({
+          ...c,
+          src: {
+            url: link, lang, id: m.id, title: m.title, seconds: m.seconds,
+            channel: m.channel, duration: m.duration,
+          },
+        }));
+      }
       if (d.stage) setStep(d.stage === "merge" ? "watch" : d.stage);
       if (d.fps) setFps(d.fps);
       if (typeof d.parts === "number") setParts(d.parts);
@@ -157,12 +273,12 @@ export default function OmniWatchView() {
       if (d.state === "done") {
         finish(); setStep("end");
         setHits([...(d.text || "").matchAll(TS_RE)].map((m) => toSec(m[1])));
-        patch((c) => ({ ...c, stats: d as Stats }));
+        patch((c) => ({ ...c, stats: d as Stats, done: true }));
       } else if (d.state === "error") {
         fail(d.error || "The run failed");
       }
     }, 700);
-  }, [url, mode, lang, cards.length]);
+  }, [url, mode, lang, setPlayer]);
 
   // ── handed a video by another tab ────────────────────────────────────────────
   // Astros finds what competitors published but works from titles, so its row of
@@ -188,9 +304,19 @@ export default function OmniWatchView() {
   // ── onboarding ───────────────────────────────────────────────────────────────
   if (status && !status.ready) return <Onboarding status={status} />;
 
+  // What the form submits is what the mode row is set to. A new link is not a follow-up
+  // just because answers are already on screen.
+  const submit = () => ask(question, undefined, mode === "teardown" ? "teardown" : "ask");
+
   const started = cards.length > 0 || running;
   const ui = T?.ui as Record<string, string> | undefined;
   const examples = (T?.ui.examples as string[]) || [];
+  // The player normally shows the run that just finished. It follows a card back to that
+  // card's own video when its timestamps are clicked, and then the caption has to follow
+  // it — a title for B sitting over A's picture is the same wrong-video bug in words.
+  const playing = meta && playId && playId !== meta.id
+    ? cards.find((c) => c.src?.id === playId)?.src
+    : undefined;
 
   const modes = (
     <div className="flex flex-wrap items-center gap-2">
@@ -247,7 +373,7 @@ export default function OmniWatchView() {
         <textarea
           value={question}
           onChange={(e) => setQuestion(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); ask(question); } }}
+          onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submit(); } }}
           rows={2}
           placeholder={mode === "teardown"
             ? (ui?.teardownPlaceholder || "What you are about to film (optional) — what transfers, what does not")
@@ -263,7 +389,7 @@ export default function OmniWatchView() {
               : (ui?.hint || "Empty question = full summary · ⌘↵ to send")}
           </span>
           <button
-            onClick={() => ask(question)}
+            onClick={submit}
             disabled={running || !url.trim()}
             className="pill pill-warn flex items-center gap-1.5 disabled:opacity-40"
             style={{ cursor: running || !url.trim() ? "default" : "pointer" }}
@@ -289,13 +415,16 @@ export default function OmniWatchView() {
               <div className="panel p-3">
                 <video
                   ref={playerRef}
-                  src={`/api/omniwatch/media/video/${meta.id}`}
+                  src={`/api/omniwatch/media/video/${playId || meta.id}`}
+                  onLoadedMetadata={applyPendingSeek}
                   controls preload="metadata" playsInline
                   className="w-full rounded-lg bg-black"
                   style={{ aspectRatio: "16/9" }}
                 />
-                <h2 className="text-sm mt-3 mb-1 leading-snug" style={{ color: "var(--cream)" }}>{meta.title}</h2>
-                <div className="text-xs" style={{ color: "var(--cream-dim)" }}>{meta.channel} · {meta.duration}</div>
+                <h2 className="text-sm mt-3 mb-1 leading-snug" style={{ color: "var(--cream)" }}>{playing?.title || meta.title}</h2>
+                <div className="text-xs" style={{ color: "var(--cream-dim)" }}>
+                  {playing ? [playing.channel, playing.duration].filter(Boolean).join(" · ") : `${meta.channel} · ${meta.duration}`}
+                </div>
               </div>
             )}
 
@@ -364,13 +493,13 @@ export default function OmniWatchView() {
                   <textarea
                     value={followUp}
                     onChange={(e) => setFollowUp(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(followUp); } }}
+                    onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(followUp, undefined, "ask"); } }}
                     rows={1}
                     placeholder={ui?.followPlaceholder || "Next question…"}
                     className="flex-1 bg-transparent outline-none resize-none text-sm"
                     style={{ color: "var(--cream)" }}
                   />
-                  <button onClick={() => ask(followUp)} className="pill pill-warn" style={{ cursor: "pointer" }}>
+                  <button onClick={() => ask(followUp, undefined, "ask")} className="pill pill-warn" style={{ cursor: "pointer" }}>
                     {ui?.followSubmit || "Ask →"}
                   </button>
                 </div>
@@ -379,9 +508,11 @@ export default function OmniWatchView() {
 
             {cards.map((c) => (
               <Answer
-                key={c.id} card={c} locale={T} onSeek={seek} frame={frame}
+                key={c.id} card={c} locale={T}
+                onSeek={(sec) => seek(sec, c.src?.id)}
+                frame={(sec) => frameUrl(c.src, sec)}
                 running={running && c.id === cardId.current}
-                source={meta ? { url, title: meta.title, seconds: meta.seconds, lang } : null}
+                source={c.src ?? null}
               />
             ))}
           </div>
@@ -396,7 +527,7 @@ function Answer({ card, locale, onSeek, frame, running, source }: {
   card: Card; locale: Locale | null; onSeek: (s: number) => void; frame: (s: number) => string; running: boolean;
   /** what was watched — needed to build a brief from this answer, absent while a job is
    *  still finding out what the video even is */
-  source: { url: string; title: string; seconds: number; lang: string } | null;
+  source: CardSource | null;
 }) {
   const sec = locale?.sections || {};
   const ui = (locale?.ui || {}) as Record<string, string>;
@@ -441,8 +572,9 @@ function Answer({ card, locale, onSeek, frame, running, source }: {
       )}
 
       {/* Only under a teardown: a summary tells you what a video says, and you cannot
-          rebuild the shape of something from what it says. */}
-      {card.text && !card.error && card.mode === "teardown" && source && (
+          rebuild the shape of something from what it says. And only once the answer is
+          finished — the text above is still being written while the card is on screen. */}
+      {canBuildBrief(card, source) && source && (
         <MakeSimilar card={card} source={source} ui={ui} />
       )}
     </div>
@@ -458,11 +590,12 @@ function Answer({ card, locale, onSeek, frame, running, source }: {
 // and the "Your version" section was deleted from this module for being exactly that.
 function MakeSimilar({ card, source, ui }: {
   card: Card;
-  source: { url: string; title: string; seconds: number; lang: string };
+  source: CardSource;
   ui: Record<string, string>;
 }) {
   const [open, setOpen] = useState(false);
   const [topic, setTopic] = useState("");
+  const [angle, setAngle] = useState("");
   const [mode, setMode] = useState<"avatar" | "voiceover">("avatar");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -474,10 +607,7 @@ function MakeSimilar({ card, source, ui }: {
       const r = await fetch("/api/omniwatch/recreate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          url: source.url, title: source.title, seconds: source.seconds,
-          text: card.text, topic, mode, lang: source.lang,
-        }),
+        body: JSON.stringify(briefBody(card, source, topic, angle, mode)),
       });
       const j = await r.json();
       if (!r.ok || !j.next) throw new Error(j.error || "Could not build the brief.");
@@ -510,6 +640,17 @@ function MakeSimilar({ card, source, ui }: {
         onChange={(e) => setTopic(e.target.value)}
         onKeyDown={(e) => { if (e.key === "Enter") go(); }}
         placeholder={ui.makeSimilarHint || "e.g. why most cold emails get deleted in three seconds"}
+        className="w-full bg-transparent outline-none text-sm p-2 rounded"
+        style={{ color: "var(--cream)", border: "1px solid var(--line-soft)" }}
+      />
+      {/* The angle is the half of the brief the topic cannot carry: the topic is what the
+          video is about, the angle is what it says about it. Optional — the Director picks
+          its own if this is left empty. */}
+      <input
+        value={angle}
+        onChange={(e) => setAngle(e.target.value)}
+        onKeyDown={(e) => { if (e.key === "Enter") go(); }}
+        placeholder={ui.makeSimilarAngle || "Angle (optional) — e.g. the myth everyone repeats about it"}
         className="w-full bg-transparent outline-none text-sm p-2 rounded"
         style={{ color: "var(--cream)", border: "1px solid var(--line-soft)" }}
       />
