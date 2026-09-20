@@ -3,7 +3,7 @@
 
     python3 patch-director.py <agent-os>/source
 
-Three small insertions into files that are not ours, each guarded by a sentinel so a
+A few small insertions into files that are not ours, each guarded by a sentinel so a
 second run changes nothing. This is the same contract as register-nav.py: Agent OS
 owns these files, we only ever add to them, and an Agent OS update that overwrites
 them is repaired by running the installer again.
@@ -13,7 +13,7 @@ being edited for the scene-duration change at the same time as this one was writ
 and two people editing one file is how a module ends up merged by hand. install.sh
 calls both.
 
-What the three insertions do, together:
+What they do, together:
 
   1. The Director reads ?brief=<id> on load and fills its own first stage from it —
      the topic the person typed in the OmniWatch tab, whether they want a presenter or
@@ -23,6 +23,8 @@ What the three insertions do, together:
      afterwards.
   3. It hands those durations to the assembler, which honours them instead of
      guessing each scene's length from its word count.
+  4. Where the watched video held a text card rather than footage, it asks the
+     assembler to draw a card instead of playing a clip.
 
 Without the third one the first two are decoration: the plan would say 1.4 seconds and
 the edit would still hold for four.
@@ -55,6 +57,7 @@ BRIDGE = '''
   // is copied from the video that was watched, the script is written from scratch for
   // the topic typed by the person.
   const [omniSeconds, setOmniSeconds] = useState<number[]>([]);
+  const [omniGraphic, setOmniGraphic] = useState<boolean[]>([]);
   const [omniSource, setOmniSource] = useState<string | null>(null);
   useEffect(() => {
     const id = new URLSearchParams(window.location.search).get("brief");
@@ -67,6 +70,7 @@ BRIDGE = '''
         const secs: number[] = b.scenes.map((s: { seconds: number }) => Number(s.seconds) || 0).filter((n: number) => n > 0);
         if (!secs.length) return;
         setOmniSeconds(secs);
+        setOmniGraphic(b.scenes.map((s: { visual?: { kind?: string } }) => s.visual?.kind === "graphic"));
         setOmniSource(b.source?.title || b.source?.url || null);
         setRun((r) => ({
           ...r,
@@ -115,11 +119,22 @@ def patch_director():
     # Carry the durations into the edit. Absent them, assemble falls back to weighting
     # scenes by word count — a fine default and the exact opposite of what a copied
     # rhythm needs.
+    # The graphic scenes, too. Where the watched video held a text card rather than
+    # footage, the brief says so, and the assembler draws a card instead of playing a
+    # clip — which is both cheaper (no generated b-roll for that scene) and closer to
+    # what was actually on screen.
+    #
+    # The card shows the scene's own caption, written by the script for the person's
+    # own topic. A ranked list or a comparison would be a better card, but it needs
+    # data the script route does not produce today — it writes prose and a caption,
+    # not tables. Worth doing when it does; guessing a ranking out of a caption would
+    # be inventing numbers.
     old_scenes = ('const scenes = run.script.scenes.map((s, i) => ({ caption: s.caption, '
                   'narration_line: s.narration_line, brollUrl: run.broll[i]?.url }));')
     new_scenes = ('const scenes = run.script.scenes.map((s, i) => ({ caption: s.caption, '
                   'narration_line: s.narration_line, brollUrl: run.broll[i]?.url, '
-                  '...(omniSeconds[i] ? { seconds: omniSeconds[i] } : {}) }));')
+                  '...(omniSeconds[i] ? { seconds: omniSeconds[i] } : {}), '
+                  '...(omniGraphic[i] && s.caption ? { graphic: { kind: "stat", value: s.caption } } : {}) }));')
     if old_scenes not in s:
         return None
     s = s.replace(old_scenes, new_scenes, 1)
