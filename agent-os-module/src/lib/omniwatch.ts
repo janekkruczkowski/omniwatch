@@ -44,6 +44,16 @@ const MAX_FRAMES = Math.max(300, Number(process.env.OMNI_MAX_FRAMES || 2400));
 const OSS_TTL = 47 * 3600 * 1000; // oss:// URLs live 48 h; refresh an hour early
 const CACHE_TTL = parseFloat(process.env.OMNI_CACHE_HOURS || "48") * 3600 * 1000;
 const MAX_TOKENS = Number(process.env.OMNI_MAX_TOKENS || 4000);
+
+/** "both" writes two documents in one answer, so it needs more room than either alone.
+ *  Measured rather than assumed: a 968-second video in "both" mode came back complete
+ *  at 3174 output tokens — 79% of the 4000 ceiling. That is comfortable until you work
+ *  out the worst case, which is not the longest video but the longest SINGLE PART:
+ *  MAX_FRAMES caps a part at 2400 frames, which at 2 fps is 1200 seconds. Scaling the
+ *  measurement gives roughly 3900 tokens for that part — the ceiling, to within noise.
+ *  Anything longer splits and each part gets its own budget, so 20 minutes is the one
+ *  length that can quietly truncate. Hence the extra room, for this mode only. */
+const MAX_TOKENS_BOTH = Number(process.env.OMNI_MAX_TOKENS_BOTH || 6000);
 const PRESENCE_PENALTY = Number(process.env.OMNI_PRESENCE_PENALTY ?? 0.3);
 const SHORT_MAX = 3 * 60; // shorts/reels/TikToks: fast cuts, so sample at the API maximum
 const FPS_SHORT = 10;
@@ -298,13 +308,13 @@ const RETRIES = Math.max(0, Number(process.env.OMNI_RETRIES ?? 3));
  * onToken receives the answer so far rather than each delta, so a retry that starts the
  * answer over just rewrites what is on screen — nothing to undo.
  */
-async function streamOmni(key: string, content: Content[], onToken?: (s: string) => void):
+async function streamOmni(key: string, content: Content[], onToken?: (s: string) => void, maxTokens = MAX_TOKENS):
   Promise<{ text: string; usage: { in: number; out: number } }> {
   let last: Error = new Error("never ran");
   for (let attempt = 0; attempt <= RETRIES; attempt++) {
     if (attempt) await new Promise((r) => setTimeout(r, 2000 * 2 ** (attempt - 1)));
     try {
-      return await attemptOmni(key, content, onToken);
+      return await attemptOmni(key, content, onToken, maxTokens);
     } catch (e) {
       last = e instanceof Error ? e : new Error(String(e));
       if (!(e instanceof Transient)) throw last;
@@ -313,7 +323,7 @@ async function streamOmni(key: string, content: Content[], onToken?: (s: string)
   throw new Error(`${last.message} (gave up after ${RETRIES + 1} attempts)`);
 }
 
-async function attemptOmni(key: string, content: Content[], onToken?: (s: string) => void):
+async function attemptOmni(key: string, content: Content[], onToken?: (s: string) => void, maxTokens = MAX_TOKENS):
   Promise<{ text: string; usage: { in: number; out: number } }> {
   let r: Response;
   try {
@@ -337,7 +347,7 @@ async function attemptOmni(key: string, content: Content[], onToken?: (s: string
       // Seen once in testing: a teardown ran five minutes emitting an endless list of
       // unrelated words. Without a cap that burns wall-clock and money with nothing to
       // show. A full teardown lands around 2.5k tokens, so 4k leaves real headroom.
-      max_tokens: MAX_TOKENS,
+      max_tokens: maxTokens,
       // Was 1.05, to push the model out of a repetition loop. That reasoning does not
       // survive looking at the actual failure: the collapse is not repetition, it is a
       // thesaurus chain, each word different from the last. presence_penalty punishes
@@ -649,9 +659,11 @@ export async function watch(
   const tokens = { in: 0, out: 0 };
   ev.onEvent?.("watch", { n: ps.length, fps });
 
+  const cap = mode === "both" ? MAX_TOKENS_BOTH : MAX_TOKENS;
+
   let answer: string;
   if (ps.length === 1) {
-    const r = await streamOmni(key, [videoPart(uploads[0].url, fps), { type: "text", text: tpl(WHOLE, v) }], ev.onToken);
+    const r = await streamOmni(key, [videoPart(uploads[0].url, fps), { type: "text", text: tpl(WHOLE, v) }], ev.onToken, cap);
     answer = r.text; tokens.in += r.usage.in; tokens.out += r.usage.out;
   } else {
     const seconds = info.duration || 0;
@@ -664,7 +676,7 @@ export async function watch(
     const notes = await Promise.all(ps.map(async (p, i) => {
       const end = i + 1 < ps.length ? ps[i + 1].start : seconds;
       const text = tpl(PART, { ...v, i: i + 1, n: ps.length, focus });
-      const r = await streamOmni(key, [videoPart(uploads[i].url, fps), { type: "text", text }]);
+      const r = await streamOmni(key, [videoPart(uploads[i].url, fps), { type: "text", text }], undefined, cap);
       ev.onEvent?.("part_done", { i });
       tokens.in += r.usage.in; tokens.out += r.usage.out;
       return shiftTimestamps(r.text, p.start, end - p.start);
@@ -672,7 +684,7 @@ export async function watch(
 
     ev.onEvent?.("merge", {});
     const joined = notes.map((n, i) => `### Part ${i + 1} (from ${fmt(ps[i].start)})\n${n}`).join("\n\n");
-    const r = await streamOmni(key, [{ type: "text", text: tpl(MERGE, { ...v, n: ps.length, notes: joined }) }], ev.onToken);
+    const r = await streamOmni(key, [{ type: "text", text: tpl(MERGE, { ...v, n: ps.length, notes: joined }) }], ev.onToken, cap);
     answer = r.text; tokens.in += r.usage.in; tokens.out += r.usage.out;
   }
   // Last thing before it is shown, cached or written to the vault: a collapsed passage
