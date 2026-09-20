@@ -24,7 +24,7 @@ zostawia to mnie — integracja jest krokiem szeregowym, nie równoległym.
 - `src/lib/omniwatchChannel.ts`
 
 Uwaga o skali, bo lepiej ją powiedzieć teraz niż odkryć w konfliktach: **realna
-szerokość to około sześciu agentów naraz, nie sto.** Moduł ma ~3000 linii w kilkunastu
+szerokość to około siedmiu agentów naraz, nie sto.** Moduł ma ~3000 linii w kilkunastu
 plikach. Stu agentów nie miałoby czego robić bez wchodzenia sobie w drogę — wąskim
 gardłem nie jest liczba agentów, tylko liczba rozłącznych kawałków.
 
@@ -51,7 +51,7 @@ wewnątrz.
 
 ---
 
-## Faza 1 — równolegle, sześć strumieni
+## Faza 1 — równolegle, siedem strumieni
 
 ### S1. Prawdziwe wykrywanie ujęć (ffmpeg) + długość z ffprobe
 
@@ -62,6 +62,10 @@ montażu. ffmpeg na tym samym pliku wykrył **40 cięć**, ujęcia 0,97–3,4 s.
 
 **Na własność:** `src/lib/omniwatchCuts.ts` (nowy), `src/lib/omniwatchSkeleton.ts`
 (przepisanie).
+
+**Uwaga o kolejności:** jeśli rozpoznanie S7 (JSON zamiast prozy) wypadnie dobrze,
+nakładanie tekstu na cięcia robi się trywialne, bo sceny przychodzą już jako struktura.
+Warto zerknąć na wynik S7 przed pisaniem tej części.
 
 **Zakres:**
 - `detectCuts(file)` → `{ at, dur }[]` przez `select='gt(scene,T)',showinfo`. Próg `T`
@@ -162,6 +166,55 @@ Czyli: ich kodu nie bierzemy, struktura jest wolna.
 (zostały po skasowanej sekcji „Your version"); sprawdzenie, że każda lokalizacja ma
 komplet kluczy — brakujący klucz cicho degraduje się do angielskiego i nikt tego nie
 zauważy.
+
+---
+
+### S7. Rozpoznanie: czy model może odpowiadać JSON-em zamiast prozą
+
+**To jest rozpoznanie, nie wdrożenie.** Kończy się odpowiedzią i pomiarem, nie
+przepisaniem silnika. Uruchomić wcześnie, bo wynik może mocno uprościć S1.
+
+**Na własność:** `agent-os-module/spike/json-output.ts` (nowy katalog, poza `src/`).
+Nie dotyka niczego produkcyjnego.
+
+**Skąd pomysł:** karta z zamkniętymi wartościami już *udaje* tabelę, a szkielet
+wyciągamy parsowaniem markdownu. Jeśli model potrafi zwrócić od razu strukturę, cały
+krok parsowania znika — a z nim klasa błędów, którą dziś łapiemy ręcznie (parser czytał
+dwie listy naraz i sklejał je; próg 120 słów na rozpad prozy; zgadywanie, która sekcja
+jest listą scen).
+
+**Do sprawdzenia, po kolei:**
+
+1. Czy `dashscope-intl` w trybie zgodności przyjmuje `response_format: {"type":
+   "json_object"}` razem z `stream: true`, `modalities:["text"]` i wejściem wideo.
+   To trzy warunki naraz i żaden nie jest oczywisty — strumieniowanie jest u nas
+   obowiązkowe, a wymuszony JSON bywa wyłączany właśnie przy multimodalnym wejściu.
+2. Czy bez `response_format`, samym promptem, model trzyma poprawny JSON przez całą
+   odpowiedź. Zmierzyć na tych samych plikach z cache: ile odpowiedzi parsuje się za
+   pierwszym razem, na dziesięć prób.
+3. Czy jakość **treści** nie spada. To jest realne ryzyko, nie formalność: wymuszona
+   struktura potrafi zubożyć obserwacje. Porównać tę samą kartę prozą i JSON-em na tym
+   samym filmie — czy JSON nadal zauważa kieszenie w [0:13] i paletę pomieszczenia.
+4. Czy JSON zmniejsza, czy zwiększa rozpad. Może pomóc, bo struktura ogranicza; może
+   zaszkodzić, bo model dopycha pola, żeby wyglądały na wypełnione.
+
+**Haczyk, który przesądza o decyzji — proza psuje się łagodnie, JSON całkowicie.**
+Urwany teardown wciąż daje się czytać do miejsca urwania; urwany JSON to zero. A my
+mamy realne ryzyko urwania: limit wyjścia to 4000 tokenów, a tryb „jedno i drugie"
+generuje dwa dokumenty naraz i na długim filmie może się nie zmieścić. Więc jeśli JSON
+wchodzi, to razem z naprawą niedomkniętego JSON-a albo z zapasowym przebiegiem, a nie
+zamiast nich.
+
+**Rekomendacja na wypadek, gdyby punkty 1–3 wyszły dobrze:** JSON jako *jedyne* źródło
+prawdy, a markdown generowany z niego po stronie przeglądarki. Jedna struktura, wiele
+widoków — i wtedy szkielet, tabela porównawcza trzydziestu filmów oraz plan scen dla
+`auto/assemble` wypadają z tej samej rzeczy za darmo. Dziś każdy z nich wyciągamy
+osobno z tekstu.
+
+**Test odbioru:** raport z liczbami — ile z dziesięciu odpowiedzi było poprawnym
+JSON-em w każdym wariancie, oraz zestawienie obok siebie tej samej karty prozą i
+JSON-em. Rekomendacja „wchodzimy / nie wchodzimy" z uzasadnieniem opartym na tych
+liczbach, nie na przeczuciu.
 
 ---
 
