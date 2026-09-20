@@ -180,6 +180,25 @@ export function fmt(sec: number): string {
   return h ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${m}:${ss}`;
 }
 
+/** How long the file actually is.
+ *
+ *  yt-dlp reports a duration for any site it has an extractor for, and none at all for a
+ *  plain file URL — a GitHub asset, an S3 link, anything that is just an .mp4. That came
+ *  back as `duration: 0`, and zero is not a harmless gap here: the rhythm, every scene's
+ *  seconds and the whole brief are derived from it, and `seconds: 0` is exactly what the
+ *  Director's own guard refuses. Measured: a 20.07s reference video analysed fine and
+ *  then reported 0:00, so nothing downstream could be built from it.
+ *
+ *  So when the metadata has no duration, the downloaded file is asked instead. */
+export async function probeDuration(file: string): Promise<number> {
+  try {
+    const out = await run("ffprobe",
+      ["-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", file], 60_000);
+    const n = Number(String(out).trim());
+    return Number.isFinite(n) && n > 0 ? Math.round(n) : 0;
+  } catch { return 0; }
+}
+
 // ── download ───────────────────────────────────────────────────────────────────
 /** Download once; follow-up questions about the same video reuse the cache. */
 export async function fetchVideo(url: string): Promise<{ info: VideoInfo; src: string }> {
@@ -217,6 +236,15 @@ export async function fetchVideo(url: string): Promise<{ info: VideoInfo; src: s
     await run("yt-dlp", ["--no-playlist", "-q", "--no-warnings", "-N", "8",
       "-S", "res:480", "-f", "bv*+ba/b",
       "--merge-output-format", "mp4", "-o", src, url]);
+  }
+  // Asked only when the extractor had nothing to say, so a site that reports its own
+  // duration keeps it and costs no extra process.
+  if (!info.duration) {
+    const probed = await probeDuration(src);
+    if (probed) {
+      info = { ...info, duration: probed };
+      await writeFile(infoFile, JSON.stringify(info));
+    }
   }
   return { info, src };
 }
