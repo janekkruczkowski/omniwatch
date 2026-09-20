@@ -57,9 +57,15 @@ with tempfile.TemporaryDirectory() as tmp:
     patched = route.read_text(encoding="utf-8")
     check("scene cap widened to 60", "slice(0, 60)" in patched)
     check("graphics patch applied", "omni-graphic-v2" in patched)
-    check("pending-brief guard applied", "omni-author-pending" in patched)
-    check("guard is a 503 with a reason",
-          'pending: "omniwatch-script-author"' in patched and "status: 503" in patched)
+    # The pending 503 guard is retired: the Flash author writes the brief now. What must
+    # survive from that patch is the object-body parse and `hasOwn`, which the author needs.
+    check("body-object patch applied", "const body = parsed as Record<string, unknown>;" in patched)
+    check("a non-object body is a 400, not a 500",
+          '"Send a JSON object with a topic."' in patched and "const body = parsed as Record<string, unknown>;" in patched)
+    check("hasOwn is defined for the author", "const hasOwn = (o: Record<string, unknown>, k: string)" in patched)
+    check("flash author applied", "omni-author-flash-v3" in patched)
+    check("the author is the pinned loopback transport, with no tool surface",
+          '"http://127.0.0.1:4202/v1/responses"' in patched and '"tools"' not in patched)
     check("VideoDirector bridge applied", "omni-brief" in director.read_text(encoding="utf-8"))
 
     before = {p: p.read_text(encoding="utf-8") for p in (route, director)}
@@ -68,7 +74,7 @@ with tempfile.TemporaryDirectory() as tmp:
     after = {p: p.read_text(encoding="utf-8") for p in (route, director)}
     check("second run exits clean", second.returncode == 0, second.stderr.strip()[-300:])
     check("second run changes nothing", before == after)
-    check("second run says already patched", second.stdout.count("already patched") >= 3, second.stdout)
+    check("second run says already patched", second.stdout.count("already patched") >= 4, second.stdout)
 
 failed = [n for n, ok, _ in checks if not ok]
 print(f"\n{len(checks) - len(failed)}/{len(checks)} checks passed")

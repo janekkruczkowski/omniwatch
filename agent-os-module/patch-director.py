@@ -349,31 +349,73 @@ CAP_NEW = '''  const wanted = Math.max(1, Number(body.sceneCount) || Math.round(
 # documentation describes exactly that ("a bearer sent to the plain loopback Responses
 # endpoint"). Nothing here starts an agent, and no other provider ever receives the brief:
 # if Flash cannot answer, the request fails with the reason instead of falling through.
+BODY_DONE = "const body = parsed as Record<string, unknown>;"
+
+BODY_HASOWN_OLD = 'export const dynamic = "force-dynamic";'
+BODY_HASOWN_NEW = '''export const dynamic = "force-dynamic";
+
+/** Was the key *sent*, whatever its value? An empty angle or an empty hint list is still
+ *  a brief arriving, and `"angle" in body` is the question we mean. */
+const hasOwn = (o: Record<string, unknown>, k: string) => Object.prototype.hasOwnProperty.call(o, k);'''
+
+BODY_CEILING_OLD = '  const sceneCount = Math.max(3, Math.min(60, Number(body.sceneCount) || Math.round(durationSec / 22)));'
+BODY_CEILING_NEW = """  const wanted = Math.max(1, Number(body.sceneCount) || Math.round(durationSec / 22));
+  // Over the ceiling is a refusal, not a silent trim: a brief cut down without saying so
+  // is the same lie as an ignored angle, and it is cheaper to say no before the model runs.
+  if (wanted > 60) {
+    return NextResponse.json({ error: `sceneCount ${wanted} is above the 60-scene ceiling — split the brief.` }, { status: 413 });
+  }
+  const sceneCount = Math.max(3, Math.min(60, wanted));"""
+
+BODY_PARSE_OLD = '''export async function POST(req: Request) {
+  const body = await req.json().catch(() => ({}));'''
+BODY_PARSE_NEW = '''export async function POST(req: Request) {
+  const parsed: unknown = await req.json().catch(() => null);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return NextResponse.json({ error: "Send a JSON object with a topic." }, { status: 400 });
+  }
+  const body = parsed as Record<string, unknown>;'''
+
+
+def patch_script_body_object():
+    """Parse the body as an object, and give the route `hasOwn`.
+
+    This used to ride along with the pending-brief guard. That guard was retired by the
+    Flash author, and when it went, this went with it — but the Flash author still needs
+    `hasOwn` and still expects `body` to be the parsed object, so on a pristine tree it
+    could not find its anchors and refused to patch at all. The two concerns are separate
+    now: a body that is not a JSON object is a 400 rather than a 500 whoever authors the
+    script, so this stands on its own and runs first.
+    """
+    try:
+        s = read(script_route)
+    except OSError:
+        return None
+    if BODY_DONE in s:
+        return "already patched"
+    for old, new in ((BODY_HASOWN_OLD, BODY_HASOWN_NEW), (BODY_PARSE_OLD, BODY_PARSE_NEW),
+                     (BODY_CEILING_OLD, BODY_CEILING_NEW)):
+        s, hit = sub1(s, old, new)
+        if not hit:
+            return None
+    write(script_route, s)
+    return "patched"
+
+
 FLASH_SENTINEL = "omni-author-flash-v3"
 
 FLASH_IMPORT_OLD = 'import { spawn } from "node:child_process";'
 FLASH_IMPORT_NEW = 'import { spawn } from "node:child_process";\nimport { readFileSync } from "node:fs";\nimport os from "node:os";'
 
-FLASH_PENDING_OLD = '''  // ── the OmniWatch brief is not authorised here yet (sentinel: omni-author-pending) ──
-  // A request that carries a brief — an angle, or per-scene visual hints, even an empty
-  // angle or an all-b-roll hint list — is asking for a script written *to* that brief.
-  // The author that would do that is not authorised or set up on this machine, and the
-  // legacy path would write a script that ignores both fields while looking as if it
-  // honoured them. So it stops here, before any provider is called.
-  if (hasOwn(body, "angle") || hasOwn(body, "sceneHints")) {
-    return NextResponse.json({
-      error: "OmniWatch script authoring is pending authorization/setup on this machine. "
-        + "This request carries a brief (angle/sceneHints); the legacy author ignores those fields, "
-        + "so nothing was written.",
-      pending: "omniwatch-script-author",
-    }, { status: 503 });
-  }
-'''
+FLASH_PENDING_OLD = '  const body = parsed as Record<string, unknown>;\n'
 
-FLASH_PENDING_NEW = '''  // The brief author is now live and authorised (sentinel: omni-author-flash-v3): a request
+FLASH_PENDING_NEW = '''  const body = parsed as Record<string, unknown>;
+
+  // The brief author is now live and authorised (sentinel: omni-author-flash-v3): a request
   // carrying `angle` or `sceneHints` — even an empty angle or an all-b-roll hint list — is
   // written by Flash through the model-only loopback transport below, never by the legacy
   // authors, which would ignore those fields while looking as if they honoured them.
+
 '''
 
 FLASH_SCENECOUNT_OLD = '  const sceneCount = Math.max(3, Math.min(60, wanted));'
@@ -651,6 +693,7 @@ def patch_script_flash_author():
 if __name__ == "__main__":
     for name, fn in (("VideoDirector", patch_director), ("auto/script cap", patch_script_cap),
                      ("auto/script graphics", patch_script_graphics),
+                     ("auto/script body object", patch_script_body_object),
                      ("auto/script flash author", patch_script_flash_author)):
         r = fn()
         print(f"  · {name}: {r or 'could not patch — Agent OS has changed shape here'}")

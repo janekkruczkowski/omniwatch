@@ -381,17 +381,43 @@ analizę.
 ucina twarz". Bez tego agent konsekwentnie produkuje błędy, których nie umie zobaczyć.
 Nie ma tego dziś nigdzie w planie.
 
-### Dług: pokrycie instalatora (zmierzone 2026-09-20)
+### Instalator — sprostowanie i faktyczny dług (zmierzone 2026-09-20)
 
-`grep` po `install.sh` i `patch-*.py` → **brak pokrycia** dla `src/lib/omniwatchAssets.ts`
-i `src/app/api/omniwatch/assets/route.ts`. Świeża instalacja **po cichu nie ma featuru
-własnych assetów** — działa tylko dlatego, że pliki wgrano ręcznie do żywej instalacji.
-Pierwszy `install.sh` na czystym drzewie lub update Agent OS nadpisujący zakładki i
-funkcja znika.
+**Sprostowanie.** Wcześniejszy zapis „installer nie pokrywa assetów" był **błędny** —
+wynikał z grepa po nazwach plików, podczas gdy `install.sh` kopiuje całe katalogi
+(`cp -R src/lib/.`, `cp -R src/app/api/omniwatch/.`). Wszystkie **nasze** pliki są
+instalowane, łącznie z `omniwatchAssets.ts` i route'em assetów. UI własnych assetów też
+jest pokryte, bo `patch-director-ui-v2.py` podmienia cały komponent z
+`patches/VideoDirector.bridge-ui.tsx`.
 
-Podważa to punkt „finalne E2E na świeżym `git HEAD` + pełny `install.sh`": dla assetów
-ten test **dziś nie może przejść**. `fresh-install.py` sprawdza cap, graphics, guard
-i bridge — assetów nie ma na tej liście.
+**Faktyczny dług był gdzie indziej i był poważniejszy.** `fresh-install.py` dawał
+**7/10**, a wśród porażek jedna nie była nieaktualnym testem:
 
-Każde nowe pole modelu musi wejść do instalatora razem z testem świeżej instalacji,
-inaczej powtórzymy ten sam błąd.
+```
+· auto/script flash author: could not patch — Agent OS has changed shape here
+```
+
+Autor Flash — to, co sprawia, że brief w ogóle zostaje napisany — **nie instalował się na
+świeżym drzewie**. Przyczyna: `patch_script_pending_guard` został usunięty z pliku, ale
+`patch_script_flash_author` nadal zastępował jego wynik. Żywa instalacja przeszła przez
+stan pośredni (guard → autor), którego świeża instalacja nie miała jak odtworzyć.
+
+Okazało się przy tym, że wycofany patcher instalował trzy rzeczy, z których **dwie są
+żywym zachowaniem** i musiały zostać: parsowanie ciała jako obiektu (400 zamiast 500),
+helper `hasOwn` oraz pułap `wanted` z odmową **413**. Wycofany był tylko guard 503.
+
+Naprawa: nowy `patch_script_body_object()` instaluje te trzy rzeczy samodzielnie i biegnie
+przed autorem Flash, który kotwiczy się teraz na czymś istniejącym na czystym drzewie.
+
+Idempotencja wykrywana jest **po skutku**, nie po sentinelu — żywa instalacja powstała
+przed tym patcherem i nie ma znacznika, więc test oparty na markerze wstrzyknąłby w nią
+drugi `hasOwn` przy ponownym `install.sh`. Zweryfikowane: ponowny przebieg na żywym pliku
+daje 4× „already patched", plik bez zmian, `hasOwn` dokładnie raz.
+
+Stan po naprawie: **13/13**. Świeża instalacja odtwarza żywy route **funkcjonalnie
+identycznie**; różni się dwiema pustymi liniami w sekcji grafik — to dryf żywego pliku po
+ręcznej synchronizacji, nie błąd patcha. Byte-identity nie jest więc dziś osiągnięta i nie
+jest twierdzona.
+
+Wniosek na przyszłość bez zmian: każde nowe pole modelu musi wejść do instalatora razem
+z testem świeżej instalacji.
