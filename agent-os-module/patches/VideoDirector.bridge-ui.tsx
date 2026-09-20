@@ -48,6 +48,10 @@ interface DirectorRun {
      *  own topic, "review" is a video about the source. Absent on an older saved run,
      *  which is read as "pattern" — the shape this bridge always had. */
     purpose?: "pattern" | "review";
+    /** the watched video's own frame. A vertical reference must not come back as a
+     *  landscape film: the assembler already takes an output size, and before this the
+     *  Director never sent one, so every clone was 1920x1080 whatever it copied. */
+    output?: { width: number; height: number };
     hints: { role?: string; visual?: { kind?: string; hint?: string; frameUrl?: string }; seconds?: number; idea?: number }[];
     source?: string | null;
   };
@@ -138,7 +142,14 @@ export default function VideoDirector() {
           topic: b.topic || "",
           mode: b.mode === "voiceover" ? "voiceover" : "avatar",
           durationSec: Math.max(15, Math.min(600, Math.round(secs.reduce((a: number, n: number) => a + n, 0)))),
-          omni: { seconds: secs, graphic, angle: b.angle, purpose: b.purpose === "review" ? "review" : "pattern", hints, source },
+          omni: {
+            seconds: secs, graphic, angle: b.angle,
+            purpose: b.purpose === "review" ? "review" : "pattern",
+            hints, source,
+            ...(Number(b.source?.width) > 0 && Number(b.source?.height) > 0
+              ? { output: { width: Number(b.source.width), height: Number(b.source.height) } }
+              : {}),
+          },
         }));
       })
       .catch(() => {});
@@ -408,7 +419,13 @@ export default function VideoDirector() {
       }));
       const a = await fetch("/api/video/auto/assemble", {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ title: run.script.title, brand: run.brand, mode: run.mode, narrationUrl, avatarUrl: run.avatar.url, scenes }),
+        // `output` is sent only when the brief knew the reference's frame; without it the
+        // assembler keeps its own landscape default, so a run with no brief is unchanged.
+        body: JSON.stringify({
+          title: run.script.title, brand: run.brand, mode: run.mode,
+          narrationUrl, avatarUrl: run.avatar.url, scenes,
+          ...(run.omni?.output ? { output: run.omni.output } : {}),
+        }),
       }).then((r) => r.json());
       if (!a.ok) { setErr(a.error || "assemble failed"); setBusy(null); return; }
       const rr = await fetch("/api/video/hyperframes/render", {

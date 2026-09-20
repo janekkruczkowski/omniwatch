@@ -148,3 +148,34 @@ test("the import normalises the brief's purpose rather than trusting it", () => 
   assert.match(source, /purpose: b\.purpose === "review" \? "review" : "pattern"/,
     "the ?brief= import must normalise purpose the way the route does");
 });
+
+// ── the reference's own frame ────────────────────────────────────────────────────────────
+// The clone benchmark turns on this: a 720x1280 reference must not come back as a
+// 1920x1080 film. The assembler has taken an output size for a while; the Director never
+// sent one, so every render used the landscape default whatever it was copying.
+
+test("a portrait brief sends the assembler a portrait frame", () => {
+  const run = runWith({
+    seconds: [3], graphic: [false], angle: "", hints: [], source: "ref",
+    output: { width: 720, height: 1280 },
+  });
+  assert.deepEqual(run.omni.output, { width: 720, height: 1280 });
+  assert.match(source, /\.\.\.\(run\.omni\?\.output \? \{ output: run\.omni\.output \} : \{\}\)/,
+    "the assemble body must carry the brief's frame");
+});
+
+test("the import reads the frame off the brief's source, and only when it is real", () => {
+  // width/height are absent on a brief made before the recreate route stored them, and a
+  // zero must not become an output size the assembler then clamps to its minimum.
+  assert.match(source, /Number\(b\.source\?\.width\) > 0 && Number\(b\.source\?\.height\) > 0/,
+    "a missing or zero dimension must leave output unset");
+  assert.match(source, /output: \{ width: Number\(b\.source\.width\), height: Number\(b\.source\.height\) \}/,
+    "the frame must come from the brief's own source block");
+});
+
+test("a run with no brief still sends no output, so the landscape default stands", () => {
+  const payload = view.briefPayload(runWith(undefined));
+  assert.equal(payload.output, undefined);
+  assert.match(source, /assembler keeps its own landscape default/,
+    "the reason a brief-less run is unchanged should be stated where it is done");
+});

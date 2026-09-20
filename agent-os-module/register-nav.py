@@ -638,6 +638,14 @@ FRAMING_POST_NEW = (
 FRAMING_CALL_OLD = '  const html = buildHtml({ title, brand, total, narrDur, hasAudio, audioSrc, pipSrc, broll, scenes: scenesTimed, perSceneBroll });'
 FRAMING_CALL_NEW = '  const html = buildHtml({ title, brand, total, narrDur, hasAudio, audioSrc, pipSrc, broll, scenes: scenesTimed, perSceneBroll, width: outW, height: outH });'
 
+# The render manifest has to agree with the composition it points at. buildHtml above was
+# taught the caller's frame and this was left at the base file's landscape constant, so a
+# portrait request produced a portrait stage rendered into a 1920x1080 file — the shape the
+# whole clone benchmark turns on. Measured before the fix: brief source 720x1280, output
+# 1920x1080.
+FRAMING_MANIFEST_OLD = '    name: slug, composition: "index.html", width: 1920, height: 1080, fps: 30, duration: total,'
+FRAMING_MANIFEST_NEW = '    name: slug, composition: "index.html", width: outW, height: outH, fps: 30, duration: total,'
+
 
 def patch_assemble_route_framing():
     """Let a scene keep its whole image, and let the frame be the caller's shape.
@@ -659,7 +667,7 @@ def patch_assemble_route_framing():
         FRAMING_DIM_OLD, FRAMING_POSITION_OLD, FRAMING_HTML_OLD, FRAMING_PLACEMENTS_OLD,
         FRAMING_PUSH_SCENE_OLD, FRAMING_PUSH_LOOP_OLD, FRAMING_VIDEO_OLD, FRAMING_CSS_OLD,
         FRAMING_STAGE_OLD, FRAMING_DOWNLOAD_OLD, FRAMING_ASSIGN_OLD, FRAMING_VALIDATE_OLD,
-        FRAMING_POST_OLD, FRAMING_CALL_OLD,
+        FRAMING_POST_OLD, FRAMING_CALL_OLD, FRAMING_MANIFEST_OLD,
     )
     for anchor in anchors:
         if s.count(anchor) != 1:
@@ -684,6 +692,7 @@ def patch_assemble_route_framing():
         (FRAMING_VALIDATE_OLD, FRAMING_VALIDATE_NEW),
         (FRAMING_POST_OLD, FRAMING_POST_NEW),
         (FRAMING_CALL_OLD, FRAMING_CALL_NEW),
+        (FRAMING_MANIFEST_OLD, FRAMING_MANIFEST_NEW),
     ):
         s = s.replace(old, new, 1)
     write(route, s)
