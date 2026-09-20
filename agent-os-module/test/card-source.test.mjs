@@ -78,13 +78,34 @@ test("a card with no metadata yet asks for no frame instead of guessing", () => 
 });
 
 test("the brief is built from the card's own video, even while the tab is on B", () => {
-  const body = view.briefBody(cardA, A, "cold email teardown", "  the myth  ", "voiceover");
+  const body = view.briefBody(cardA, A, "cold email teardown", "  the myth  ", "voiceover", "pattern");
   assert.deepEqual(body, {
     url: "https://youtu.be/video-A", title: "A — the teardown", seconds: 47,
     text: cardA.text, topic: "cold email teardown", angle: "the myth", mode: "voiceover", lang: "en",
+    purpose: "pattern",
   });
-  assert.notEqual(view.briefBody(cardA, A, "t", "", "avatar").url, B.url);
-  assert.equal(view.briefBody(cardA, A, "t", "", "avatar").angle, "");
+  assert.notEqual(view.briefBody(cardA, A, "t", "", "avatar", "pattern").url, B.url);
+  assert.equal(view.briefBody(cardA, A, "t", "", "avatar", "pattern").angle, "");
+});
+
+test("briefBody carries purpose through unchanged, and the default UI choice is pattern", () => {
+  // purpose passes through exactly as given — this is a pass-through, not a
+  // normalisation, so a caller's own value (whatever it is) survives untouched.
+  assert.equal(view.briefBody(cardA, A, "t", "", "avatar", "pattern").purpose, "pattern");
+  assert.equal(view.briefBody(cardA, A, "t", "", "avatar", "review").purpose, "review");
+  // The component itself defaults the control's state to "pattern" — a person who
+  // never touches the purpose control gets exactly today's behaviour.
+  assert.match(source, /useState<"pattern" \| "review">\("pattern"\)/, "the purpose control defaults to pattern");
+});
+
+test("review survives to the payload sent to /api/omniwatch/recreate", () => {
+  const body = view.briefBody(cardA, A, "cold email teardown", "the myth", "voiceover", "review");
+  assert.equal(body.purpose, "review");
+  assert.deepEqual(body, {
+    url: "https://youtu.be/video-A", title: "A — the teardown", seconds: 47,
+    text: cardA.text, topic: "cold email teardown", angle: "the myth", mode: "voiceover", lang: "en",
+    purpose: "review",
+  });
 });
 
 test("a streaming or failed card does not offer a brief", () => {
@@ -110,7 +131,7 @@ test("the component wires the card's own source into frames, seeking and the bri
   assert.match(source, /onSeek=\{\(sec\) => seek\(sec, c\.src\?\.id\)\}/, "Answer seeks the card's video");
   assert.match(source, /source=\{c\.src \?\? null\}/, "Answer gets the card's source");
   assert.match(source, /canBuildBrief\(card, source\) && source/, "MakeSimilar is gated on the finished card");
-  assert.match(source, /briefBody\(card, source, topic, angle, mode\)/, "the brief body carries the angle");
+  assert.match(source, /briefBody\(card, source, topic, angle, mode, purpose\)/, "the brief body carries the angle and purpose");
   assert.match(source, /setAngle/, "MakeSimilar has its own angle field");
   // and the old wiring is gone
   assert.doesNotMatch(source, /onSeek=\{seek\} frame=\{frame\}/, "no tab-wide seek/frame left on cards");
