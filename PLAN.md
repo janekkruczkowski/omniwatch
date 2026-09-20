@@ -295,3 +295,103 @@ zmianach, pozostałe bridge'y. Nic nie jest commitowane ani pushowane.
 Znane ograniczenie tej maszyny: ffmpeg bez `drawtext` (brak `ffmpeg-full`), więc
 ffmpegowa ścieżka grafik nie ma dowodu end-to-end; produkcyjnie karty renderuje HTML w
 kompozycji montażu.
+
+---
+
+## Kierunek modelu danych (sesja 2026-09-20, przejęcie po Codeksie)
+
+Ustalenia z przeglądu researchu `smoke-e2e/COMPARE-hypit-openshorts-omniwatch.md`
+(Hypit + OpenShorts — **inspiracja, nie kod**; licencja Hypit zabrania multi-tenant
+i odsprzedaży) oraz z promptu SEALCaM podanego jako wzór analizy wideo.
+
+### Diagnoza
+
+Ograniczeniem nie jest renderer (Agent OS i Hypit celują w ten sam HyperFrames) ani
+jakość modelu, tylko **reprezentacja**. Płaskie `scenes[]` — jedna scena, jeden element,
+brak czasu poniżej sceny, brak geometrii — nie pozwala zapisać zdań, które wypowiada
+każdy montażysta: napis na konkretnym słowie, grafika **nad** ujęciem zamiast **zamiast**
+ujęcia, powrót do źródła na 2,3 s od 12:04, „nie kadruj tego na środek, to tabela".
+
+Część rzeczy opisanych w dokumentach jako decyzje jest w istocie objawem tego modelu:
+„scena graficzna nie generuje b-rolla" wynika z braku tracków, a odrzucony MP4 miał zły
+kadr nie z powodu doboru materiału, tylko przez zaszyte `object-fit: cover`
+(`assemble/route.ts:401`).
+
+### Ograniczenie nadrzędne — to jest cudzy projekt
+
+Budujemy na Agent OS. Ktoś może chcieć używać swojej prostszej wersji i **nie wolno mu
+jej zepsuć**. Stąd każda zmiana modelu jest wyłącznie **addytywna**:
+
+- `scenes[]` bez nowych pól renderuje się dokładnie jak dziś;
+- nowe pola są opcjonalne, renderer ma fallback;
+- `VISUAL_IR_V1` (wersjonowany słownik + walidator) jest mechanizmem tej zgodności,
+  nie ozdobą — brief napisany w prostszej wersji ma się dalej czytać.
+
+Prawdziwe ryzyko dla cudzej instalacji leży w **installerze**, nie w schemacie — patrz
+dług poniżej.
+
+### Dwa poziomy zaufania w scenie
+
+SEALCaM jest wewnętrznie sprzeczny: każe opisywać „tylko to, co obserwowalne", a zarazem
+zgadywać korpus i ogniskową (ARRI Alexa, 35 mm) — tego w kadrze nie widać. Dla briefu
+generatywnego zmyślony obiektyw jest nieszkodliwy; dla `sourceEvidence` zmyślony **czas**
+to fałszywy cytat z cudzego materiału. Dlatego rozdzielamy per scena:
+
+- **evidence** — czasy, interwały źródła, `sourceRefId`. Walidowane wobec manifestu
+  źródła. Model nie ma prawa ich wymyślić: brak danych = błąd, nie zgadywanka.
+- **direction** — S/E/A/L/Ca/M wg SEALCaM. Wolno inferować, bo to instrukcja dla
+  generatora, nie cytat. Ograniczone do enumów słownika.
+
+To daje regule „zakaz wymyślania czasów" mechanizm, którego dotąd nie miała.
+
+Z SEALCaM przejmujemy wprost także **wymuszenie wszystkich pól w każdej scenie** oraz
+jawne `"No music"` / `"No script"` zamiast pominięcia — pole puste i pole nieobecne niosą
+różną informację (ten sam instynkt co `502 incomplete:"graphic-slots"` zamiast fejkowej
+karty `stat`).
+
+### Kolejność prac (odwrócona względem planu Codeksa)
+
+Codex planował `purpose:'review'` **przed** prymitywem, którego ten tryb wymaga.
+
+1. **Mapa `sampling` na elemencie wideo** — interwały źródła z rate/loop/hold. Bez niej
+   „własny review ze wskazaniem fragmentów" jest nie do zapisania, a `sourceRefId`
+   zostaje metadanymi, których renderer nie umie użyć. Leży na ścieżce krytycznej
+   następnego featuru, więc nie jest pracą dodatkową.
+2. **Strategia kadrowania wg OpenShorts** — enum TRACK / GENERAL / SPLIT / SCREENCAST /
+   INSET / WIDE + furtka `content_h`, która **wyłącza** przycinanie boków dla wykresów
+   i tabel. Likwiduje hardcode z `assemble/route.ts:401`; wprost adresuje warunek odbioru
+   „trafny, poprawnie wykadrowany b-roll".
+3. **Rozdzielenie tracków od scen** — dopiero gdy 1 i 2 to wymuszą. Właściwa naprawa
+   misklasyfikacji `GRAPHIC_WORDS` i tego, że karta grafiki zabija b-roll. Razem z tym
+   wchodzi `VISUAL_IR_V1`.
+4. **Wzbogacenie promptu autora** — słownik direction zamiast `role` w 120 znakach.
+   Output ma taki kształt, o jaki prosimy; dziś prosimy cienko.
+
+### Korekta do STAN-PROJEKTU.md
+
+Zapis „proxy analizy 240×426 → luka jakościowa źródła" jest **błędną diagnozą**.
+OpenShorts świadomie analizuje w `ANALYSIS_MAX_WIDTH = 640` i renderuje natywnie w ffmpeg
+z mastera — analiza w niskiej rozdzielczości to poprawna praktyka, nie luka. Luką jest
+**pobranie mastera**. Rozstrzygnąć, zanim ktoś „naprawi" proxy i bez potrzeby spowolni
+analizę.
+
+### Brakujący punkt: pętla oceny
+
+Żeby agent montował samodzielnie, potrzeba czegoś, co patrzy na wyjście i mówi „ten kadr
+ucina twarz". Bez tego agent konsekwentnie produkuje błędy, których nie umie zobaczyć.
+Nie ma tego dziś nigdzie w planie.
+
+### Dług: pokrycie instalatora (zmierzone 2026-09-20)
+
+`grep` po `install.sh` i `patch-*.py` → **brak pokrycia** dla `src/lib/omniwatchAssets.ts`
+i `src/app/api/omniwatch/assets/route.ts`. Świeża instalacja **po cichu nie ma featuru
+własnych assetów** — działa tylko dlatego, że pliki wgrano ręcznie do żywej instalacji.
+Pierwszy `install.sh` na czystym drzewie lub update Agent OS nadpisujący zakładki i
+funkcja znika.
+
+Podważa to punkt „finalne E2E na świeżym `git HEAD` + pełny `install.sh`": dla assetów
+ten test **dziś nie może przejść**. `fresh-install.py` sprawdza cap, graphics, guard
+i bridge — assetów nie ma na tej liście.
+
+Każde nowe pole modelu musi wejść do instalatora razem z testem świeżej instalacji,
+inaczej powtórzymy ten sam błąd.
