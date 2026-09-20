@@ -211,3 +211,25 @@ test("a pattern brief keeps the adaptation rules, and is what an absent purpose 
     assert.doesNotMatch(text, /REVIEW of that video/, JSON.stringify(body));
   }
 });
+
+// ── card rules that a rendered frame caught ─────────────────────────────────────────────
+// A real render showed "1  1. Plan at the finish line" (the card draws its own numerals
+// and the model had numbered the labels too) and the card's title repeated verbatim in the
+// lower-third caption under it. Which card kind the model picks is its own call, so these
+// assert the INSTRUCTION reaches the model rather than hoping for a ranking card.
+
+test("the author is told not to number ranking labels, and not to echo the card title", async () => {
+  const r = await post({
+    topic: "t", angle: "a",
+    sceneHints: [{ role: "list", visual: { kind: "graphic", hint: "three items" }, seconds: 3, idea: 0 }],
+  });
+  // The stub answers with a script that has no card, so this brief's graphic slot is
+  // correctly refused with 502 incomplete:"graphic-slots". The prompt went out before that,
+  // which is what these assert — the rules, not the verdict.
+  assert.equal(r.status, 502, "a declared card slot returned without a card must not pass");
+  assert.equal(r.body.incomplete, "graphic-slots");
+  const text = JSON.parse(fetchCalls[0].init.body).input[0].content[0].text;
+  assert.match(text, /draws its own 1, 2, 3/, "the numbering rule must reach the model");
+  assert.match(text, /never "1\. Plan at the finish line"/, "the rule must show the failure it prevents");
+  assert.match(text, /must ADD to the card, not repeat it/, "the caption rule must reach the model");
+});

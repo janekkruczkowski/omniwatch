@@ -15,7 +15,7 @@
 //   --source <dir>      agent-os source root, the one with src/ and node_modules/
 //                       [AGENT_OS_SOURCE]
 //   --route <file>      route under test [<source>/src/app/api/video/auto/assemble/route.ts]
-//   --installer <file>  register-nav.py used by --repro [<test dir>/../register-nav.py]
+//   --installer <file>  register-nav.py used by --repro [<module root>/register-nav.py]
 //   --tsc <bin>         tsc used by --repro to typecheck the regenerated route
 //                       [<source>/node_modules/.bin/tsc]
 //   --scratch <dir>     where scratch files go [mkdtemp]
@@ -51,7 +51,9 @@ if (!SOURCE) {
   process.exit(2);
 }
 const ROUTE = args.route || path.join(SOURCE, "src/app/api/video/auto/assemble/route.ts");
-const INSTALLER = args.installer || path.join(HERE, "..", "register-nav.py");
+// HERE is test/assemble, so the module root is two levels up — the installer never
+// lived in test/. The old one-level path made --repro fail before it checked anything.
+const INSTALLER = args.installer || path.join(HERE, "..", "..", "register-nav.py");
 const TSC = args.tsc || path.join(SOURCE, "node_modules/.bin/tsc");
 const SCRATCH = args.scratch || await mkdtemp(path.join(tmpdir(), "assemble-probe-"));
 const GEN = path.join(SCRATCH, "gen");

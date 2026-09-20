@@ -524,7 +524,9 @@ FLASH_GRAPHIC_RULE_NEW = '''- A beat is sometimes better shown as a CARD than as
   {"kind": "stat", "title": "optional", "value": "required", "caption": "optional"}
   {"kind": "compare", "title": "optional", "left": {"label": "required", "items": ["required"]}, "right": {"label": "required", "items": ["required"]}}
   {"kind": "quote", "text": "required", "attribution": "optional"}
-  A malformed card is discarded, so fill every required field. Every other scene gets no "graphic" key at all.'''
+  A malformed card is discarded, so fill every required field. Every other scene gets no "graphic" key at all.
+- A ranking card draws its own 1, 2, 3 down the left. Do NOT number the labels — write "Plan at the finish line", never "1. Plan at the finish line", or the screen reads "1  1. Plan at the finish line".
+- A card scene's caption still appears under the card, so it must ADD to the card, not repeat it. If the card's title is "THE THREE FIXES", that scene's caption must say something else — the caption is the spoken beat, the title is the label.'''
 
 FLASH_TRANSPORT = '''
 // ── Flash author transport (sentinel: omni-author-flash-v3) ───────────────────
