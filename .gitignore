@@ -1,0 +1,14 @@
+.env
+.cache/
+summaries/
+__pycache__/
+demo/video/
+demo/timings.json
+demo/raw.mp4
+demo/badge.png
+.DS_Store
+demo/omniwatch-demo-small.gif
+demo/omniwatch-demo.mp4
+demo/badge8.png
+.omc/
+.claude/
