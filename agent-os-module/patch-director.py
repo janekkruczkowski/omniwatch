@@ -627,6 +627,9 @@ async function authorWithFlash(system: string, prompt: string): Promise<AuthorRe
 function planAuthorship(body: Record<string, unknown>, sceneCount: number) {
   const has = (k: string) => Object.prototype.hasOwnProperty.call(body, k);
   const angle = typeof body.angle === "string" ? body.angle.trim().slice(0, 300) : "";
+  // Anything that is not "review" is "pattern" — the same rule the recreate route applies,
+  // so an older client that sends no purpose keeps exactly the behaviour it always had.
+  const purpose = body.purpose === "review" ? "review" : "pattern";
   const hints = Array.isArray(body.sceneHints) ? body.sceneHints.slice(0, 60) : [];
   const cardSlots: number[] = [];
   const lines: string[] = [];
@@ -647,16 +650,29 @@ function planAuthorship(body: Record<string, unknown>, sceneCount: number) {
   // note is capped, so a long brief cannot blow up the request.
   let structure = lines.join("\\n");
   if (structure.length > HINTS_TOTAL_CHARS) structure = `${structure.slice(0, HINTS_TOTAL_CHARS)}\\n  (references truncated at ${HINTS_TOTAL_CHARS} characters)`;
+  // The two modes want opposite things from the same plan — "pattern" must not reuse the
+  // source's words, "review" is about the source and must name it — so the branch lives
+  // here, once, instead of being left for the author to infer from the angle.
+  const review = purpose === "review";
+  const headNote = review
+    ? `\\n\\nSCENE PLAN FROM THE VIDEO BEING REVIEWED — what it did, and when:\\n${structure}\\n`
+    : `\\n\\nSCENE PLAN FROM THE VIDEO THAT WAS WATCHED — a reference to adapt, never text to copy:\\n${structure}\\n`;
+  const followNote = review
+    ? `This is a REVIEW of that video: its subject IS the source, so name it and say what it did. The seconds above are the timing to hit and the plan is the order to move through. Ground every claim in the composition references above — never invent a quotation, a statistic or a timestamp, and say nothing about parts of the video the references do not record. If a reference does not tell you something, leave it out rather than filling the gap.\\n`
+    : `How closely to follow it is a judgement call, and the person's angle decides it. What transfers is the PATTERN — the order of beats, the rhythm (the seconds above are the timing to hit), and the kind of each scene — and what changes is the subject, the imagery and every word. Keep the structure that carries the meaning; do not force a whole-clone when the person's topic is better served by a different shape.\\n`;
+  const closingNote = review
+    ? `The imagery is the person's OWN: no excerpt of the reviewed video is cut into this film. So never write narration that points at it playing on screen — no "watch this", no "here you can see". Describe what you are discussing instead.`
+    : `Treat the composition references as evidence about how the reference video worked, not as content to reproduce. Do not reuse any sentence from the video that was watched.`;
   const structureNote = lines.length
-    ? `\\n\\nSCENE PLAN FROM THE VIDEO THAT WAS WATCHED — a reference to adapt, never text to copy:\\n${structure}\\n` +
-      `How closely to follow it is a judgement call, and the person's angle decides it. What transfers is the PATTERN — the order of beats, the rhythm (the seconds above are the timing to hit), and the kind of each scene — and what changes is the subject, the imagery and every word. Keep the structure that carries the meaning; do not force a whole-clone when the person's topic is better served by a different shape.\\n` +
+    ? headNote +
+      followNote +
       (cardSlots.length
         ? `REQUIRED: scene${cardSlots.length === 1 ? " " : "s "}${cardSlots.join(", ")} ${cardSlots.length === 1 ? "is" : "are"} a CARD, not footage. ${cardSlots.length === 1 ? "That scene" : "Each of those scenes"} MUST include a "graphic" object with kind "ranking" | "stat" | "compare" | "quote" and its own data, written from THIS topic and THIS script's own narration. A card scene returned without its "graphic" object is an incomplete answer.\\n`
         : "") +
       `Every scene that is not listed above gets no "graphic" key.\\n` +
-      `Treat the composition references as evidence about how the reference video worked, not as content to reproduce. Do not reuse any sentence from the video that was watched.`
+      closingNote
     : "";
-  return { briefDriven: has("angle") || has("sceneHints"), angle, cardSlots, structureNote };
+  return { briefDriven: has("angle") || has("sceneHints"), angle, cardSlots, structureNote, purpose };
 }
 '''
 

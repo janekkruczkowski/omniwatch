@@ -44,6 +44,10 @@ interface DirectorRun {
    *  `omni` at all, which is what makes "start over" mean start over. */
   omni?: {
     seconds: number[]; graphic: boolean[]; angle?: string;
+    /** what the narration is allowed to be: "pattern" retells the watched rhythm for your
+     *  own topic, "review" is a video about the source. Absent on an older saved run,
+     *  which is read as "pattern" — the shape this bridge always had. */
+    purpose?: "pattern" | "review";
     hints: { role?: string; visual?: { kind?: string; hint?: string; frameUrl?: string }; seconds?: number; idea?: number }[];
     source?: string | null;
   };
@@ -80,6 +84,9 @@ export function briefPayload(run: DirectorRun) {
     durationSec: run.durationSec,
     sceneCount: omni.seconds.length,
     angle: omni.angle ?? "",
+    // Sent whenever a brief is attached, so the author never has to guess which of the two
+    // it is being asked for. An older saved run has no purpose and means "pattern".
+    purpose: omni.purpose ?? "pattern",
     sceneHints: omni.hints.map((h, i) => ({
       role: h.role,
       visual: h.visual,
@@ -131,7 +138,7 @@ export default function VideoDirector() {
           topic: b.topic || "",
           mode: b.mode === "voiceover" ? "voiceover" : "avatar",
           durationSec: Math.max(15, Math.min(600, Math.round(secs.reduce((a: number, n: number) => a + n, 0)))),
-          omni: { seconds: secs, graphic, angle: b.angle, hints, source },
+          omni: { seconds: secs, graphic, angle: b.angle, purpose: b.purpose === "review" ? "review" : "pattern", hints, source },
         }));
       })
       .catch(() => {});

@@ -172,3 +172,42 @@ test("a request with neither field keeps the legacy path, and never touches the 
   assert.ok(r.providerCalls > 0, "the legacy author (Grok) was never called");
   assert.ok(!fetchCalls.some((c) => c.url === FLASH_URL), "a brief-less request must never reach the Flash author");
 });
+
+// ── purpose: the brief's mode must actually reach the author ────────────────────────────
+// A control that is carried and ignored is the failure this route already refuses for the
+// angle. These cases read what would have gone to the model and assert the instruction
+// itself changes, not merely that the field survived the trip.
+
+const sentText = () => JSON.parse(fetchCalls[0].init.body).input[0].content[0].text;
+
+test("a review brief tells the author it is reviewing the source, and forbids inventing evidence", async () => {
+  const r = await post({
+    topic: "what this keynote actually claimed", angle: "the number nobody checks",
+    purpose: "review",
+    sceneHints: [{ role: "hook", visual: { kind: "broll", hint: "Speaker in medium close-up" }, seconds: 4, idea: 0 }],
+  });
+  assert.equal(r.status, 200);
+  const text = sentText();
+  assert.match(text, /REVIEW of that video/, "the author must be told this is a review");
+  assert.match(text, /never invent a quotation, a statistic or a timestamp/, "review must forbid fabricated evidence");
+  assert.match(text, /no excerpt of the reviewed video is cut into this film/,
+    "review must not let the narration point at source clips we cannot cut yet");
+  assert.doesNotMatch(text, /Do not reuse any sentence from the video that was watched/,
+    "the pattern rule contradicts a review and must not be sent with it");
+});
+
+test("a pattern brief keeps the adaptation rules, and is what an absent purpose means", async () => {
+  for (const body of [
+    { topic: "t", angle: "a", purpose: "pattern", sceneHints: [{ role: "hook", seconds: 3, idea: 0 }] },
+    { topic: "t", angle: "a", sceneHints: [{ role: "hook", seconds: 3, idea: 0 }] },            // absent
+    { topic: "t", angle: "a", purpose: "nonsense", sceneHints: [{ role: "hook", seconds: 3, idea: 0 }] }, // unknown
+  ]) {
+    fetchCalls.length = 0;
+    const r = await post(body);
+    assert.equal(r.status, 200, JSON.stringify(body));
+    const text = sentText();
+    assert.match(text, /What transfers is the PATTERN/, JSON.stringify(body));
+    assert.match(text, /Do not reuse any sentence from the video that was watched/, JSON.stringify(body));
+    assert.doesNotMatch(text, /REVIEW of that video/, JSON.stringify(body));
+  }
+});

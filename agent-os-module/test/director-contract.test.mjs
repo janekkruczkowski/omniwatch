@@ -118,3 +118,33 @@ test("the goal-breaking paths are still wired the way they were fixed", () => {
   assert.match(source, /Loading voices…/);
   assert.match(source, /No ElevenLabs voices available/);
 });
+
+// ── purpose rides with the brief ─────────────────────────────────────────────────────────
+// The recreate route has accepted `purpose` all along and nothing forwarded it, so every
+// brief silently became "pattern". These pin the two ends of that wire.
+
+test("the brief's purpose is sent to the author", () => {
+  const payload = view.briefPayload(runWith({
+    seconds: [5], graphic: [false], angle: "a", purpose: "review", hints: [], source: null,
+  }));
+  assert.equal(payload.purpose, "review");
+});
+
+test("a run saved before purpose existed still means pattern", () => {
+  // An older localStorage run has no `purpose` key at all. It must not become undefined in
+  // the payload, or the author would fall back by accident rather than by decision.
+  const payload = view.briefPayload(runWith({ seconds: [5], graphic: [false], angle: "", hints: [], source: null }));
+  assert.equal(payload.purpose, "pattern");
+});
+
+test("a run with no brief still sends exactly the two fields it always did", () => {
+  const payload = view.briefPayload(runWith(undefined));
+  assert.deepEqual(Object.keys(payload).sort(), ["durationSec", "topic"]);
+});
+
+test("the import normalises the brief's purpose rather than trusting it", () => {
+  // The route's own rule: anything that is not "review" is "pattern". The component must
+  // apply it too, or a brief carrying junk would reach the author as junk.
+  assert.match(source, /purpose: b\.purpose === "review" \? "review" : "pattern"/,
+    "the ?brief= import must normalise purpose the way the route does");
+});
