@@ -166,6 +166,81 @@ i przykładem**, nie specyfikacją wyjścia.
 
 ---
 
+## 3b. Skan kanału na żądanie — implementacja
+
+To trzeci tryb istniejącej zakładki `/omniwatch`, obok Teardown i Ask — nie nowa zakładka.
+Rozstrzyga to reguła z §3a: skan, który odpalasz sam, zostaje w zakładce bocznej; skany
+cykliczne należą do Hermesa, bo tam siedzi harmonogram.
+
+Dwa naciśnięcia, nie jedno. Pierwsze tylko wypisuje konto i **jest darmowe** — yt-dlp i tak
+zna uploady kanału, liczbę wyświetleń i długości, więc wyliczenie nic nie kosztuje. Dopiero
+drugie wydaje pieniądze. Listę z ceną przy każdym filmie i sumą na dole widzisz, zanim
+cokolwiek się pobierze. Powód jest prosty: kanał to pierwszy moment, w którym to narzędzie
+prosi o więcej niż kilka centów, a kwota, której nikt się nie spodziewał, to sposób, w jaki
+narzędzie traci człowieka.
+
+**Bez sufitu na liczbie filmów.** Opcja ALL czyta całe konto, ile by go nie było. Zmierzone
+na kanale Juliana Goldiego: **6873 filmy**, szacunek **$292,44** — wobec trzydziestu, które
+pokazałby stary limit. Nazywanie trzydziestki „całym kanałem" było po prostu nieprawdą.
+Chroni tu cena i potwierdzenie, którego żąda, a nie sufit wybrany za kogoś: powyżej $2, albo
+gdy któryś film nie ma znanej ceny, przycisk trzeba nacisnąć dwa razy, a za drugim razem
+mówi wprost „Yes — spend $X". Listy dłuższe niż 30 pozycji przychodzą z niczym zaznaczonym,
+bo odhaczenie 6873 wierszy otwierałoby ekran z setkami dolarów już wybranymi. Jeden skan
+przyjmuje najwyżej 500 filmów jako zabezpieczenie po stronie serwera i ekran mówi o tym
+przed wyborem, nie po nim.
+
+**Pokrycie platform, zmierzone 2026-09-20:**
+
+- **YouTube** — lokalnie przez yt-dlp. `youtube.com/@JulianGoldieSEO` zwrócił 424 000
+  subskrybentów i listę z zakładek uploads i shorts, z wyświetleniami i długościami.
+- **TikTok** — też lokalnie przez yt-dlp. `tiktok.com/@zachking`: płaska lista podaje
+  `view_count`, `like_count`, `duration` i `timestamp`.
+- **Instagram** — nie działa. yt-dlp sam oznacza swój ekstraktor profilu jako zepsuty i bez
+  ciasteczek pada. Instagram idzie więc ścieżką Apify przez Hermesa, tą samą co Scout, i
+  ekran mówi wprost, że to kosztuje — zamiast powtarzać obietnicę darmowego listowania tuż
+  przed opłatą. Apify zwraca 25 najnowszych, więc to nigdy nie jest całe konto.
+
+**Luka, którą trzeba było obsłużyć.** Zakładka Shorts nie podaje w ogóle długości (sprawdzone).
+Shorty to materiał, który to narzędzie czyta najlepiej, więc nie mogły wszystkie zostać bez
+ceny. YouTube sam ogranicza short do trzech minut, więc ten sufit jest ceną — pokazywaną jako
+sufit (`≤$0,047`), nie jako kwota. Mylenie się w górę to jedyny bezpieczny kierunek.
+
+**Kalibracja wyceny: 170 tokenów na klatkę**, nie ~120, bo model płaci również za ścieżkę
+dźwiękową. Ta liczba odtwarza przebiegi zmierzone w §3: dziewięciominutowy film wychodzi
+$0,029 przy zmierzonych 2,8 centa, a 65-minutowy kurs ląduje koło dwudziestu centów, tak jak
+zmierzono. Test na żywo: pięć najczęściej oglądanych filmów Juliana to $0,08 razem.
+
+**Historia skanów.** Kopia w Vaulcie jest dla agentów — to proza w datowanym pliku, i szukanie
+w niej tego, co się odpaliło w zeszłym tygodniu, oznaczało grzebanie po Obsidianie. Każdy skan
+leży więc także w całości na dysku, jako JSON w `~/.agentic-os/omniwatch/channels/`, a zakładka
+wypisuje je pod „Scans you have run": konto, temat, liczba filmów, data i faktyczny koszt.
+Otwarcie jednego jest darmowe — wraca z dysku, nie jest oglądane drugi raz — i pisze „spent
+when this ran", zamiast udawać świeży wydatek. Sprawdzone od początku do końca: skan zapisany,
+wylistowany i odtworzony z nietkniętym teardownem na 18 178 znaków.
+
+**Zapis pamięci** bez zmian względem reguły z §3a: `logToVault`, folder `OmniWatch Channels`,
+jeden datowany plik dziennie, jedna sekcja na film.
+
+**Porządek:** najpopularniejsze albo najnowsze. Najpopularniejsze czyta 60 uploadów w głąb
+przed sortowaniem, bo „najpopularniejsze" nic nie znaczy, jeśli widać tylko ostatnią garstkę.
+
+**Przegląd kodu.** Audyt nowego kodu znalazł cztery prawdziwe defekty; wszystkie naprawione.
+Dwa ważyły najwięcej. Po pierwsze, **wycena mogła wyjść poniżej faktycznego rachunku** na
+granicy trzech minut, gdzie próbkowanie spada z 10 do 2 klatek na sekundę: film wypisany jako
+181-sekundowy, a zmierzony na 180, był wyceniany na $0,0099, a rozliczony na $0,0466 — 4,7
+raza za mało. Teraz wszystko w promieniu pięciu sekund od tej granicy wycenia się po drogiej
+stronie. To był najpoważniejszy z nich, bo nie zaniżać rachunku jest całą obietnicą tej
+funkcji. Po drugie, **zadanie wciąż działające było usuwane** z pamięci po godzinie, bo
+czyszczenie patrzyło na czas startu, gdy nie było czasu końca: skan dłuższy niż godzina
+kasował sam siebie własnym odpytaniem, mówił zakładce, że dashboard się zrestartował, i
+zostawiał proces, który dalej pracował i wydawał, a nikt już na niego nie patrzył. To dotyczyło
+również istniejącej ścieżki pojedynczego filmu, nie tylko nowego kodu. Poza tym: ReDoS w
+parsowaniu adresu (200 tys. znaków odbijane teraz w 0 ms) i błąd deduplikacji, przez który ten
+sam film wypisany na obu zakładkach pod dwiema pisowniami adresu zostałby obejrzany — i
+policzony — dwa razy.
+
+---
+
 ## 4. Cztery zastosowania, w kolejności
 
 ### 4.1 Poranny digest / wejście w niszę — **v1**
@@ -448,9 +523,31 @@ Pole tematu zostało, ale zmieniło rolę: nie pisze Twojego scenariusza, tylko 
 **które decyzje przeniosą się na Twój temat, a które były nośne tylko dla ich**.
 To jest §5 („ograniczenia, nie treść") przeniesione z deklaracji do promptu.
 
+**Punkt 3 — skan kanału na żądanie (§3b).** Istniejąca zakładka `/omniwatch` dostała
+trzeci tryb, nie nową zakładkę. Listowanie konta jest darmowe (yt-dlp), oglądanie płatne,
+i cena stoi na ekranie przed pobraniem czegokolwiek.
+
+Sprawdzone: **YouTube** (@JulianGoldieSEO — 424 000 subskrybentów, 120 filmów z dwóch
+zakładek), **TikTok** (@zachking — płaska lista z metrykami), **Instagram** przez Apify, bo
+yt-dlp tam nie sięga. Pełny przebieg płatny: short Juliana obejrzany za **$0,0044**, teardown
+zapisany do Vaulta. Ścieżka porażki też sprawdzona nie teorią: TikTok zablokował IP przy
+jednym poście, a partia nie wywaliła się — błąd wylądował przy tym jednym filmie, koszt $0,
+Vault słusznie nietknięty.
+
+**Dwie rzeczy dołożone po uwagach w trakcie:** sufit trzydziestu filmów zdjęty (kanał Juliana
+ma ich 6873, nie 30 — nazywanie trzydziestki „całym kanałem" było nieprawdą), a zakładka
+dostała historię skanów, bo wcześniej po zapłaceniu za skan nie było gdzie zobaczyć, co się
+zrobiło; Vault jest archiwum dla agenta, nie widokiem dla człowieka.
+
+**Przegląd kodu znalazł cztery realne defekty** (§3b). Najpoważniejszy: wycena mogła wyjść
+**4,7 raza poniżej** rachunku na granicy trzech minut — czyli dokładnie to, czego ta funkcja
+obiecuje nie robić. Drugi dotyczył także istniejącej ścieżki pojedynczego filmu: zadanie
+dłuższe niż godzina usuwało samo siebie z pamięci i zostawiało proces, który dalej wydawał.
+
 ---
 
 ## 9. Co dalej
+Skan kanału (§3b) — zrobiony 2026-09-20. To wejście do wszystkich aplikacji.
 
 v1 = §4.1: obejrzyj zestaw filmów → ustrukturyzowana wiedza → Obsidian.
 Dwa wyzwalacze (codzienny dla śledzonych, jednorazowy dla kanału/hashtagu).
