@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
 import { startJob, getJob } from "@/lib/omniwatchJobs";
-import { apiKey, fetchVideo, watch, save, logToVault, fmt, PRICE_IN, PRICE_OUT, type Mode } from "@/lib/omniwatch";
+import { apiKey, fetchVideo, watch, save, logToVault, fmt, PRICE_IN, PRICE_OUT } from "@/lib/omniwatch";
 import {
   listChannel, listScans, parseAccount, readScan, saveScan,
   type ChannelListing, type Limit, type Order,
 } from "@/lib/omniwatchChannel";
 import type { Platform } from "@/lib/omniwatchScout";
+import { resolvePreset } from "@/lib/omniwatchPresets";
 import I18N from "@/lib/omniwatchI18n";
 
 export const runtime = "nodejs";
@@ -112,9 +113,13 @@ export async function POST(req: Request) {
   const l = I18N[String(body.lang || "")] ? String(body.lang) : "en";
   // Why the scan is being run. It used to be teardown for everyone, which quietly
   // assumed one reason: someone reading a fitness channel wants what the videos say,
-  // not how they were edited. "both" is the default because it is the richer answer
-  // and, on one request off one upload, costs a fraction of a cent more.
-  const mode: Mode = body.mode === "ask" || body.mode === "teardown" ? body.mode : "both";
+  // not how they were edited. Now it is a preset — the two structural modes plus a
+  // library of canned questions, plus an empty box for the ones nobody anticipated.
+  const { mode, ask } = resolvePreset(String(body.preset || "both"), String(body.custom || ""));
+  // A preset question replaces the topic as what is asked of each video; for the two
+  // structural modes there is no question, and the topic keeps its old meaning —
+  // what the reader is about to film.
+  const question = ask || topic;
 
   if (!urls.length) return NextResponse.json({ error: "No videos were picked." }, { status: 400 });
   // A ceiling high enough not to be in anyone's way, and low enough that a bad request
@@ -147,8 +152,8 @@ export async function POST(req: Request) {
         p.current = info.title;
         push();
 
-        const { answer, stats } = await watch(key, info, src, topic, l, mode);
-        await save(info, url, topic, answer, l, mode).catch(() => {});
+        const { answer, stats } = await watch(key, info, src, question, l, mode);
+        await save(info, url, question, answer, l, mode).catch(() => {});
 
         const cost = Number((stats.in * PRICE_IN + stats.out * PRICE_OUT).toFixed(4));
         p.cost = Number((p.cost + cost).toFixed(4));

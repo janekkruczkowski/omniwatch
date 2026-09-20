@@ -5,6 +5,7 @@ import {
   AtSign, Loader2, Play, Search, Flame, Clock, ExternalLink, FolderOpen, AlertTriangle, History,
 } from "lucide-react";
 import OmniMarkdown from "./OmniMarkdown";
+import { PRESETS } from "@/lib/omniwatchPresets";
 
 // The channel half of the OmniWatch tab: one account, on demand.
 //
@@ -70,10 +71,11 @@ export default function ChannelScan({ lang }: { lang: string }) {
   const [order, setOrder] = useState<"popular" | "newest">("popular");
   const [limit, setLimit] = useState<Limit>(10);
   const [armed, setArmed] = useState(false);
-  // What you are scanning FOR. There is no single right answer: a channel you want the
-  // knowledge from and a channel you mean to compete with are different jobs, and the
-  // first version of this assumed the second for everybody.
-  const [purpose, setPurpose] = useState<"ask" | "teardown" | "both">("both");
+  // What you are scanning FOR. There is no single right answer, and there are more than
+  // three answers — hence a preset list with an empty box on the end rather than a fixed
+  // set of modes. See omniwatchPresets.ts.
+  const [preset, setPreset] = useState("both");
+  const [custom, setCustom] = useState("");
   const [topic, setTopic] = useState("");
 
   const [finding, setFinding] = useState(false);
@@ -146,7 +148,7 @@ export default function ChannelScan({ lang }: { lang: string }) {
       const r = await fetch("/api/omniwatch/channel", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ urls, account: listing.account, topic: topic.trim(), lang, mode: purpose }),
+        body: JSON.stringify({ urls, account: listing.account, topic: topic.trim(), lang, preset, custom: custom.trim() }),
       });
       const d = await r.json();
       if (!r.ok || !d.id) { setError(d.error || `Could not start (HTTP ${r.status})`); setRunning(false); return; }
@@ -177,7 +179,7 @@ export default function ChannelScan({ lang }: { lang: string }) {
         if (d.state === "error") setError(d.error || "The scan failed");
       }
     }, 1200);
-  }, [listing, picked, topic, lang, running, loadHistory, purpose]);
+  }, [listing, picked, topic, lang, running, loadHistory, preset, custom]);
 
   // Changing the selection disarms the confirmation: the figure you agreed to is no
   // longer the figure on the button.
@@ -345,25 +347,39 @@ export default function ChannelScan({ lang }: { lang: string }) {
 
           {/* Asked here rather than on the first screen, because it is the question you
               can only answer once you can see what the account actually publishes. */}
-          <div className="flex flex-wrap items-center gap-2 mt-4 pt-3" style={{ borderTop: "1px solid var(--line-soft)" }}>
-            <span className="text-xs" style={{ color: "var(--cream-mute)" }}>What do you want from them?</span>
-            {([
-              ["ask", "What they say", "The content — for a channel you want the knowledge out of"],
-              ["teardown", "How they are made", "The craft — hook, pacing, captions, CTA, as a comparable card"],
-              ["both", "Both", "One request, both documents: a fraction of a cent more, not twice the price"],
-            ] as const).map(([id, label, why]) => (
-              <button key={id} onClick={() => { setArmed(false); setPurpose(id); }} title={why}
-                className={`pill ${purpose === id ? "pill-warn" : ""}`} style={{ cursor: "pointer" }}>
-                {label}
-              </button>
-            ))}
+          <div className="mt-4 pt-3" style={{ borderTop: "1px solid var(--line-soft)" }}>
+            <div className="text-xs mb-2" style={{ color: "var(--cream-mute)" }}>
+              What do you want out of these videos?
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {PRESETS.map((p) => (
+                <button key={p.id} onClick={() => { setArmed(false); setPreset(p.id); }} title={p.hint}
+                  className={`pill ${preset === p.id ? "pill-warn" : ""}`} style={{ cursor: "pointer" }}>
+                  {p.label}
+                </button>
+              ))}
+            </div>
+            <div className="text-xs mt-2" style={{ color: "var(--cream-mute)" }}>
+              {PRESETS.find((p) => p.id === preset)?.hint}
+            </div>
           </div>
+
+          {preset === "custom" && (
+            <textarea
+              value={custom}
+              onChange={(e) => { setArmed(false); setCustom(e.target.value); }}
+              rows={2}
+              placeholder="What should it pull out of every one of these videos? For example: which car models appear and in what colour."
+              className="w-full bg-transparent outline-none resize-none text-sm mt-3"
+              style={{ color: "var(--cream)" }}
+            />
+          )}
 
           <textarea
             value={topic}
             onChange={(e) => setTopic(e.target.value)}
             rows={2}
-            placeholder={purpose === "ask"
+            placeholder={preset !== "craft" && preset !== "both"
               ? "Something specific you are looking for across these videos (optional)"
               : "What you are about to film (optional) — each one then says what transfers to it and what does not"}
             className="w-full bg-transparent outline-none resize-none text-sm mt-3"
