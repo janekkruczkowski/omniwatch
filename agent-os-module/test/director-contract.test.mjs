@@ -86,9 +86,24 @@ test("the brief's arrays are built one-per-scene, with nothing filtered out", ()
 });
 
 test("the goal-breaking paths are still wired the way they were fixed", () => {
-  // graphics are settled without b-roll, and never sent to the generator
-  assert.match(source, /broll\[i\] = omniGraphic\[i\] \? \{ status: "done" \} : \{ status: "processing" \}/);
-  assert.match(source, /if \(!omniGraphic\[i\]\) genBroll\(i, scene\.broll_prompt\)/);
+  // graphics AND a scene's own supplied asset are settled without b-roll, and never sent
+  // to the generator — a per-scene assetUrl is as good a reason to skip b-roll as a graphic is.
+  assert.match(
+    source,
+    /broll\[i\] = omniGraphic\[i\] \|\| s\.assetUrl\s*\n\s*\? \{ status: "done", url: s\.assetUrl \}\s*\n\s*: \{ status: "processing" \}/,
+    "a graphic scene or a scene with its own assetUrl must settle as done, not processing"
+  );
+  assert.match(
+    source,
+    /if \(!omniGraphic\[i\] && !scene\.assetUrl\) genBroll\(i, scene\.broll_prompt\)/,
+    "b-roll generation must be skipped for a graphic scene AND for a scene with its own assetUrl"
+  );
+  // a scene's own asset also wins at assemble time: it must not be overridden by a graphic card
+  assert.match(
+    source,
+    /\.\.\.\(!s\.assetUrl && \(s\.graphic \|\| omniGraphic\[i\]\)/,
+    "a scene with its own assetUrl must suppress the graphic card, even if the brief marked it as one"
+  );
   // narration is not optional
   assert.match(source, /const canAssemble = audioReady && brollSettled && brollDone > 0;/);
   // the brief survives a reload because it lives on the run

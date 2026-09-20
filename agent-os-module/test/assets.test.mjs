@@ -2,20 +2,42 @@
 // actually is.
 //
 //   node --test agent-os-module/test/assets.test.mjs
+//   SOURCE=/path/to/agent-os/source/src node --test .../assets.test.mjs
+//   node --test .../assets.test.mjs --source=/path/to/agent-os/source/src
 //
 // The two questions this pins down are the ones a file upload gets wrong: the name on disk
 // is ours (so a caller cannot name a path), and the type comes from the bytes (so a file
 // called .mp4 that is really a page is refused rather than served).
+//
+// Portability: SOURCE (env or --source) says where src/lib/omniwatchAssets.ts lives; it
+// defaults to the module's own src/ next to this test (which is where sniffMedia and
+// saveAssetBytes actually live), then to the Agent OS install (AGENT_OS_SOURCE, then
+// ~/Documents/agent-os/source) — the same convention test/graphics/graphics.test.mjs uses.
+// The TypeScript compiler is always borrowed from the Agent OS install, whichever src/
+// the library itself is read from.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 
+const HERE = path.dirname(fileURLToPath(import.meta.url));
 const AGENT_OS = process.env.AGENT_OS_SOURCE || path.join(process.env.HOME || "", "Documents", "agent-os", "source");
-const LIB = path.join(AGENT_OS, "src", "lib", "omniwatchAssets.ts");
+
+const argSource = process.argv.find((a) => a.startsWith("--source="))?.slice("--source=".length);
+const SOURCE =
+  process.env.SOURCE ||
+  argSource ||
+  [path.join(HERE, "..", "src"), path.join(AGENT_OS, "src")].find((c) => existsSync(path.join(c, "lib", "omniwatchAssets.ts"))) ||
+  path.join(HERE, "..", "src");
+
+const LIB = path.join(SOURCE, "lib", "omniwatchAssets.ts");
+if (!existsSync(LIB)) {
+  throw new Error(`no omniwatchAssets.ts under ${SOURCE} — pass SOURCE=<agent-os>/src or --source=<agent-os>/src`);
+}
 const req = createRequire(path.join(AGENT_OS, "package.json"));
 
 function loadLib() {
