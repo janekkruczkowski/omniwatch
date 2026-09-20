@@ -156,6 +156,27 @@ export function groupIntoIdeas(scenes: BriefScene[]): BriefScene[][] {
   return groups;
 }
 
+// ── what each scene should show ────────────────────────────────────────────────
+//
+// Not every beat of a video is footage. The format this audience makes is full of
+// scenes that are a graphic and nothing else: a ranked list, one big number, a
+// comparison, a quote held on screen. Generating stock b-roll for those is both more
+// expensive and worse than drawing the card — HypeKit's own examples lean on exactly
+// this kind of scene, and until now our pipeline could only ask for footage.
+//
+// The decision is made from what the model said was on screen at that moment, which is
+// the only evidence available before a single asset is fetched. It is a hint, not a
+// verdict: a scene marked "graphic" that turns out to want footage is one toggle away,
+// and the words that end up on the card are written later, from the person's own
+// script, never from the video that was watched.
+const GRAPHIC_WORDS = /\b(text card|title card|caption|on[- ]screen text|graphic|chart|list|ranking|ranked|comparison|table|stat|number|price|score)\b/i;
+
+export function visualFor(role: string | undefined): BriefScene["visual"] {
+  if (!role) return { kind: "broll", hint: "" };
+  if (GRAPHIC_WORDS.test(role)) return { kind: "graphic", hint: role };
+  return { kind: "broll", hint: role };
+}
+
 /** The body /api/video/auto/assemble accepts. Durations are explicit: without them the
  *  route derives each scene's length from its narration word count, which is a fine
  *  default and the exact opposite of what we are doing here — we have the real timing

@@ -28,7 +28,7 @@ import path from "node:path";
 import { cacheKey, videoDir, lang } from "@/lib/omniwatch";
 import { parseSkeleton, type Skeleton } from "@/lib/omniwatchSkeleton";
 import {
-  newBriefId, readBrief, listBriefs, saveBrief, groupIntoIdeas, rhythmFrom,
+  newBriefId, readBrief, listBriefs, saveBrief, groupIntoIdeas, rhythmFrom, visualFor,
   type Brief, type BriefScene,
 } from "@/lib/omniwatchRecreate";
 
@@ -105,12 +105,16 @@ export async function POST(req: Request) {
   // idea cut three times; asking a video generator for three clips there costs three
   // times as much and looks worse. Every original shot keeps its own duration — the
   // grouping decides what to fetch, never how long anything holds.
-  const ideas = groupIntoIdeas(scenes).map((g) => ({
-    seconds: Number(g.reduce((a, s) => a + s.seconds, 0).toFixed(2)),
-    role: g.find((s) => s.role)?.role,
-    narration_line: "",
-    caption: "",
-  }));
+  const ideas = groupIntoIdeas(scenes).map((g) => {
+    const role = g.find((s) => s.role)?.role;
+    return {
+      seconds: Number(g.reduce((a, s) => a + s.seconds, 0).toFixed(2)),
+      role,
+      narration_line: "",
+      caption: "",
+      visual: visualFor(role),
+    };
+  });
 
   const brief: Brief = {
     id: newBriefId(),
