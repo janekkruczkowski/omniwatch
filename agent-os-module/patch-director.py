@@ -493,6 +493,15 @@ FLASH_RETURN_NEW = '''  // The count is only enforced when the caller asked for 
       }, { status: 502 });
     }
   }
+  // A card the model put on a beat too short to read is dropped back to footage. The scene
+  // keeps its narration and caption; only the unreadable card goes. This is not an error —
+  // the script is fine, one visual choice was not — so it is a silent correction, reported
+  // in `droppedCards` rather than refused.
+  const droppedCards: number[] = [];
+  for (const n of brief.shortSlots) {
+    const sc = script!.scenes[n - 1];
+    if (sc?.graphic) { delete sc.graphic; droppedCards.push(n); }
+  }
   // A card slot the script left empty is an incomplete answer, and it is reported as one.
   // Nothing is invented to fill it: a card is drawn from the script's own data, so faking one
   // from the caption would put a made-up ranking or number on screen and call it real.
@@ -508,7 +517,9 @@ FLASH_RETURN_NEW = '''  // The count is only enforced when the caller asked for 
       }, { status: 502 });
     }
   }
-  return NextResponse.json({ ok: true, script, engine });'''
+  // droppedCards is present only when something was dropped, so a caller that never sees it
+  // cannot mistake an empty array for "a card was removed".
+  return NextResponse.json({ ok: true, script, engine, ...(droppedCards.length ? { droppedCards } : {}) });'''
 
 FLASH_SLICE_OLD = '    j.scenes = j.scenes.slice(0, 60) /* omni-scene-cap: a copied rhythm can have fifty-odd scenes */.map((s: Record<string, unknown>) => ({'
 FLASH_SLICE_NEW = '''    // No slice here (omni-scene-cap): the count is validated in POST before anything is
@@ -525,6 +536,7 @@ FLASH_GRAPHIC_RULE_NEW = '''- A beat is sometimes better shown as a CARD than as
   {"kind": "compare", "title": "optional", "left": {"label": "required", "items": ["required"]}, "right": {"label": "required", "items": ["required"]}}
   {"kind": "quote", "text": "required", "attribution": "optional"}
   A malformed card is discarded, so fill every required field. Every other scene gets no "graphic" key at all.
+- A card has to be READ, so never put one on a scene shorter than 2 seconds — at one second it appears and is gone before anyone finishes the first row. Short beats are footage.
 - A ranking card draws its own 1, 2, 3 down the left. Do NOT number the labels — write "Plan at the finish line", never "1. Plan at the finish line", or the screen reads "1  1. Plan at the finish line".
 - A card scene's caption still appears under the card, so it must ADD to the card, not repeat it. If the card's title is "THE THREE FIXES", that scene's caption must say something else — the caption is the spoken beat, the title is the label.'''
 
@@ -542,6 +554,10 @@ const FLASH_MAX_BODY = 1_000_000;
 const FLASH_MAX_TOKENS = 12_000;
 /** Composition references are evidence, so they keep their detail; the per-scene budget is
  *  generous and the whole note is capped so a long brief cannot blow up the request. */
+/** Below this, a data card is on screen for less time than it takes to read one row, so
+ *  the brief's "graphic" mark is honoured as footage instead. Measured, not guessed: the
+ *  first full render held a three-row ranking for 1.08s. */
+const MIN_CARD_SECONDS = 2;
 const HINT_PER_SCENE_CHARS = 2_000;
 const HINTS_TOTAL_CHARS = 24_000;
 
@@ -634,13 +650,28 @@ function planAuthorship(body: Record<string, unknown>, sceneCount: number) {
   const purpose = body.purpose === "review" ? "review" : "pattern";
   const hints = Array.isArray(body.sceneHints) ? body.sceneHints.slice(0, 60) : [];
   const cardSlots: number[] = [];
+  /** Slots the brief timed below the reading floor. The prompt asks the model to keep cards
+   *  off them; this is how that is enforced, because a prompt rule is advice and a measured
+   *  run showed the model taking a card onto a 1s beat anyway, one time in four. */
+  const shortSlots: number[] = [];
   const lines: string[] = [];
   hints.forEach((h, i) => {
     if (!h || typeof h !== "object") return;
     const o = h as { role?: unknown; visual?: { kind?: unknown; hint?: unknown }; seconds?: unknown };
-    const kind = o.visual?.kind === "graphic" ? "graphic" : "broll";
-    if (kind === "graphic") cardSlots.push(i + 1);
     const secs = Number(o.seconds);
+    // A watched video's one-second "graphic" beat is usually a word appearing on screen.
+    // Our card vocabulary has no such thing — the four shapes are all data a person has to
+    // READ, and a three-row ranking cannot be read in a second. A measured render proved it:
+    // a 1.08s slot put a full card on screen and took it away again.
+    //
+    // So a slot too short to read is not demanded as a card. It keeps its composition
+    // reference and becomes footage, which is what a flashed word actually looks like.
+    // The real fix is a typography track separate from the scene list; until that exists,
+    // this stops the pipeline asking for something unreadable.
+    const readable = !Number.isFinite(secs) || secs <= 0 || secs >= MIN_CARD_SECONDS;
+    if (!readable) shortSlots.push(i + 1);
+    const kind = o.visual?.kind === "graphic" && readable ? "graphic" : "broll";
+    if (kind === "graphic") cardSlots.push(i + 1);
     const rawHint = typeof o.visual?.hint === "string" && o.visual.hint.trim()
       ? o.visual.hint.trim()
       : typeof o.role === "string" ? o.role.trim() : "";
@@ -674,7 +705,7 @@ function planAuthorship(body: Record<string, unknown>, sceneCount: number) {
       `Every scene that is not listed above gets no "graphic" key.\\n` +
       closingNote
     : "";
-  return { briefDriven: has("angle") || has("sceneHints"), angle, cardSlots, structureNote, purpose };
+  return { briefDriven: has("angle") || has("sceneHints"), angle, cardSlots, shortSlots, structureNote, purpose };
 }
 '''
 

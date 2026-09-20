@@ -233,3 +233,50 @@ test("the author is told not to number ranking labels, and not to echo the card 
   assert.match(text, /never "1\. Plan at the finish line"/, "the rule must show the failure it prevents");
   assert.match(text, /must ADD to the card, not repeat it/, "the caption rule must reach the model");
 });
+
+test("a card slot too short to read is asked for as footage, not as a card", async () => {
+  // Scene 1 is 1.08s — the length the first real render actually held a ranking card for.
+  // Scene 2 is 3s and stays a card. Neither loses its composition reference.
+  const r = await post({
+    topic: "t", angle: "a",
+    sceneHints: [
+      { role: "flash", visual: { kind: "graphic", hint: "a word appears" }, seconds: 1.08, idea: 0 },
+      { role: "list", visual: { kind: "graphic", hint: "three items" }, seconds: 3, idea: 1 },
+    ],
+  });
+  const text = JSON.parse(fetchCalls[0].init.body).input[0].content[0].text;
+  assert.match(text, /scene 1: 1\.08s, broll/, "a 1.08s slot must be asked for as footage");
+  assert.match(text, /scene 2: 3\.00s, graphic/, "a 3s slot stays a card");
+  assert.match(text, /REQUIRED: scene 2 is a CARD/, "only the readable slot may be demanded");
+  assert.doesNotMatch(text, /REQUIRED: scenes 1, 2/, "the short slot must not be demanded as a card");
+  assert.match(text, /a word appears/, "the short slot keeps its composition reference");
+  assert.equal(r.status, 502, "the stub still returns no card for scene 2");
+});
+
+test("a card the model puts on an unreadable beat is dropped, not refused", async () => {
+  // The prompt asks for this and a measured run showed the model ignoring it once in four,
+  // so the route enforces it. The scene survives; only its card goes.
+  const withCards = {
+    ...okScript,
+    scenes: [
+      { caption: "c1", narration_line: "one", broll_prompt: "b1", graphic: { kind: "stat", value: "3x" } },
+      { caption: "c2", narration_line: "two", broll_prompt: "b2", graphic: { kind: "stat", value: "9x" } },
+    ],
+  };
+  stubFetch((call) => {
+    if (call.url === FLASH_URL) return flashReply(withCards);
+    throw new Error(`unexpected outbound fetch: ${call.url}`);
+  });
+  const r = await post({
+    topic: "t", angle: "a",
+    sceneHints: [
+      { role: "flash", seconds: 1, idea: 0 },   // too short to read
+      { role: "list", seconds: 3, idea: 1 },    // long enough
+    ],
+  });
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.body.droppedCards, [1], "the 1s card must be reported as dropped");
+  assert.equal(r.body.script.scenes[0].graphic, undefined, "the unreadable card must be gone");
+  assert.equal(r.body.script.scenes[0].narration_line, "one", "the scene itself must survive");
+  assert.equal(r.body.script.scenes[1].graphic?.value, "9x", "the readable card must be untouched");
+});
