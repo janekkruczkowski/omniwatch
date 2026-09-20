@@ -1,0 +1,110 @@
+/* OmniWatch — the answer body, the film strip and the progress steps.
+   Everything else is Tailwind + the Midnight Aubergine primitives from globals.css. */
+
+.ow-steps { display: flex; flex-direction: column; gap: 0.6rem; }
+.ow-step {
+  display: flex; align-items: center; gap: 0.7rem;
+  color: var(--cream-dim); font-size: 0.92rem; font-weight: 500;
+}
+.ow-step i {
+  width: 20px; height: 20px; border-radius: 50%; flex: none;
+  border: 2px solid var(--line-soft); display: grid; place-items: center;
+  font-style: normal; font-size: 11px;
+}
+.ow-step.active { color: var(--cream); }
+.ow-step.active i { border-color: var(--gold); border-top-color: transparent; animation: ow-spin .8s linear infinite; }
+.ow-step.done { color: var(--cream-soft); }
+.ow-step.done i { border-color: var(--emerald); background: var(--emerald); color: #06200f; }
+.ow-step.done i::after { content: "✓"; font-weight: 800; }
+.ow-step small { margin-left: auto; font-family: var(--font-mono), monospace; font-size: 0.72rem; color: var(--cream-mute); }
+@keyframes ow-spin { to { transform: rotate(360deg); } }
+
+.ow-parts { display: flex; gap: 4px; margin-top: 0.7rem; }
+.ow-parts i { flex: 1; height: 4px; border-radius: 2px; background: var(--line-soft); transition: background .3s; }
+.ow-parts i.on { background: var(--gold); animation: ow-pulse 1s infinite; }
+.ow-parts i.ok { background: var(--emerald); animation: none; }
+@keyframes ow-pulse { 50% { opacity: .4; } }
+
+/* Film strip — one tile per slice of the video. Tiles the answer cites light up. */
+.ow-strip { display: grid; grid-template-columns: repeat(auto-fill, minmax(78px, 1fr)); gap: 6px; }
+.ow-clip {
+  position: relative; aspect-ratio: 16/9; border-radius: 8px; overflow: hidden;
+  background: var(--bg-elev); border: 1px solid var(--line-soft); cursor: pointer;
+}
+.ow-clip img { width: 100%; height: 100%; object-fit: cover; opacity: .3; filter: grayscale(1); transition: all .4s; }
+.ow-clip span {
+  position: absolute; left: 4px; bottom: 3px; padding: 1px 5px; border-radius: 4px;
+  font-family: var(--font-mono), monospace; font-size: 9px; font-weight: 600;
+  background: rgba(0,0,0,.65); color: var(--cream);
+}
+.ow-strip.scanning .ow-clip img { opacity: .85; filter: none; }
+.ow-strip.scanning .ow-clip::after {
+  content: ""; position: absolute; inset: 0; width: 40%;
+  background: linear-gradient(90deg, transparent, rgba(212,165,116,.55), transparent);
+  animation: ow-scan 1.4s ease-in-out infinite;
+}
+@keyframes ow-scan { from { transform: translateX(-100%); } to { transform: translateX(260%); } }
+.ow-clip.hit { border-color: var(--gold); box-shadow: 0 0 0 1px var(--gold), 0 0 18px rgba(212,165,116,.35); }
+.ow-clip.hit img { opacity: 1; filter: none; }
+.ow-clip.hit::before {
+  content: "★"; position: absolute; top: 3px; right: 4px; z-index: 2;
+  width: 15px; height: 15px; border-radius: 50%; background: var(--gold); color: #2a1b00;
+  font-size: 9px; line-height: 15px; text-align: center; font-weight: 800;
+}
+
+/* The answer itself */
+.ow-md { font-size: 0.97rem; line-height: 1.7; color: var(--cream-soft); }
+.ow-md h2 {
+  font-family: var(--font-mono), monospace; font-size: 0.72rem; font-weight: 700;
+  letter-spacing: .12em; text-transform: uppercase; color: var(--gold);
+  margin: 1.6rem 0 .7rem;
+}
+.ow-md h2:first-child { margin-top: 0; }
+.ow-md .lead p { font-size: 1.06rem; line-height: 1.65; color: var(--cream); }
+.ow-md p { margin: .5rem 0; }
+.ow-md strong { color: var(--cream); font-weight: 600; }
+.ow-md code {
+  font-family: var(--font-mono), monospace; font-size: .82rem;
+  background: var(--bg-elev); padding: 1px 6px; border-radius: 5px; color: var(--gold-soft);
+}
+.ow-md ul { list-style: none; padding: 0; margin: 0; }
+.ow-md li { position: relative; padding-left: 18px; margin: .45rem 0; }
+.ow-md li::before {
+  content: ""; position: absolute; left: 3px; top: .65em;
+  width: 5px; height: 5px; border-radius: 50%; background: var(--gold-deep);
+}
+
+/* A timestamp is a button: it seeks the player. */
+.ow-ts {
+  font-family: var(--font-mono), monospace; font-size: .74rem; font-weight: 600;
+  color: var(--gold-soft); background: rgba(212,165,116,.10);
+  border: 1px solid rgba(212,165,116,.28); border-radius: 6px;
+  padding: 1px 6px; margin-right: 4px; cursor: pointer; white-space: nowrap;
+}
+.ow-ts:hover { background: var(--gold); color: #1a1208; border-color: var(--gold); }
+
+/* Evidence / visual sections carry the real frame next to every bullet. */
+.ow-evidence {
+  border: 1px solid rgba(212,165,116,.22); border-radius: 14px;
+  background: linear-gradient(180deg, rgba(212,165,116,.06), transparent);
+  padding: .9rem 1rem .3rem;
+}
+.ow-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--font-mono), monospace; font-size: .66rem; font-weight: 700;
+  letter-spacing: .08em; color: var(--gold);
+  background: rgba(212,165,116,.10); border: 1px solid rgba(212,165,116,.28);
+  padding: 3px 9px; border-radius: 99px; margin-bottom: .7rem;
+}
+.ow-evidence li { display: grid; grid-template-columns: 156px 1fr; gap: 12px; padding: 0 0 .7rem; margin: 0 0 .7rem; border-bottom: 1px dashed var(--line-deep); }
+.ow-evidence li:last-child { border: 0; }
+.ow-evidence li::before { display: none; }
+.ow-evidence li img { width: 156px; border-radius: 8px; border: 1px solid var(--line-soft); }
+.ow-tl li { display: grid; grid-template-columns: 92px 1fr; gap: 10px; align-items: center; padding-left: 0; }
+.ow-tl li::before { display: none; }
+.ow-tl li img { width: 92px; border-radius: 6px; border: 1px solid var(--line-deep); }
+
+@media (max-width: 640px) {
+  .ow-evidence li { grid-template-columns: 1fr; }
+  .ow-evidence li img { width: 100%; }
+}

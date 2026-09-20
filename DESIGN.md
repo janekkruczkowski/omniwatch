@@ -1,0 +1,462 @@
+# OmniWatch — dokument projektowy
+
+> Stan: do decyzji. Powstał z rozmowy 2026-09-20, po dwóch dniach budowania rzeczy,
+> których nie umieliśmy wytłumaczyć. Bez kodu. Kod dopiero pod zatwierdzoną wersją.
+
+---
+
+## 1. Czym to jest
+
+**Wideo to ta część internetu, której agent nie umie przeczytać.** Strony, dokumenty,
+posty na X — to wszystko Hermes czyta. Wideo jest dla niego nieprzezroczyste.
+OmniWatch daje mu oczy.
+
+To jest **zdolność, nie zakładka**. Jedna zdolność wpięta w kilka miejsc, a nie jeden produkt.
+
+---
+
+## 2. Reguła: kiedy oglądanie bije transkrypt
+
+Transkrypt jest zawsze tańszy i w wielu niszach wystarcza. Decyzja **nie jest o koszcie
+(patrz §3), tylko o dziedzinie**. Oglądaj, kiedy przekaz jest w obrazie. Trzy znaki:
+
+1. **Nie ma ścieżki mówionej.** Film niemy, muzyka, napisy na ekranie. Transkryptu fizycznie nie ma.
+2. **Informacja jest wizualna.** Zestawienia kolorów, tabela z pomiarem, wykres, ekran aplikacji,
+   kroki wyklikane w interfejsie, ćwiczenie pokazane ciałem.
+3. **Mechanizmem jest czas.** Długość hooka, moment cięcia, sekunda pojawienia się produktu.
+
+Przypadek negatywny, nazwany wprost: **gadająca głowa tłumacząca temat.** Taki film *jest*
+swoim transkryptem. Dwa dni robiliśmy demo na filmach Juliana, czyli na najgorszym
+możliwym materiale dla tego narzędzia. To tłumaczy, dlaczego na pytanie „co daje
+obejrzenie" nie było dobrej odpowiedzi.
+
+### Dowód, że ta reguła nie jest teoretyczna
+
+**a0) Test A/B przeciw grupie kontrolnej — 2026-09-20, rozstrzygający.**
+Film `Fz89dJTZsko` „Everything That Burns More Fat Than Jogging" (21:26, 4 mln wyświetleń),
+wybrany dlatego, że **ma już notatkę z transkryptu** w `raw/transcripts/` i zasila dwie strony
+pojęciowe. Czyli istnieje grupa kontrolna.
+
+To był **trudny** przypadek, nie łatwy: Jeremy wypowiada większość liczb na głos,
+więc transkrypt (3919 słów) zawiera ich sporo. Ale urywa się dokładnie w trzech miejscach:
+*„here's all the raw data"*, *„here's how I ended up ranking them"* i *„this study…"*.
+
+Co dołożyło obejrzenie (**540 225 tokenów, 173 s, ~8,1 centa**):
+
+- **Pełna tabela surowych danych [19:27]**, dwie sztuki (Jeremy i Dennis), kolumny
+  EXERCISE | Duration | Calorie Burn | Calories/Minute | Carb vs Fat Burn, po 12 wierszy.
+  To **96 komórek**. Transkrypt zawiera z nich jakieś 25, rozrzuconych po 4 tysiącach słów
+  wraz z żartami o Dennisie. Kolumny `Calories/Minute` i `Carb vs Fat` dla wszystkich
+  dwunastu aktywności nie padają w narracji prawie wcale.
+- **Oba rankingi końcowe w całości** — 24 pozycje. Z narracji da się wyłuskać cztery
+  (najlepsze i najgorsze każdego z nich).
+- **Cytowanie badania [16:45]**, którego w transkrypcie nie ma w ogóle: *Exercise Medicine*,
+  DOI `10.26644/em.2018.008`, „Caloric Expenditure Estimation Differences between an
+  Elliptical Machine and Indirect Calorimetry", A. Page Glave, Jennifer J. Didier,
+  Gary L. Oden, Matthew C. Wagner, n = 20. Transkrypt mówi w tym miejscu tylko, że maszyny
+  mylą się „o 10 do 30%".
+- Post Dwayne'a Johnsona ze zrzutu [16:06], słupki porównawcze [15:23, 15:45],
+  odczyt maszyny kontra odczyt maski [16:34].
+
+**Kontrola na zmyślanie — trzy niezależne sprawdzenia, wszystkie przeszły:**
+1. *Zgodność z narracją.* Każda liczba wypowiedziana w filmie zgadza się z komórką odczytaną
+   z tabeli (146/69 skakanka, 178/148 sprinty, 350/260 jogging, 276/223 pływanie,
+   223→256 i 190→215 stairmaster, 97%/3% sprinty, 80% marsz).
+2. *Spójność arytmetyczna.* 146 kcal / 10 min = 14,6 kcal/min, i tak dla wszystkich wierszy.
+3. *Weryfikacja zewnętrzna.* Odpytanie rejestru DOI zwróciło ten sam tytuł, to samo
+   czasopismo, rok 2018 i **wszystkich czterech autorów w tej samej kolejności**.
+   Model odczytał zrzut artykułu naukowego z klatki filmu bezbłędnie.
+
+Model sam zaznaczył trzy rzeczy, których w tabelach nie ma (m.in. strefy tętna per aktywność),
+zamiast je dopowiedzieć.
+
+**Wniosek:** reguła z §2 broni się nawet na przypadku, który miał ją obalić. Dla Twojego wiki
+oznacza to, że 299 notatek z transkryptów ma systematyczną dziurę dokładnie tam, gdzie kanał
+pokazuje wynik zamiast go czytać. A strona `jak-kanal-cytuje-badania.md` istnieje
+i nie ma czym jej karmić, bo cytowania są na slajdach.
+
+**a) Vault, Built With Science.** W `Wiki/built-with-science/` stoi kompletne wiki zbudowane
+z **299 transkryptów** z 313 filmów Jeremy'ego Ethiera. Czternaście filmów nie ma transkryptu
+w ogóle. Ale ważniejsze jest co innego: schemat tego wiki sam rozróżnia „utlenianie tłuszczu
+(mierzone w laboratorium)" od „utraty tkanki tłuszczowej". W kanale o **pomiarach** pomiary
+są na ekranie. Film „I Proved People Have NO Idea How Many Calories They Eat" (28:46,
+4,2 mln wyświetleń) to eksperyment, którego wynikiem jest tabela. Transkrypt mówi w tym
+miejscu „as you can see here".
+
+**b) Test na żywo — przeprowadzony 2026-09-20.** Film Qwena na X
+(`2086664887560970531`), 247 sekund:
+
+```
+subs      : BRAK
+auto-subs : BRAK
+```
+
+Z warstwy tekstowej zostaje slogan z tweeta: *„turn your favorite agent harness
+multimodal-native"*. Cztery minuty demo produktu są niewidoczne dla każdego narzędzia
+w Agent OS poza tym jednym.
+
+OmniWatch na tym samym filmie: **59 303 tokeny, 95 sekund, ~0,9 centa**. Wyciągnął m.in.
+nazwy wtyczek (`core`, `video-memory`, `video-edit`, blender+freecad, edu-agent),
+pięciostopniowy pipeline pamięci wideo z indeksowaniem wektorowym i grafem relacji postaci,
+modelowanie 3D natywne dla Blendera z dialogiem autokorekty („the TV's back faces the living
+room — I'll flip the TV 180°"), generowanie lekcji z sfotografowanej kartki z zadaniem
+z biologii, ścieżki montażowe V1/B1/CC/FX w QwenPaw Creator, oraz **adres repozytorium
+i listę wspieranych harnessów: Claude Code, Openclaw, Codex, Qoder**.
+
+Model sam oznaczył, czego nie jest pewien („some small UI details are too dense or partially
+obscured to transcribe fully"), co potwierdza sensowność pola pewności z §5.
+
+**Weryfikacja odczytu:** `github.com/QwenLM/Qwen-MM-Plugins` istnieje — *„Make any agent
+harness multimodal-native"*, 2934 gwiazdki, utworzone 2026-07-29, ostatni push 2026-09-20.
+Model odczytał adres poprawnie z niemego filmu. Co to dla nas znaczy: §8a.
+
+---
+
+## 3. Koszty — zmierzone, nie szacowane
+
+Qwen: **0,15 $ / mln tokenów wejścia**, 0,47 $ / mln wyjścia.
+Film generuje ~350 tokenów na sekundę materiału przy 2 kl/s (10 kl/s dla ≤3 min).
+
+| co | ile |
+|---|---|
+| short / TikTok / Reel | **~1 cent** |
+| film 9 min (mediana Juliana) | **~2,8 centa** |
+| kurs 65 min | **~20 centów** |
+| 30 ostatnich filmów Juliana (5 h 47 min) | **1,09 $** |
+| cała warstwa A Jeremy'ego Ethiera (74 filmy) | **~4,40 $** |
+| poranny digest, 5 kanałów × 2 filmy dziennie | **~9 $ / mies.** |
+
+**Wniosek, który obala wcześniejsze rozumowanie:** twierdziłem, że przelot przez kanał to
+„kilka do kilkunastu dolarów" i na tym zbudowałem argumentację za eskalacją i za wycinaniem
+crona. Pomyliłem się o rząd wielkości. Przy tych cenach koszt **przestaje być kryterium**.
+Zostaje wyłącznie reguła z §2.
+
+Ograniczenie techniczne: sufit ~40 min na jedno żądanie. Dłuższe idą na części (mechanizm istnieje).
+
+---
+
+## 3a. Gdzie to siedzi w Agent OS — audyt istniejących zakładek
+
+Cel nadrzędny: **produkt dla społeczności Juliana**, bo jego udostępnienie i zasięg
+są kanałem dotarcia. Nie budujemy pod prywatny Vault jednej osoby.
+
+Cztery zakładki wideo i żadna się z nami nie dubluje:
+
+| zakładka | co robi | wejście |
+|---|---|---|
+| `/video` Video Studio | temat → scenariusz → ElevenLabs → awatar HeyGen → B-roll → montaż | brak materiału |
+| `/openmontage` | prompt → film kinowy (`movie_om.py` Veo 3.1 ~2-3 $, `cinematic_om.py` ~0,30 $) | brak materiału |
+| `/video-use` Video Editor | wrzucasz film + polecenie → `edit/final.mp4`, pod spodem Claude Code ze skillem video-use | **istniejący materiał** |
+| `/omniwatch` | rozumie film | **istniejący materiał** |
+
+**Luka jest na styku dwóch ostatnich.** Video Editor dostaje polecenie po ludzku
+(„wytnij nudne fragmenty"), ale nie wie, co jest w filmie — to agent z ffmpegiem,
+który zgaduje. OmniWatch wie, sekunda po sekundzie. **Nasze wyjście jest instrukcją,
+której Video Editorowi brakuje.** To nie dublowanie, to brakujące wejście.
+
+### Reguła umiejscowienia
+**Na żądanie → zakładka boczna `/omniwatch`. Cyklicznie → Hermes** (tam jest scheduler).
+Decyduje wyzwalacz, nie liczba filmów: jednorazowy skan całego kanału zostaje w zakładce
+bocznej, codzienny digest jednego kanału idzie do Hermesa.
+
+### Pamięć
+Konwencja Vaulta **Agent OS-a** (`logToVault`, tak jak pozostałe zakładki), nie autorski
+schemat z czyjegoś prywatnego wiki. Wiki Built With Science z §2a jest **dowodem
+i przykładem**, nie specyfikacją wyjścia.
+
+---
+
+## 4. Cztery zastosowania, w kolejności
+
+### 4.1 Poranny digest / wejście w niszę — **v1**
+Technicznie jedno i to samo: obejrzyj zestaw filmów, zwróć ustrukturyzowaną wiedzę,
+zapisz do Obsidiana. Różni je tylko wyzwalacz.
+
+- **codzienny:** śledzone kanały, konferencje, oficjalne keynote'y → budzisz się z wiedzą
+  zamiast oglądać. Tu cron jest uzasadniony, bo publikacje dzieją się bez ciebie.
+- **jednorazowy:** wchodzisz w nową niszę, skanujesz kanał albo hashtag, rozumiesz jak
+  ktoś prowadzi kanał. Dolar, raz.
+
+**Jedyne zastosowanie z dowodem popytu** — to na nie zareagowali ludzie pod postem na Skool.
+Reszta to nasze hipotezy. Cele nie muszą być biznesowe: siłownia, pianino, cokolwiek,
+gdzie ktoś *pokazuje*, jak się coś robi.
+
+### 4.2 Wpięcie w montaż (VideoDirector) — **v2, najtwardsze uzasadnienie finansowe**
+
+Stan obecny w `agent-os/source`:
+- `api/video/auto/script` — Claude pisze scenariusz, sceny `{caption, narration_line, broll_prompt}`
+- liczba scen = **`durationSec / 22`**, napisy rozłożone po **liczbie słów**
+- `api/video/auto/assemble` — HeyGen jako `pipSrc` z `data-duration="${narrDur}"`,
+  czyli awatar generowany na **całą długość filmu** i wyświetlany jako kółko 360 px w rogu,
+  od początku do końca
+
+Czyli rytm filmu wynika z arytmetyki na tekście, a nie z tego, co utrzymuje uwagę.
+A za awatara płacisz na pełnej długości, żeby pokazać go w rogu.
+
+OmniWatch dostarcza brakujące wejście: **zmierzony rytm zwycięzców w niszy** — ile trwa ujęcie,
+kiedy pierwsze cięcie, kiedy twarz znika na rzecz nagrania ekranu, gdzie ląduje CTA.
+To zastępuje `durationSec / 22` czymś sprawdzonym i zamienia awatara z „zawsze włączony"
+na „włączony wtedy, kiedy ma znaczenie".
+
+**Skutek finansowy:** generujesz HeyGena tylko na odcinki, gdzie twarz jest widoczna.
+Sekundy 0–6 i 45–52 zamiast dziewięciu minut. Oszczędność na realnym, płatnym API,
+policzalna przed produkcją. W tej społeczności to ma znaczenie, bo ludzie nie nagrywają
+siebie, tylko generują awatara.
+
+**To jest też odpowiedź na „moja wersja filmu Juliana".** Nie jest to przepisany scenariusz.
+Jest to plan zdjęciowy, który mówi, **czego nie musisz generować**.
+
+### 4.3 Wiedza proceduralna → agent computer-use — **najciekawsze, najbardziej ryzykowne**
+Agent ogląda czyjeś nagranie ekranu i wie, jakie kroki wykonać. Potem agent z computer-use
+odtwarza te kroki i sam nagrywa walkthrough. Film instruktażowy przestaje być gadającą głową
+z B-rollem, a staje się rzeczywistym wykonaniem czynności. Nikt tego nie robi. Nie mamy pojęcia,
+czy zadziała.
+
+### 4.4 Rozbiór reklam — **ostatni, bo zajęty**
+Sens ma, ale patrz §6. Jeśli wejdziemy, to jako pipeline (§5), nie jako osobny produkt.
+
+---
+
+## 5. Zasada wyjścia: schemat, nie proza
+
+**Najważniejsza lekcja z researchu i bezpośrednia korekta tego, co zbudowałem.**
+
+Ken Ashe, który zrobił to samo na reklamach: *„czterdzieści różnych etykiet na osiemdziesiąt
+reklam i dane są bezużyteczne. Zablokuj do ośmiu, dziesięciu kategorii, a wzorce wychodzą
+natychmiast."* I mocniej: **wartość nie leży w tym, że AI robi analizę, tylko w schemacie,
+do którego ją zmusisz.**
+
+Obecny teardown zwraca wolny markdown. To jest dokładnie ten błąd, i to tłumaczy uwagę
+„markdown renderuje się jak gówno" — problem nie był w renderowaniu. **Proza nie jest
+strukturą danych**, więc nie da się jej porównać między filmami ani policzyć z niej wzorca.
+
+Zasady:
+- **Omni wypełnia wiersze, nie wyciąga wniosków.** Zwraca pola z wymuszonymi enumami.
+- **Każdy enum ma wyjście awaryjne** („żaden znany schemat"). Bez tego model wszystko
+  nazywa Problem-Agitate-Solve, bo tak go nauczono.
+- **Pole z poziomem pewności** dla tekstu z ekranu. Model pewnie zmyśla napisy, których
+  nie umie odczytać; pole pewności pomaga w ~60% przypadków i nie naprawia problemu.
+- **Wnioski robi drugi model.** Dostaje 200 wierszy i mówi, co się klastruje.
+  To jest ta orkiestracja, o której mowa: Omni patrzy, mądrzejszy model myśli.
+
+### Wyjście, które jako jedyne nie jest kradzieżą
+
+Pytanie, które w obu znalezionych źródłach niezależnie okazało się najcenniejsze:
+
+> **„Jakiego kąta w tym rynku wyraźnie brakuje?"**
+
+Klasteryzacja mówi, co robią wszyscy. Brak mówi, co zrobić ty. Brief formułuje się przez
+wzorzec, nie przez film: nie „zrób coś jak ta reklama", tylko „trzy koncepty we wzorcu
+callout ze statystyką, kadr UGC twarzą do kamery".
+
+---
+
+## 6. Krajobraz — uczciwie
+
+- **AdLibrary.com** sprzedaje `/api/enrichment`: teardown na Gemini, 1 kredyt za reklamę
+  do 180 s, zwraca transkrypt z timestampami, odczyt strategiczny, rozbiór perswazyjny
+  i **brief odtworzeniowy 1:1**. Plus „winners scan" po długości emisji. To jest nasze v1
+  z §4.4, gotowe i na rynku.
+- **Ken Ashe** zbudował wersję domową w weekend: Ad Library + zrzuty ekranu + GPT-4 Vision + arkusz.
+- AdLibrary sam ostrzega, że **brief odtworzeniowy dziedziczy wady źródła**. Czyli „to znaczy
+  ukradnij mu film" to nie idiosynkrazja, tylko znane ograniczenie branży.
+
+Nasza realna przewaga techniczna: **ciągłe oglądanie z dźwiękiem zamiast próbkowania klatek.**
+Ktoś zmierzył oba podejścia i pisze, że ponieważ model widzi obraz, dźwięk i upływ czasu
+w jednym kontekście, osie w rodzaju „czy jest muzyka" i „w jakim języku mówią" wracają od razu,
+czego wersja z klatkami nie odzyskuje.
+
+Kontrargument, który trzeba uszanować: przy reklamach **pierwsza sekunda rozstrzyga w ~90%**,
+więc przy 15-sekundowym spocie pełne oglądanie może być wydatkiem na coś, co i tak
+rozstrzyga się na starcie.
+
+---
+
+## 7. Co wypada z tego, co już stoi
+
+| element | decyzja |
+|---|---|
+| sekcja „Your version" / napis **FILM THIS** | **usunąć.** Duplikuje Astrosa gorzej i czyta się jako „ukradnij film" |
+| teardown jako wolny markdown | **zastąpić schematem** z enumami (§5) |
+| Scout jako osobna zakładka w Hermesie | **usunąć.** Discovery na YouTubie robi Astros |
+| lista obserwowanych kont jako główne wejście | zostaje, ale jako lista do **digestu** (§4.1), nie do rankingu wygranych |
+| harmonogram, który ogląda wszystko | **zawęzić** do digestu: śledzone kanały i konferencje |
+| Apify | **przełącznik, nie domyślnie.** Zarabia na siebie tylko przy pionowym short-formie |
+| zakładka ręczna (wklej link, zapytaj) | **zostaje bez zmian.** Nigdy nie była problemem |
+| chip przy temacie w Astrosie | **dodać.** `AstrosView.tsx:491-501` ma już rząd akcji: VIDEO AGENT, NOTEBOOK, SEO. Nasz jest czwarty |
+
+Detal wart zapamiętania: **NotebookLM już dostaje film konkurenta jako źródło** — ale go czyta,
+bo bierze transkrypt. Nasz chip to jedyny w tym rzędzie, który ten film ogląda. Te dwa przyciski
+obok siebie tłumaczą produkt lepiej niż jakikolwiek opis.
+
+---
+
+## 8. Otwarte ryzyka
+
+1. **Pobranie pliku z reklamy Meta niepotwierdzone.** Dane z WinningHuntera niosą nazwę pliku
+   `.mp4`, nie adres. Linki fbcdn w odpowiedzi są z 2023 i podpisy wygasły. Do sprawdzenia,
+   zanim §4.4 w ogóle ruszy.
+2. **Mała próbka = przypadek.** Przy pięciu filmach „cztery z pięciu otwiera liczbą" może być
+   szumem. Wyjście musi mówić „cztery z pięciu" i pokazywać które, nigdy „reguła niszy".
+3. **Świeży temat nie ma danych.** Dwie godziny po premierze nikt nie ma wyświetleń.
+   Obejście: pytaj o poprzedników („jak wyglądały wygrane filmy na premierze poprzedniego
+   modelu"), bo format reakcji na premierę jest stabilny, zmienia się tylko przedmiot.
+4. **Nazwa.** „Omni" w dyskursie oznacza dziś przede wszystkim *generowanie* wideo
+   (Gemini Omni). „OmniWatch" siedzi w zajętej przestrzeni nazw.
+5. **§4.3 to czysta hipoteza.** Nie wiemy, czy z obejrzenia da się wyciągnąć kroki
+   wystarczająco precyzyjne dla agenta computer-use.
+
+6. **Brak retry w silniku — defekt znaleziony w praktyce, nie w teorii.**
+   Przy teście na filmie 21:26 Qwen zerwał połączenie bez odpowiedzi
+   (`RemoteProtocolError: Server disconnected without sending a response`).
+   Skrypt nie ma żadnego ponawiania ani backoffu, więc jedno zerwane połączenie
+   zabija cały przebieg **po** pobraniu pliku i **po** wysłaniu go na oss://.
+   Koszt i czas przepadają, użytkownik dostaje stack trace.
+
+   To jest krytyczne dla §4.1, bo poranny digest ma chodzić bez człowieka przy klawiaturze.
+   Digest, który wywala się na jednym filmie z pięciu i nic nie zapisuje, jest bezużyteczny.
+   Wymagania: ponawianie z backoffem, **zapis częściowych wyników** (film po filmie,
+   nie wszystko albo nic), i zapamiętanie, co już obejrzane, żeby ponowienie nie płaciło
+   drugi raz. Krótki film (4 min) przeszedł bez problemu, więc problem rośnie z rozmiarem żądania.
+
+7. **`PART_MAX` liczy minuty, a serwer liczy klatki — i te dwie rzeczy się rozjeżdżają.**
+   Zmierzone: ~120 tokenów na klatkę. Film Qwena 247 s przy 2 kl/s = 494 klatki = 59 tys.
+   tokenów, przeszedł. Film 1286 s przy 2 kl/s = **2572 klatki**, serwer zerwał połączenie.
+   Podzielony na 3 części po ~429 s (858 klatek każda) przeszedł bez problemu.
+
+   Haczyk: `fpsFor()` przełącza na **10 kl/s dla filmów ≤3 min**. Czyli **trzyminutowy short
+   to 1800 klatek, więc większe żądanie niż dziesięciominutowy film przy 2 kl/s (1200 klatek).**
+   `PART_MAX` wyrażony w minutach nie chroni przed tym w ogóle, a shorty to dokładnie ten
+   materiał, który chcemy skanować na TikToku. **Próg musi być liczony w klatkach
+   (`czas × fps`), nie w minutach.**
+
+   Uwaga kosztowa: podział nie jest darmowy. Jedno żądanie szacowałem na ~6,8 centa,
+   trzy części plus scalenie kosztowały 8,1 centa. Narzut kilkunastu do kilkudziesięciu
+   procent, ale w wartościach bezwzględnych to grosze.
+
+8. **Limit 480p nie działa na wideo pionowym — potwierdzony błąd, nie hipoteza.**
+   Selektor formatu to `bv*[height<=480]+ba / b[height<=480] / bv*+ba/b`.
+   Przy pionie `height` jest **dłuższym** bokiem, więc film 1080×1920 ma wysokość 1920,
+   oba człony z limitem przepadają i wchodzi **fallback bez żadnego ograniczenia**.
+
+   Widać to w cache'u: `854×480` dla filmu poziomego (limit zadziałał) obok
+   **`1080×1920`** dla pionowego (nie zadziałał). To 2,07 mln pikseli na klatkę
+   wobec 410 tys., czyli **pięciokrotny koszt klatki** — i dotyczy dokładnie
+   tego materiału, który chcemy skanować: TikToków, Reelsów i Shortów.
+   Złożone z `FPS_SHORT = 10` daje to trzyminutowy short = 1800 klatek po pięciokrotnej
+   cenie. Wszystkie kalkulacje z §3 dla short-formu są zaniżone.
+
+   Poprawka: zamiast twardego filtra na `height` użyć `-S "res:480"` — klucz `res`
+   w yt-dlp bierze **mniejszy** z wymiarów, więc działa identycznie dla obu orientacji
+   i nigdy nie spada do pełnej rozdzielczości.
+
+   To prawdopodobnie tłumaczy też awarię z §8.6 lepiej niż liczba klatek: rozmiar żądania
+   to klatki **razy koszt klatki**, a drugiego czynnika nigdzie nie kontrolowaliśmy.
+
+## 8a. Notatka: Qwen-MM-Plugins (nie jest ryzykiem)
+
+`QwenLM/Qwen-MM-Plugins` — *„Make any agent harness multimodal-native"*, 2934 gwiazdki,
+aktywnie rozwijane, wspiera Claude Code, Openclaw i Codex. Znalezione przez nasze własne
+narzędzie w niemym filmie (§2b).
+
+W pierwszej wersji tego dokumentu wpisałem to jako największe ryzyko. **To był błąd oceny.**
+Omni od początku jest modelem Qwena, więc to, że Qwen pakuje własny model we wtyczkę,
+nie zmienia naszej pozycji. Zależność jest ta sama co wcześniej, tylko w innym opakowaniu.
+Silnik nigdy nie był przewagą i nie miał być.
+
+Przewagą jest to, czego wtyczka nie robi: pobieranie z wielu platform przez yt-dlp,
+dzielenie długich filmów, cache, **zapis do Vaulta w konwencji reszty Agent OS**,
+wpięcie w Astrosa, wyciąganie rytmu montażu, rachunek za HeyGena, i interfejs dla ludzi,
+którzy nie otwierają terminala. Wtyczka celuje w developera z harnessem. Nasz użytkownik
+klika przycisk.
+
+Co z tego realnie zostaje:
+- warto przeczytać `video-memory` (pamięć długiego wideo, ekstrakcja zdarzeń, wyszukiwanie
+  po czasie), bo możemy tam znaleźć gotowe rozwiązanie problemu, który już obeszliśmy
+  własnym dzieleniem na części. To pytanie „czy jest biblioteka", nie pytanie o strategię.
+- jedyne miejsce z realnym nakładaniem się to pomysł „Hermes ogląda film na czacie".
+  Tam ich wtyczka może być lepszą drogą niż nasz własny MCP. To jest pomysł poboczny,
+  nie produkt z §4.
+
+**Potwierdzenie tezy zostaje:** dostawca modelu niezależnie uznał, że „agent nie widzi"
+to problem wart produktu.
+
+---
+
+## 8b. Dystrybucja — jak to trafia do społeczności
+
+Źródło: kurs 36 (`ai-profit-lab-7462`) w `pythonProject22/courses.sqlite`, rozdział
+„How to Make Money Fast with Affiliate Marketing", lekcje 6238, 6248, 6249.
+**Nie scrapować Skoola — to już jest zaindeksowane lokalnie, 826 lekcji.**
+
+Mechanika reshare'u (lekcja 6248, METHOD 3): **reshare nie jest automatyczny.**
+Post na X i LinkedIn → **oznaczyć go + wysłać mu DM z linkiem** → wtedy robi reshare,
+komentarz i like. Wyzwalaczem jest tag plus DM, nie sama publikacja. Prowizja **40%,
+cykliczna**. Działa też miesięczna rywalizacja: najwięcej postów do 20. dnia = 500 $.
+
+Ograniczenia, które wiążą nasz film (lekcja 6238):
+- **Nie YouTube Shorts** — brak klikalnych linków. Cel: X i LinkedIn.
+- **Twarz autora** przy własnym materiale („just use your face").
+- Link afiliacyjny **na górze i na dole** posta, przy recenzji obowiązkowy disclaimer.
+- Próg jakości jego własnymi słowami: *„would you find it interesting + entertaining?
+  If not, rewrite it"* plus storytelling i unikalność.
+
+**Nasza przewaga nad jego playbookiem.** Standardowa ścieżka to przeklejony testimonial
+albo klipowanie filmów Juliana (tak wygrywa lider rywalizacji). Wymóg „feel unique"
+jest w tym playbooku życzeniem, którego sam playbook nie spełnia. My mamy działające
+narzędzie wpięte w Agent OS, o którym on sam nagrywa. Najmocniejsza wersja posta:
+**film o narzędziu, zmontowany przez to narzędzie, z twarzą autora i jawnie powiedziane,
+że montaż zrobił agent.**
+
+Decyzja (2026-09-20): link afiliacyjny **tak**, z disclaimerem. Nie jest to wyłączność —
+gdy urośnie własny zasięg, w to miejsce wchodzą własne produkty. Rzecz do domknięcia
+na końcu, nie blokuje budowy.
+
+---
+
+## 8c. Zrobione 2026-09-20 (z dowodami)
+
+**Punkt 1 — chip w Astrosie.** `register-nav.py` dostał `patch_astros()`: idempotentna
+wstawka chipa `OMNI WATCHES IT` do rzędu akcji plus reguła CSS. Nie edytowane ręcznie,
+bo `agent-os/source` nie ma gita. `OmniWatchView` czyta `?url=`, startuje sam i wycina
+parametr z adresu, żeby przeładowanie nie płaciło drugi raz. Zweryfikowane w DOM
+i przebiegiem end-to-end.
+
+**Punkt 2 — trzy defekty silnika**, wszystkie potwierdzone pomiarem, nie rozumowaniem:
+
+- *Format pobierania.* `-S "res:480"` zamiast filtra na `height`. Stary selektor miał dwie
+  twarze naraz: TikTok **1080×1920** (pięciokrotny koszt klatki, bo żaden format nie miał
+  `height<=480` i wchodziła gałąź bez limitu) oraz YouTube Short **240 px szerokości**
+  (bo `height` 426 ≤ 480, więc brał najmniejszy — za mało, by odczytać napisy na ekranie).
+  Klucz `res` to mniejszy z wymiarów, więc jedna reguła obsługuje obie orientacje.
+- *Próg podziału w klatkach* (`MAX_FRAMES`, domyślnie 2400), nie w minutach.
+- *Ponawianie z rozróżnieniem błędów.* Zerwane połączenie, 429 i 5xx → nowa próba
+  z narastającym odstępem. 4xx → od razu wyżej. Pętla czytająca strumień też opakowana,
+  bo zerwanie w połowie zostawiało tekst ucięty wyglądający na kompletny.
+
+**Dowód:** film 21-minutowy, który wcześniej wywalał się z `RemoteProtocolError`, przeszedł
+sam: **2 części, 358 348 tokenów, 0,0558 $, 176 s, bez błędu.** Wcześniejszy ręczny przebieg
+z wymuszonym podziałem: 3 części, 0,081 $. Czyli o **⅓ taniej** przy mniejszym narzucie.
+
+**Sekcja „Your version" usunięta** — i miała wadę, której nie znaliśmy. Bez podanego tematu
+model wymyślał losową niszę (przy filmie o spalaniu tłuszczu wyszło „Productivity/Focus
+Techniques") i pisał **pod tymi samymi nagłówkami** pełny drugi rozbiór. Stąd „markdown
+renderuje się jak gówno": to nie było renderowanie, tylko dwa sklejone dokumenty.
+Po usunięciu: **6 nagłówków, 6 unikalnych**.
+
+Pole tematu zostało, ale zmieniło rolę: nie pisze Twojego scenariusza, tylko mówi,
+**które decyzje przeniosą się na Twój temat, a które były nośne tylko dla ich**.
+To jest §5 („ograniczenia, nie treść") przeniesione z deklaracji do promptu.
+
+---
+
+## 9. Co dalej
+
+v1 = §4.1: obejrzyj zestaw filmów → ustrukturyzowana wiedza → Obsidian.
+Dwa wyzwalacze (codzienny dla śledzonych, jednorazowy dla kanału/hashtagu).
+Plus chip w Astrosie, bo kosztuje jeden przycisk.
+
+Potem §4.2, bo ma liczbę na końcu (rachunek za HeyGena).
+
+§4.4 dopiero po rozstrzygnięciu ryzyka 1 i po decyzji, czy wchodzimy na zajęty rynek.
+§4.3 jako eksperyment, nie jako obietnica.
