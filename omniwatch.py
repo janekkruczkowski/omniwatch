@@ -11,7 +11,7 @@ context and sees slides, demos, code and charts.
     uv run omniwatch.py <url> [-q "question"] [--lang en]
 
 Pipeline: yt-dlp → temporary upload to Model Studio (oss://, 48 h) → one request to Omni.
-Videos longer than PART_MAX (courses etc.) are watched in equal parts in parallel, then merged.
+Videos over MAX_FRAMES (duration x fps) are watched in equal parts in parallel, then merged.
 """
 from __future__ import annotations
 
@@ -46,9 +46,11 @@ I18N = json.loads((ROOT / "static" / "i18n.json").read_text())
 LANG = os.getenv("OMNI_LANG", "en")  # answer language; see static/i18n.json
 CACHE = ROOT / ".cache"
 OUT = ROOT / "summaries"
-# Measured: 480p at the default 2 fps costs ~350 video tokens per second (8:25 -> 177k).
-# 40 min ≈ 840k tokens, leaving ~150k of the 991k input for the prompt and question. 50 min would overflow.
-PART_MAX = int(float(os.getenv("OMNI_PART_MINUTES", "40")) * 60)  # longer videos are split into equal parts
+# One request's ceiling, counted in FRAMES (duration x fps), not minutes: fps_for() jumps to
+# 10 fps below SHORT_MAX, so a 3-min short is 1800 frames while a 10-min talk is 1200 — a cap
+# in minutes cannot see that. Measured ~120 tokens/frame: 494 frames went through, 2572 were
+# dropped mid-request, 858-frame parts went through. 2400 sits between the two.
+MAX_FRAMES = max(300, int(os.getenv("OMNI_MAX_FRAMES", "2400")))
 OSS_TTL = 47 * 3600              # oss:// URLs live 48 h; refresh an hour early
 CACHE_TTL = float(os.getenv("OMNI_CACHE_HOURS", "48")) * 3600  # local videos go once Qwen's copy expires anyway
 SHORT_MAX = 3 * 60               # shorts/reels/TikToks: fast cuts, so sample at the API maximum
@@ -111,15 +113,15 @@ def fetch(url: str) -> tuple[dict, Path]:
     if not src.exists():
         # 480p is plenty for reading slides/code and keeps even a long part well under the 1 GB upload limit
         run(["yt-dlp", "--no-playlist", "-q", "--no-warnings", "-N", "8",
-             "-f", "bv*[height<=480]+ba/b[height<=480]/bv*+ba/b",
+             "-S", "res:480", "-f", "bv*+ba/b",
              "--merge-output-format", "mp4", "-o", str(src), url])
     return info, src
 
 
 def parts(info: dict, src: Path) -> list[tuple[float, Path]]:
-    """[(start_seconds, file)]. Whole video if it fits one request, else equal parts of <= PART_MAX."""
+    """[(start_seconds, file)]. Whole video if it fits one request, else equal parts of <= MAX_FRAMES."""
     seconds = float(info.get("duration") or 0)
-    n = max(1, -(-int(seconds) // PART_MAX))
+    n = max(1, -(-int(seconds * fps_for(info)) // MAX_FRAMES))
     if n == 1:
         return [(0.0, src)]
     length = seconds / n
@@ -404,7 +406,7 @@ def main():
 
     def on_event(name, **d):
         if name == "parts" and d["n"] > 1:
-            console.print(f"[dim]Longer than {PART_MAX // 60} min → {d['n']} parts watched in parallel[/]")
+            console.print(f"[dim]Over {MAX_FRAMES} frames → {d['n']} parts watched in parallel[/]")
         if name in labels and not live.is_started:
             status.update(labels[name] if d.get("n", 1) == 1 else f"[bold magenta]Omni[/] is watching {d['n']} parts…")
 

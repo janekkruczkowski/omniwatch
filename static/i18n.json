@@ -60,7 +60,7 @@
       ],
       "modeAsk": "Ask",
       "modeTeardown": "Teardown",
-      "teardownPlaceholder": "Your topic / niche (optional) — for the adaptation",
+      "teardownPlaceholder": "What you are about to film (optional) — what transfers, what does not",
       "teardownSubmit": "Take it apart →",
       "teardownCard": "Teardown: how this video is made",
       "badgeBeats": "SHOT BY SHOT"
@@ -127,7 +127,7 @@
       ],
       "modeAsk": "Pytanie",
       "modeTeardown": "Rozbiórka",
-      "teardownPlaceholder": "Twój temat / nisza (opcjonalnie) — pod adaptację",
+      "teardownPlaceholder": "Co zamierzasz nagrać (opcjonalnie) — co się przeniesie, a co nie",
       "teardownSubmit": "Rozłóż na części →",
       "teardownCard": "Rozbiórka: jak zrobiony jest ten film",
       "badgeBeats": "UJĘCIE PO UJĘCIU"
