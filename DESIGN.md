@@ -341,6 +341,23 @@ Ktoś zmierzył oba podejścia i pisze, że ponieważ model widzi obraz, dźwię
 w jednym kontekście, osie w rodzaju „czy jest muzyka" i „w jakim języku mówią" wracają od razu,
 czego wersja z klatkami nie odzyskuje.
 
+**Korekta z 2026-09-20 — wcześniejsza wersja tego akapitu była nieprawdziwa.** Pisaliśmy,
+że przewagą jest samo oglądanie obrazu, bo konkurencja czyta transkrypt. **HypeKit też
+ogląda.** Ich dokumentacja każe agentowi wyciągnąć klatki (`media frames`), skleić je
+w siatki razem z transkryptem (`media tile`) i wykryć granice ujęć (`media boundaries`),
+a potem przeczytać to modelem multimodalnym. Założenie „oni mają tylko Whispera" było
+nasze, nie ich.
+
+Różnica została, ale jest węższa i uczciwiej brzmi tak: oni **tną film na klatki dla agenta
+kodującego**, my **wysyłamy cały plik z dźwiękiem w jednym zapytaniu do modelu natywnie
+omni**. U nas taniej i prościej — jedno wywołanie zamiast pipeline'u. U nich sterowalniej —
+każdy krok da się podejrzeć i poprawić osobno. To jest wybór inżynierski, nie przewaga.
+
+**Licencja HypeKita, do zapamiętania:** zmodyfikowany Apache 2.0. Zabrania multi-tenant
+SaaS i sprzedaży pochodnych; użycie komercyjne u siebie i dla klientów jest dozwolone.
+Niezależna implementacja podobnej **architektury** jest poza zasięgiem licencji na kod.
+Czyli: ich kodu nie bierzemy, struktura jest wolna.
+
 Kontrargument, który trzeba uszanować: przy reklamach **pierwsza sekunda rozstrzyga w ~90%**,
 więc przy 15-sekundowym spocie pełne oglądanie może być wydatkiem na coś, co i tak
 rozstrzyga się na starcie.
@@ -543,6 +560,53 @@ zrobiło; Vault jest archiwum dla agenta, nie widokiem dla człowieka.
 **4,7 raza poniżej** rachunku na granicy trzech minut — czyli dokładnie to, czego ta funkcja
 obiecuje nie robić. Drugi dotyczył także istniejącej ścieżki pojedynczego filmu: zadanie
 dłuższe niż godzina usuwało samo siebie z pamięci i zostawiało proces, który dalej wydawał.
+
+---
+
+## 8d. Skan kanału — co się zmieniło po pierwszym użyciu
+
+Trzy rzeczy wyszły dopiero wtedy, kiedy ktoś tego użył, i każda była błędem projektu,
+nie implementacji.
+
+**Nie ma jednego powodu, dla którego się skanuje.** Zakładka zaczęła od dwóch pomysłów:
+co film mówi i jak jest zrobiony. To okazało się za wąskie w momencie, w którym pojawił
+się pierwszy prawdziwy powód, który był ani jednym, ani drugim — „jakie marki ubrań
+występują na ekranie", „jakiego koloru są samochody". Kanał o zrzucaniu kilogramów
+oglądamy dla treści. Kanał Juliana — dla treści **i** rzemiosła. Więc zamiast trybu
+jest **biblioteka presetów** (`omniwatchPresets.ts`: `both`, `content`, `craft`, `brands`,
+`wardrobe`, `claims`, `setting`) plus **puste pole**, bo lista nigdy nie pokryje tego,
+czego ktoś naprawdę chce. Presety nie wymagały nowej maszynerii: pytanie o film silnik
+już umie, więc preset to po prostu gotowe pytanie.
+
+Jedna linia dokleja się do każdego presetu: *trzymaj te same etykiety dla każdego filmu*.
+Kosztuje zero, a jest różnicą między trzydziestoma odpowiedziami, które da się zestawić
+obok siebie, a trzydziestoma, których się nie da.
+
+**„Cały kanał" przy limicie 30 to było kłamstwo.** Po zdjęciu sufitu opcja ALL na
+prawdziwym koncie pokazała **6873 filmy, ~292 $**. Dlatego ALL istnieje, ale zawsze
+z liczbą przed kliknięciem, nie z ostrzeżeniem ogólnym. Sufitem na jeden skan zostało 500.
+
+**Archiwum w Obsidianie to nie jest widok dla człowieka.** Vault jest dla agenta — proza
+w datowanym pliku, dobra do czytania później przez model. Człowiek, który zapłacił za
+przeskanowanie kanału, musi zobaczyć **co już przeskanował**, bez grzebania w Obsidianie.
+Stąd historia skanów zapisana obok (`~/.agentic-os/omniwatch/channels/`) i wylistowana
+w zakładce.
+
+### Progi wejścia dla źródeł — bo to decyduje, komu co pokazujemy
+
+| źródło | co trzeba mieć | listowanie | uwaga |
+|---|---|---|---|
+| YouTube | nic | darmowe (yt-dlp) | zero setupu, domyślne |
+| TikTok | nic | darmowe (yt-dlp) | zero setupu, domyślne |
+| Instagram | token Apify | **płatne** | ekran musi to mówić przed kliknięciem |
+| X (Twitter) | token Apify | **płatne** | `apidojo~tweet-scraper` |
+| Reklamy Meta | token Apify | **płatne** | `igolaizola/facebook-ad-library-scraper`, 0,30 $ / 1000, bez logowania |
+
+Wniosek, który z tej tabeli wynika i którego łatwo nie zauważyć: **reklamy Meta nie są
+funkcją dla społeczności Juliana.** Ta społeczność jest nietechniczna — „załóż konto
+i wklej token" znaczy dla niej to samo co „tej funkcji nie ma". Reklamy Meta są dla
+części e-commerce, która i tak ma Apify albo ma kogoś, kto ma. Zero-setup zostaje
+YouTube i TikTok i to one muszą wystarczać na demo.
 
 ---
 
