@@ -421,3 +421,41 @@ jest twierdzona.
 
 Wniosek na przyszłość bez zmian: każde nowe pole modelu musi wejść do instalatora razem
 z testem świeżej instalacji.
+
+---
+
+## Pełny przepływ — zmierzony 2026-09-20 (przejęcie po Codeksie)
+
+Pierwszy przebieg end-to-end na briefie `br_mua6hsr1vpyq` (24 sceny, 47 s rytmu,
+tryb lektora). Dwa filmy wyrenderowane, 1920×1080, H.264 + AAC. Szczegóły i
+komendy w `STATUS.md` (plik jest w `.gitignore`, więc tu zostaje wersja trwała).
+
+**Zamknięty CRITICAL OPEN Codexa:** autor skryptu działa. `POST /api/video/auto/script`
+→ 200, `engine:"codex"`, 24 sceny w rytmie briefu, angle w tytule, zero zdań ze
+źródła. Karty `ranking` i `quote` wyrenderowane i obejrzane na klatkach. Lektor
+ElevenLabs, montaż i render HyperFrames przechodzą (exit 0, „artifact validated").
+
+**Pięć błędów znalezionych przez ten przebieg, wszystkie naprawione:**
+
+1. `~/.hermes/active_profile` nie istniał, a `hermesStudio` spada na `"main"`,
+   `hermesWorkspace` na `"julian"` — każdy wygenerowany plik audio/obraz lądował
+   tam, gdzie serwer go nie szukał, więc **wszystko dawało 404**. Naprawione
+   utworzeniem pliku; **rozjazd domyślek w Agent OS zostaje** i wróci, jeśli plik
+   zniknie. To jest zgłoszenie do upstreamu, nie do tego modułu.
+2. `test/assemble/probe.mjs` szukał instalatora o katalog za wysoko → `--repro`
+   padał przed jakimkolwiek sprawdzeniem. Po naprawie potwierdza, że jeden przebieg
+   instalatora odtwarza żywy route assemblera.
+3. Podwójna numeracja rankingu — karta rysuje własne cyfry, model też numerował.
+4. Caption powielał tytuł karty pod nią.
+5. Karta na 1,08 s — nie do przeczytania. Slot poniżej 2 s nie jest już żądany
+   jako karta, a kartę wstawioną mimo to route zdejmuje (`droppedCards`). Sam
+   prompt nie wystarczał: model łamał regułę 3 razy na 4.
+
+**Blokady — wyłącznie poświadczenia:** MiniMax i xAI wylogowane (`hermes auth add
+minimax-oauth` / `xai-oauth`), HeyGen bez klucza (`~/.agentic-os/heygen.env`).
+Do tego czasu film nie ma b-rolla ani prezentera. Nic z tego nie leży po stronie kodu.
+
+**Nienaprawione, świadomie:** narracja 50,7 s przy rytmie 47 s (dwa zegary);
+próg 2 s dla kart jest protezą — właściwa naprawa to track typografii z sekcji
+wyżej; `/api/omniwatch/graphic` daje 500, bo ten ffmpeg nie ma `drawtext`
+(nie jest to ścieżka produkcyjna — karty renderuje HTML w montażu).
