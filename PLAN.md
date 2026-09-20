@@ -451,9 +451,20 @@ ElevenLabs, montaż i render HyperFrames przechodzą (exit 0, „artifact valida
    jako karta, a kartę wstawioną mimo to route zdejmuje (`droppedCards`). Sam
    prompt nie wystarczał: model łamał regułę 3 razy na 4.
 
-**Blokady — wyłącznie poświadczenia:** MiniMax i xAI wylogowane (`hermes auth add
-minimax-oauth` / `xai-oauth`), HeyGen bez klucza (`~/.agentic-os/heygen.env`).
-Do tego czasu film nie ma b-rolla ani prezentera. Nic z tego nie leży po stronie kodu.
+**Cel domknięty z b-rollem.** Wbudowane ścieżki b-rolla (`/api/hermes/studio/generate`
+→ MiniMax / Grok) są wylogowane, ale konto ma podłączony Higgsfield i to wystarczyło:
+`veo3_1_lite`, 4 kredyty za klip 4 s, 16:9, bez audio. Konto ma **dzienny limit generacji
+— przyjęło 5 z 23 zgłoszeń**, więc pięć klipów rozłożono cyklicznie na 23 sceny bez karty
+(powtórzone ujęcie w 57 s to normalna praktyka montażowa, ale to jest kompromis, nie
+docelowy stan). `brollCount: 23`, render 57,7 s / 1920×1080 / 51 MB.
+
+Wniosek architektoniczny: Director zna tylko MiniMax i Grok. Skoro Higgsfield działa,
+a tamte nie, **warto dodać go jako trzeci silnik b-rolla** zamiast polegać na dwóch
+wylogowanych. To najkrótsza droga do przebiegu bez ręcznego wklejania URL-i.
+
+**Nadal blokowane poświadczeniami:** prezenter HeyGen (brak klucza w
+`~/.agentic-os/heygen.env`) oraz wbudowane silniki b-rolla (`hermes auth add
+minimax-oauth` / `xai-oauth`). Nic z tego nie leży po stronie kodu.
 
 **Nienaprawione, świadomie:** narracja 50,7 s przy rytmie 47 s (dwa zegary);
 próg 2 s dla kart jest protezą — właściwa naprawa to track typografii z sekcji
