@@ -47,6 +47,11 @@ fi
 
 python3 "$HERE/register-nav.py" "$SRC"
 
+# The bridge from a watched video to a made one. Separate from register-nav.py
+# because it patches different files (the Video Director and the script route),
+# and because two things editing one registrar is how a module gets merged by hand.
+python3 "$HERE/patch-director.py" "$SRC"
+
 echo
 echo "✓ Installed. Restart Agent OS. You now have:"
 echo "    OmniWatch — in the sidebar: paste a link, ask a question or take a video apart"

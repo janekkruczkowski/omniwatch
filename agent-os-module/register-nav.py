@@ -199,8 +199,65 @@ def patch_astros():
     return "chip added"
 
 
+SCENE_SECONDS_INTERFACE_OLD = (
+    'interface SceneIn { caption?: string; narration_line?: string; brollUrl?: string }')
+SCENE_SECONDS_INTERFACE_NEW = (
+    '// seconds is optional — when a caller (e.g. the S4 "copy the rhythm" pipeline)\n'
+    '// already knows how long each cut should run, it overrides the word-count guess.\n'
+    'interface SceneIn { caption?: string; narration_line?: string; brollUrl?: string; seconds?: number }')
+
+SCENE_CAP_OLD = (
+    '  const scenesIn: SceneIn[] = Array.isArray(body.scenes) ? body.scenes.slice(0, 12) : [];')
+SCENE_CAP_NEW = (
+    '  // 12 was a hard ceiling left over from an earlier fixed-cadence version. A short\n'
+    '  // video cut every ~10s of narration already runs fifty-odd scenes, so 12 silently\n'
+    '  // dropped most of them; 60 is a generous ceiling, not a measured ideal.\n'
+    '  const scenesIn: SceneIn[] = Array.isArray(body.scenes) ? body.scenes.slice(0, 60) : [];')
+
+SCENE_WEIGHTS_OLD = (
+    '  // ---- caption time slices proportional to narration_line length ----\n'
+    '  const weights = scenesIn.map((s) => Math.max(1, (s.narration_line ?? "").trim()'
+    '.split(/\\s+/).filter(Boolean).length));')
+SCENE_WEIGHTS_NEW = (
+    '  // ---- caption time slices proportional to narration_line length ----\n'
+    '  // If the caller already knows a scene\'s rhythm (S4: cuts copied from a watched\n'
+    '  // video), that explicit `seconds` stands in for the word-count guess. It still\n'
+    '  // goes through the same normalize-to-narrDur step below, so picture and audio\n'
+    '  // can\'t drift apart even when the supplied seconds don\'t sum to narrDur exactly.\n'
+    '  const weights = scenesIn.map((s) => {\n'
+    '    if (typeof s.seconds === "number" && Number.isFinite(s.seconds) && s.seconds > 0) return s.seconds;\n'
+    '    return Math.max(1, (s.narration_line ?? "").trim().split(/\\s+/).filter(Boolean).length);\n'
+    '  });')
+
+
+def patch_assemble_route():
+    """Let an /api/video/auto/assemble caller pin a scene's length in seconds
+    instead of leaving it to the word-count guess (S4: rhythm copied from a
+    watched video). Not our file — Agent OS owns it — so this patches it the
+    same way patch_astros() patches AstrosView.tsx: three anchored replacements
+    guarded by a sentinel, safe to re-run after an Agent OS update overwrites it.
+    """
+    route = f"{src}/src/app/api/video/auto/assemble/route.ts"
+    try:
+        s = read(route)
+    except OSError:
+        return None
+    if "seconds?: number" in s:
+        return "already patched"
+
+    if SCENE_SECONDS_INTERFACE_OLD not in s or SCENE_CAP_OLD not in s or SCENE_WEIGHTS_OLD not in s:
+        return None
+
+    s = s.replace(SCENE_SECONDS_INTERFACE_OLD, SCENE_SECONDS_INTERFACE_NEW, 1)
+    s = s.replace(SCENE_CAP_OLD, SCENE_CAP_NEW, 1)
+    s = s.replace(SCENE_WEIGHTS_OLD, SCENE_WEIGHTS_NEW, 1)
+    write(route, s)
+    return "seconds override + slice(0, 60) cap applied"
+
+
 mounted = patch_hermes()
 print(f"  · Hermes:  {mounted or 'could not mount — Scout stays a top-level tab'}")
 print(f"  · Sidebar: {patch_sidebar(scout_top_level=mounted is None)}")
 print(f"  · TopBar:  {patch_topbar(scout_top_level=mounted is None)}")
 print(f"  · Astros:  {patch_astros() or 'skipped — AstrosView does not look the way we expect'}")
+print(f"  · Assemble: {patch_assemble_route() or 'skipped — assemble/route.ts does not look the way we expect'}")
