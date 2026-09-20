@@ -53,7 +53,18 @@ export const PRICE_IN = 0.15 / 1e6;
 export const PRICE_OUT = 0.47 / 1e6;
 export const STRIP = 16; // thumbnails in the timeline strip
 
-export type Mode = "ask" | "teardown";
+// Why you are watching, which is not one question.
+//
+// "ask" is what is in the video — the case where you will not sit through an hour and
+// want the content. "teardown" is how it was built, which is a different reader with a
+// different job. Scanning a channel exposed that the two are not alternatives: someone
+// studying a fitness channel wants the knowledge, someone studying a channel they mean
+// to compete with wants both, and a scan that assumed one of them was wrong half the time.
+//
+// "both" is one request, not two. The frames are what cost money and they are the same
+// frames; asking for a second document off the same upload adds output tokens only —
+// fractions of a cent — while running it twice would pay for the whole video again.
+export type Mode = "ask" | "teardown" | "both";
 export interface VideoInfo {
   id: string;
   title: string;
@@ -418,23 +429,51 @@ charts, on-screen text) that supports the answer. Prefer moments where something
 ## {jump}
 1-3 bullets starting with a single \`[{ts}]\` (no ranges) + why — the moments worth watching yourself for this question.`;
 
-const SECTIONS_TEARDOWN = `## {hook}
-What happens in the first 3 seconds — the exact words, the first shot, the on-screen text — and why it stops the scroll.
+// A fixed card rather than free prose, and this is the whole argument for the mode.
+//
+// The version before this asked for "cuts per 10 s, average shot length, camera moves,
+// zooms, b-roll, captions style, aspect ratio, transitions" and got back exactly what
+// that invites: "hard cuts dominate", "fast-paced", "engaging". True of most videos,
+// therefore useless about any of them. A reader's verdict, unimproved: it says nothing.
+//
+// The fix is the rule this project already wrote down: the value is not in the model's
+// analysis, it is in the schema you force it into. Forty free-text labels across forty
+// videos cannot be compared; ten fields with closed values can be read side by side, and
+// what an account does EVERY time — the thing no single teardown can show you — falls
+// out of the column. So the fields never vary, the values come from a list, and "unclear"
+// is available so the model can decline instead of inventing.
+//
+// The field names and values stay in English even when the prose does not. A schema
+// whose keys change per language is not a schema.
+const SECTIONS_TEARDOWN = `## {card}
+Exactly these ten lines, in this order, each as \`**Field:** value — [{ts}] evidence\`.
+Pick the value from the list given. Never invent a value, never add a field, never drop one.
+If the video does not show enough to tell, the value is \`unclear\`.
+The evidence after the dash is at most 20 words and names something actually seen or heard.
+
+*   **Hook type:** bold claim | contradiction | question | result first | problem named | cold demo | number | story open
+*   **Hook proof:** on-screen text | screen recording | physical demo | face only | number on screen | none
+*   **Information lives in:** speech | what is shown | both, saying the same thing | what is shown, unsaid
+*   **Pace:** cuts per 10 s as a number, then the longest single shot in seconds
+*   **On screen:** talking head | screen recording | b-roll | text cards | product | hands | charts — list every one that appears
+*   **Captions:** burned-in word by word | burned-in phrases | none | platform auto
+*   **Payoff lands:** within 5 s | midway | at the end | never
+*   **Asks viewer to:** nothing | follow | link in bio | comment a keyword | watch next | buy
+*   **Floor to reproduce:** phone and captions | screen recorder and captions | camera and lighting | heavy edit
+*   **Load-bearing choice:** one sentence naming the single decision the video would fail without
 
 ## {beats}
 5-12 bullets starting with \`[{ts}]\`: every beat/shot — what is shown, what is said, what changes. This is the skeleton.
 
-## {edit}
-Cuts per 10 s, average shot length, camera moves, zooms, b-roll, captions style, aspect ratio, transitions. Be specific.
-
 ## {text}
-Every piece of on-screen text worth copying (hook text, labels, numbers), with \`[{ts}]\`.
+Every piece of on-screen text worth copying (hook text, labels, numbers), with \`[{ts}]\`.`;
 
-## {audio}
-Voice (tone, pace, accent), music, sound effects, silence — and how they carry the pacing.
-
-## {cta}
-What the viewer is asked to do, when, and how it is phrased.`;
+/** Only when a topic is given. Two short lists and nothing else — the reader asked which
+ *  choices move to their subject, not for a rewritten version of somebody else's video. */
+const SECTION_TRANSFER = `## {transfer}
+Two lists, at most four bullets each, no preamble.
+*   **Transfers:** a choice above that works regardless of subject, and the one-line reason.
+*   **Does not:** a choice that only worked because of THEIR material, and what it depended on.`;
 // There used to be an "{adapt}" section here: a ready shot-by-shot script for your own
 // topic, following the same beats. It is gone for two reasons.
 //
@@ -450,7 +489,11 @@ What the viewer is asked to do, when, and how it is phrased.`;
 const TS_RULE = "Timestamps must be real positions in the video, written exactly like `[{ts}]`, one per bullet, no ranges.";
 
 const TEARDOWN_TASK = `Take this video apart like a creator who wants to make something as good in their own niche.
-Explain HOW it is made, not just what it says: hook, structure, pacing, editing, on-screen text, sound, CTA.`;
+Record HOW it is made, as a filled-in card plus the beats and the on-screen text.
+Keep every field name and every chosen value in English exactly as listed, even if the rest is in another language.
+Banned, because they are true of almost every video and so describe none of it: "hard cuts", "fast-paced",
+"engaging", "dynamic", "high energy", "keeps the viewer hooked", "modern editing". Say the concrete thing or
+say nothing. If a line has nothing left to say, end it — never pad a line to make it look complete.`;
 
 const WHOLE = `You are watching the whole video "{title}" by {channel} ({duration}) — video AND audio.
 {task}
@@ -500,11 +543,23 @@ function promptVars(info: VideoInfo, question: string, l: string, mode: Mode) {
   const ts = (info.duration || 0) >= 3600 ? "h:mm:ss" : "m:ss";
   const q = question.trim();
   let sections: string, task: string;
-  if (mode === "teardown") {
-    sections = SECTIONS_TEARDOWN;
+  if (mode === "both") {
+    // Content first, then the card. That order on purpose: what the video says is what
+    // you read, and how it was made is what you consult.
+    sections = `${SECTIONS_SUMMARY}\n\n${SECTIONS_TEARDOWN}${q ? `\n\n${SECTION_TRANSFER}` : ""}`;
+    task = `Two jobs in one pass, for a reader studying this channel.
+First, what the video actually says, for someone who will NOT watch it.
+Then, how it is made, as the filled-in card.
+${TEARDOWN_TASK}`
+      + (q ? `\nThe reader is about to film about: ${q}\nWhere a choice would not survive that move, say so and say why. Do not write their script.` : "");
+  }
+  else if (mode === "teardown") {
     // A topic no longer buys a rewritten script (see SECTIONS_TEARDOWN). It buys judgement:
     // which of these choices survive a move to your subject and which were load-bearing for
-    // theirs. That is the difference between a formula and a copy.
+    // theirs. That is the difference between a formula and a copy. It is a section of its
+    // own so that the card above stays identical across every video — a card that grows an
+    // extra field when a topic happens to be filled in is no longer comparable.
+    sections = q ? `${SECTIONS_TEARDOWN}\n\n${SECTION_TRANSFER}` : SECTIONS_TEARDOWN;
     task = q
       ? `${TEARDOWN_TASK}\nThe reader is about to film about: ${q}\nWhere a choice would not survive that move, say so and say why. Do not write their script.`
       : TEARDOWN_TASK;
@@ -600,7 +655,10 @@ export async function watch(
     answer = r.text; tokens.in += r.usage.in; tokens.out += r.usage.out;
   } else {
     const seconds = info.duration || 0;
+    // Notes taken per part have to carry whatever the final document will need, so a
+    // "both" run must not come back with only half of it recorded.
     const focus = mode === "teardown" ? FOCUS_TEARDOWN
+      : mode === "both" ? `${FOCUS_SUMMARY}\n${FOCUS_TEARDOWN}`
       : v.question ? tpl(FOCUS_QUESTION, { question: v.question }) : FOCUS_SUMMARY;
 
     const notes = await Promise.all(ps.map(async (p, i) => {
@@ -679,7 +737,9 @@ export async function save(info: VideoInfo, url: string, question: string, answe
   }
   const loc = lang(l);
   const q = question.trim();
-  const heading = mode === "teardown"
+  const heading = mode === "both"
+    ? `📼 ${loc.ui.bothCard || "What it says, and how it is made"}${q ? ` — ${q}` : ""}`
+    : mode === "teardown"
     ? `🔧 ${loc.ui.teardownCard}${q ? ` — ${q}` : ""}`
     : q ? `❓ ${q}` : `📋 ${loc.ui.summaryCard}`;
   const when = new Date().toISOString().slice(0, 16).replace("T", " ");

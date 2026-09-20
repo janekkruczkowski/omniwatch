@@ -20,6 +20,8 @@ const I18N: Record<string, Locale> = {
       "visual": "What you'd only catch by watching",
       "timeline": "Timeline",
       "verdict": "Worth watching yourself?",
+      "card": "The card",
+      "transfer": "Moving it to your subject",
       "hook": "The hook (first 3 seconds)",
       "beats": "Beat by beat",
       "edit": "Editing & pacing",
@@ -73,6 +75,10 @@ const I18N: Record<string, Locale> = {
       "teardownPlaceholder": "What you are about to film (optional) — what transfers, what does not",
       "teardownSubmit": "Take it apart →",
       "teardownCard": "Teardown: how this video is made",
+      "bothCard": "What it says, and how it is made",
+      "scanContent": "What they say",
+      "scanCraft": "How they are made",
+      "scanBoth": "Both",
       "badgeBeats": "SHOT BY SHOT"
     }
   },
@@ -88,6 +94,8 @@ const I18N: Record<string, Locale> = {
       "visual": "Co widać tylko na ekranie",
       "timeline": "Oś czasu",
       "verdict": "Czy warto obejrzeć?",
+      "card": "Karta",
+      "transfer": "Przeniesienie na Twój temat",
       "hook": "Hook (pierwsze 3 sekundy)",
       "beats": "Scena po scenie",
       "edit": "Montaż i tempo",
@@ -141,6 +149,10 @@ const I18N: Record<string, Locale> = {
       "teardownPlaceholder": "Co zamierzasz nagrać (opcjonalnie) — co się przeniesie, a co nie",
       "teardownSubmit": "Rozłóż na części →",
       "teardownCard": "Rozbiórka: jak zrobiony jest ten film",
+      "bothCard": "Co mówi i jak jest zrobiony",
+      "scanContent": "Co mówią",
+      "scanCraft": "Jak są zrobione",
+      "scanBoth": "Jedno i drugie",
       "badgeBeats": "UJĘCIE PO UJĘCIU"
     }
   },
@@ -156,6 +168,8 @@ const I18N: Record<string, Locale> = {
       "visual": "Was man nur beim Ansehen mitbekommt",
       "timeline": "Zeitleiste",
       "verdict": "Lohnt sich das Ansehen?",
+      "card": "Die Karte",
+      "transfer": "Übertragung auf dein Thema",
       "hook": "Der Hook (erste 3 Sekunden)",
       "beats": "Szene für Szene",
       "edit": "Schnitt & Tempo",
@@ -209,6 +223,10 @@ const I18N: Record<string, Locale> = {
       "teardownPlaceholder": "Was du drehen willst (optional) — was sich überträgt und was nicht",
       "teardownSubmit": "Zerlegen →",
       "teardownCard": "Analyse: wie dieses Video gemacht ist",
+      "bothCard": "Was es sagt und wie es gemacht ist",
+      "scanContent": "Was sie sagen",
+      "scanCraft": "Wie sie gemacht sind",
+      "scanBoth": "Beides",
       "badgeBeats": "EINSTELLUNG FÜR EINSTELLUNG"
     }
   },
@@ -224,6 +242,8 @@ const I18N: Record<string, Locale> = {
       "visual": "Lo que solo se ve mirando",
       "timeline": "Línea de tiempo",
       "verdict": "¿Merece la pena verlo?",
+      "card": "La ficha",
+      "transfer": "Llevarlo a tu tema",
       "hook": "El gancho (primeros 3 segundos)",
       "beats": "Escena a escena",
       "edit": "Montaje y ritmo",
@@ -277,6 +297,10 @@ const I18N: Record<string, Locale> = {
       "teardownPlaceholder": "Qué vas a grabar (opcional) — qué se traslada y qué no",
       "teardownSubmit": "Desmontarlo →",
       "teardownCard": "Análisis: cómo está hecho este vídeo",
+      "bothCard": "Qué dice y cómo está hecho",
+      "scanContent": "Qué dicen",
+      "scanCraft": "Cómo están hechos",
+      "scanBoth": "Ambos",
       "badgeBeats": "PLANO A PLANO"
     }
   },
@@ -292,6 +316,8 @@ const I18N: Record<string, Locale> = {
       "visual": "Ce qu'on ne voit qu'en regardant",
       "timeline": "Chronologie",
       "verdict": "Vaut-elle d'être regardée ?",
+      "card": "La fiche",
+      "transfer": "Le transposer à ton sujet",
       "hook": "L'accroche (3 premières secondes)",
       "beats": "Scène par scène",
       "edit": "Montage et rythme",
@@ -345,6 +371,10 @@ const I18N: Record<string, Locale> = {
       "teardownPlaceholder": "Ce que tu vas tourner (facultatif) — ce qui se transpose et ce qui non",
       "teardownSubmit": "Décortiquer →",
       "teardownCard": "Décorticage : comment cette vidéo est faite",
+      "bothCard": "Ce qu'elle dit, et comment elle est faite",
+      "scanContent": "Ce qu'ils disent",
+      "scanCraft": "Comment ils sont faits",
+      "scanBoth": "Les deux",
       "badgeBeats": "PLAN PAR PLAN"
     }
   }

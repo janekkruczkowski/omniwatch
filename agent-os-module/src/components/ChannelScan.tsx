@@ -70,6 +70,10 @@ export default function ChannelScan({ lang }: { lang: string }) {
   const [order, setOrder] = useState<"popular" | "newest">("popular");
   const [limit, setLimit] = useState<Limit>(10);
   const [armed, setArmed] = useState(false);
+  // What you are scanning FOR. There is no single right answer: a channel you want the
+  // knowledge from and a channel you mean to compete with are different jobs, and the
+  // first version of this assumed the second for everybody.
+  const [purpose, setPurpose] = useState<"ask" | "teardown" | "both">("both");
   const [topic, setTopic] = useState("");
 
   const [finding, setFinding] = useState(false);
@@ -142,7 +146,7 @@ export default function ChannelScan({ lang }: { lang: string }) {
       const r = await fetch("/api/omniwatch/channel", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ urls, account: listing.account, topic: topic.trim(), lang }),
+        body: JSON.stringify({ urls, account: listing.account, topic: topic.trim(), lang, mode: purpose }),
       });
       const d = await r.json();
       if (!r.ok || !d.id) { setError(d.error || `Could not start (HTTP ${r.status})`); setRunning(false); return; }
@@ -173,7 +177,7 @@ export default function ChannelScan({ lang }: { lang: string }) {
         if (d.state === "error") setError(d.error || "The scan failed");
       }
     }, 1200);
-  }, [listing, picked, topic, lang, running, loadHistory]);
+  }, [listing, picked, topic, lang, running, loadHistory, purpose]);
 
   // Changing the selection disarms the confirmation: the figure you agreed to is no
   // longer the figure on the button.
@@ -339,13 +343,31 @@ export default function ChannelScan({ lang }: { lang: string }) {
             ))}
           </div>
 
+          {/* Asked here rather than on the first screen, because it is the question you
+              can only answer once you can see what the account actually publishes. */}
+          <div className="flex flex-wrap items-center gap-2 mt-4 pt-3" style={{ borderTop: "1px solid var(--line-soft)" }}>
+            <span className="text-xs" style={{ color: "var(--cream-mute)" }}>What do you want from them?</span>
+            {([
+              ["ask", "What they say", "The content — for a channel you want the knowledge out of"],
+              ["teardown", "How they are made", "The craft — hook, pacing, captions, CTA, as a comparable card"],
+              ["both", "Both", "One request, both documents: a fraction of a cent more, not twice the price"],
+            ] as const).map(([id, label, why]) => (
+              <button key={id} onClick={() => { setArmed(false); setPurpose(id); }} title={why}
+                className={`pill ${purpose === id ? "pill-warn" : ""}`} style={{ cursor: "pointer" }}>
+                {label}
+              </button>
+            ))}
+          </div>
+
           <textarea
             value={topic}
             onChange={(e) => setTopic(e.target.value)}
             rows={2}
-            placeholder="What you are about to film (optional) — each teardown then says what transfers to it and what does not"
-            className="w-full bg-transparent outline-none resize-none text-sm mt-4 pt-3"
-            style={{ color: "var(--cream)", borderTop: "1px solid var(--line-soft)" }}
+            placeholder={purpose === "ask"
+              ? "Something specific you are looking for across these videos (optional)"
+              : "What you are about to film (optional) — each one then says what transfers to it and what does not"}
+            className="w-full bg-transparent outline-none resize-none text-sm mt-3"
+            style={{ color: "var(--cream)" }}
           />
 
           <div className="flex flex-wrap items-center justify-between gap-3 mt-3">

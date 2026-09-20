@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { startJob, getJob } from "@/lib/omniwatchJobs";
-import { apiKey, fetchVideo, watch, save, logToVault, fmt, PRICE_IN, PRICE_OUT } from "@/lib/omniwatch";
+import { apiKey, fetchVideo, watch, save, logToVault, fmt, PRICE_IN, PRICE_OUT, type Mode } from "@/lib/omniwatch";
 import {
   listChannel, listScans, parseAccount, readScan, saveScan,
   type ChannelListing, type Limit, type Order,
@@ -110,6 +110,11 @@ export async function POST(req: Request) {
   const account = String(body.account || "this account");
   const topic = String(body.topic || "");
   const l = I18N[String(body.lang || "")] ? String(body.lang) : "en";
+  // Why the scan is being run. It used to be teardown for everyone, which quietly
+  // assumed one reason: someone reading a fitness channel wants what the videos say,
+  // not how they were edited. "both" is the default because it is the richer answer
+  // and, on one request off one upload, costs a fraction of a cent more.
+  const mode: Mode = body.mode === "ask" || body.mode === "teardown" ? body.mode : "both";
 
   if (!urls.length) return NextResponse.json({ error: "No videos were picked." }, { status: 400 });
   // A ceiling high enough not to be in anyone's way, and low enough that a bad request
@@ -142,8 +147,8 @@ export async function POST(req: Request) {
         p.current = info.title;
         push();
 
-        const { answer, stats } = await watch(key, info, src, topic, l, "teardown");
-        await save(info, url, topic, answer, l, "teardown").catch(() => {});
+        const { answer, stats } = await watch(key, info, src, topic, l, mode);
+        await save(info, url, topic, answer, l, mode).catch(() => {});
 
         const cost = Number((stats.in * PRICE_IN + stats.out * PRICE_OUT).toFixed(4));
         p.cost = Number((p.cost + cost).toFixed(4));
