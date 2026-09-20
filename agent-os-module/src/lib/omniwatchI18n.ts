@@ -27,8 +27,7 @@ const I18N: Record<string, Locale> = {
       "edit": "Editing & pacing",
       "text": "On-screen text",
       "audio": "Sound & voice",
-      "cta": "Call to action",
-      "adapt": "Your version"
+      "cta": "Call to action"
     },
     "ui": {
       "tagline1": "Don't watch the video.",
@@ -79,7 +78,23 @@ const I18N: Record<string, Locale> = {
       "scanContent": "What they say",
       "scanCraft": "How they are made",
       "scanBoth": "Both",
-      "badgeBeats": "SHOT BY SHOT"
+      "badgeBeats": "SHOT BY SHOT",
+      "presetBothLabel": "What they say + how it's made",
+      "presetBothHint": "The full picture. One request, so it costs a fraction of a cent more than either alone.",
+      "presetContentLabel": "What they say",
+      "presetContentHint": "For a channel you want the knowledge out of — a course, a fitness channel, a conference talk.",
+      "presetCraftLabel": "How they are made",
+      "presetCraftHint": "For a channel you mean to compete with — hook, pacing, captions, CTA, as a comparable card.",
+      "presetBrandsLabel": "Products & brands on screen",
+      "presetBrandsHint": "Every product, brand and logo that appears — what a transcript will never tell you.",
+      "presetWardrobeLabel": "Clothing & colour",
+      "presetWardrobeHint": "Garments, colours and combinations — built for anyone selling or studying fashion.",
+      "presetClaimsLabel": "Claims & numbers",
+      "presetClaimsHint": "Every figure, promise and piece of proof — and whether anything backs it up.",
+      "presetSettingLabel": "Setting & production",
+      "presetSettingHint": "Where it was shot and with what — useful when deciding what you could actually reproduce.",
+      "presetCustomLabel": "Something else…",
+      "presetCustomHint": "Say what you want pulled out of every video, in your own words."
     }
   },
   "pl": {
@@ -101,8 +116,7 @@ const I18N: Record<string, Locale> = {
       "edit": "Montaż i tempo",
       "text": "Napisy na ekranie",
       "audio": "Dźwięk i głos",
-      "cta": "Wezwanie do działania",
-      "adapt": "Twoja wersja"
+      "cta": "Wezwanie do działania"
     },
     "ui": {
       "tagline1": "Nie oglądaj filmu.",
@@ -153,7 +167,23 @@ const I18N: Record<string, Locale> = {
       "scanContent": "Co mówią",
       "scanCraft": "Jak są zrobione",
       "scanBoth": "Jedno i drugie",
-      "badgeBeats": "UJĘCIE PO UJĘCIU"
+      "badgeBeats": "UJĘCIE PO UJĘCIU",
+      "presetBothLabel": "Co mówią + jak to zrobione",
+      "presetBothHint": "Pełny obraz. Jedno zapytanie, kosztuje ułamek centa więcej niż samo jedno z nich.",
+      "presetContentLabel": "Co mówią",
+      "presetContentHint": "Dla kanału, z którego chcesz wyciągnąć wiedzę — kurs, kanał fitness, wystąpienie konferencyjne.",
+      "presetCraftLabel": "Jak to zrobione",
+      "presetCraftHint": "Dla kanału, z którym chcesz konkurować — hook, tempo, napisy, CTA, jako porównywalna karta.",
+      "presetBrandsLabel": "Produkty i marki na ekranie",
+      "presetBrandsHint": "Każdy produkt, marka i logo, które się pojawia — czego nigdy nie powie transkrypcja.",
+      "presetWardrobeLabel": "Ubrania i kolory",
+      "presetWardrobeHint": "Ubrania, kolory i zestawienia — pod kątem sprzedaży lub analizy mody.",
+      "presetClaimsLabel": "Twierdzenia i liczby",
+      "presetClaimsHint": "Każda liczba, obietnica i dowód — i czy cokolwiek to potwierdza.",
+      "presetSettingLabel": "Plan zdjęciowy",
+      "presetSettingHint": "Gdzie i czym to nakręcono — przydatne, gdy zastanawiasz się, co dałoby się odtworzyć.",
+      "presetCustomLabel": "Coś innego…",
+      "presetCustomHint": "Powiedz własnymi słowami, co chcesz wyciągnąć z każdego filmu."
     }
   },
   "de": {
@@ -175,8 +205,7 @@ const I18N: Record<string, Locale> = {
       "edit": "Schnitt & Tempo",
       "text": "Text im Bild",
       "audio": "Ton & Stimme",
-      "cta": "Handlungsaufruf",
-      "adapt": "Deine Version"
+      "cta": "Handlungsaufruf"
     },
     "ui": {
       "tagline1": "Schau das Video nicht.",
@@ -227,7 +256,23 @@ const I18N: Record<string, Locale> = {
       "scanContent": "Was sie sagen",
       "scanCraft": "Wie sie gemacht sind",
       "scanBoth": "Beides",
-      "badgeBeats": "EINSTELLUNG FÜR EINSTELLUNG"
+      "badgeBeats": "EINSTELLUNG FÜR EINSTELLUNG",
+      "presetBothLabel": "Was gesagt wird + wie es gemacht ist",
+      "presetBothHint": "Das volle Bild. Eine Anfrage, kostet nur einen Bruchteil eines Cents mehr als eine einzelne.",
+      "presetContentLabel": "Was gesagt wird",
+      "presetContentHint": "Für einen Kanal, aus dem du das Wissen willst — ein Kurs, ein Fitnesskanal, ein Konferenzvortrag.",
+      "presetCraftLabel": "Wie es gemacht ist",
+      "presetCraftHint": "Für einen Kanal, mit dem du konkurrieren willst — Hook, Tempo, Untertitel, CTA, als vergleichbare Karte.",
+      "presetBrandsLabel": "Produkte & Marken im Bild",
+      "presetBrandsHint": "Jedes Produkt, jede Marke und jedes Logo, das auftaucht — was ein Transkript nie zeigt.",
+      "presetWardrobeLabel": "Kleidung & Farben",
+      "presetWardrobeHint": "Kleidungsstücke, Farben und Kombinationen — für alle, die Mode verkaufen oder untersuchen.",
+      "presetClaimsLabel": "Behauptungen & Zahlen",
+      "presetClaimsHint": "Jede Zahl, jedes Versprechen und jeder Beleg — und ob dafür etwas spricht.",
+      "presetSettingLabel": "Drehort & Produktion",
+      "presetSettingHint": "Wo und womit gedreht wurde — hilfreich, um einzuschätzen, was sich wirklich nachbauen lässt.",
+      "presetCustomLabel": "Etwas anderes…",
+      "presetCustomHint": "Sag mit eigenen Worten, was aus jedem Video herausgezogen werden soll."
     }
   },
   "es": {
@@ -249,8 +294,7 @@ const I18N: Record<string, Locale> = {
       "edit": "Montaje y ritmo",
       "text": "Texto en pantalla",
       "audio": "Sonido y voz",
-      "cta": "Llamada a la acción",
-      "adapt": "Tu versión"
+      "cta": "Llamada a la acción"
     },
     "ui": {
       "tagline1": "No veas el vídeo.",
@@ -301,7 +345,23 @@ const I18N: Record<string, Locale> = {
       "scanContent": "Qué dicen",
       "scanCraft": "Cómo están hechos",
       "scanBoth": "Ambos",
-      "badgeBeats": "PLANO A PLANO"
+      "badgeBeats": "PLANO A PLANO",
+      "presetBothLabel": "Qué dicen + cómo está hecho",
+      "presetBothHint": "El cuadro completo. Una sola petición, cuesta solo una fracción de céntimo más que cada una por separado.",
+      "presetContentLabel": "Qué dicen",
+      "presetContentHint": "Para un canal del que quieres sacar el conocimiento — un curso, un canal de fitness, una charla.",
+      "presetCraftLabel": "Cómo está hecho",
+      "presetCraftHint": "Para un canal con el que quieres competir — gancho, ritmo, subtítulos, CTA, como ficha comparable.",
+      "presetBrandsLabel": "Productos y marcas en pantalla",
+      "presetBrandsHint": "Cada producto, marca y logo que aparece — lo que una transcripción nunca dirá.",
+      "presetWardrobeLabel": "Ropa y color",
+      "presetWardrobeHint": "Prendas, colores y combinaciones — pensado para quien vende o estudia moda.",
+      "presetClaimsLabel": "Afirmaciones y cifras",
+      "presetClaimsHint": "Cada cifra, promesa y prueba — y si algo la respalda.",
+      "presetSettingLabel": "Localización y producción",
+      "presetSettingHint": "Dónde se grabó y con qué — útil para decidir qué podrías reproducir de verdad.",
+      "presetCustomLabel": "Otra cosa…",
+      "presetCustomHint": "Di con tus propias palabras qué quieres sacar de cada vídeo."
     }
   },
   "fr": {
@@ -323,8 +383,7 @@ const I18N: Record<string, Locale> = {
       "edit": "Montage et rythme",
       "text": "Texte à l'écran",
       "audio": "Son et voix",
-      "cta": "Appel à l'action",
-      "adapt": "Ta version"
+      "cta": "Appel à l'action"
     },
     "ui": {
       "tagline1": "Ne regarde pas la vidéo.",
@@ -375,7 +434,23 @@ const I18N: Record<string, Locale> = {
       "scanContent": "Ce qu'ils disent",
       "scanCraft": "Comment ils sont faits",
       "scanBoth": "Les deux",
-      "badgeBeats": "PLAN PAR PLAN"
+      "badgeBeats": "PLAN PAR PLAN",
+      "presetBothLabel": "Ce qu'ils disent + comment c'est fait",
+      "presetBothHint": "La vue d'ensemble. Une seule requête, pour à peine plus cher que l'une des deux seule.",
+      "presetContentLabel": "Ce qu'ils disent",
+      "presetContentHint": "Pour une chaîne dont tu veux le savoir — un cours, une chaîne fitness, une conférence.",
+      "presetCraftLabel": "Comment c'est fait",
+      "presetCraftHint": "Pour une chaîne que tu comptes concurrencer — accroche, rythme, sous-titres, CTA, en fiche comparable.",
+      "presetBrandsLabel": "Produits et marques à l'écran",
+      "presetBrandsHint": "Chaque produit, marque et logo qui apparaît — ce qu'une transcription ne dira jamais.",
+      "presetWardrobeLabel": "Vêtements et couleurs",
+      "presetWardrobeHint": "Vêtements, couleurs et associations — pensé pour qui vend ou étudie la mode.",
+      "presetClaimsLabel": "Affirmations et chiffres",
+      "presetClaimsHint": "Chaque chiffre, promesse et preuve — et si quelque chose vient l'étayer.",
+      "presetSettingLabel": "Lieu de tournage",
+      "presetSettingHint": "Où et avec quoi c'est tourné — utile pour évaluer ce que tu pourrais vraiment reproduire.",
+      "presetCustomLabel": "Autre chose…",
+      "presetCustomHint": "Dis avec tes propres mots ce que tu veux tirer de chaque vidéo."
     }
   }
 };

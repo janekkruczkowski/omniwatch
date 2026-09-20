@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Eye, Wrench, Link2, Loader2, Play, KeyRound, TerminalSquare, ArrowRight, Users } from "lucide-react";
+import { Eye, Wrench, Link2, Loader2, Play, KeyRound, TerminalSquare, ArrowRight, Users, Clapperboard } from "lucide-react";
 import OmniMarkdown, { TS_RE, toSec } from "./OmniMarkdown";
 import ChannelScan from "./ChannelScan";
 import "./OmniWatch.css";
@@ -378,7 +378,11 @@ export default function OmniWatchView() {
             )}
 
             {cards.map((c) => (
-              <Answer key={c.id} card={c} locale={T} onSeek={seek} frame={frame} running={running && c.id === cardId.current} />
+              <Answer
+                key={c.id} card={c} locale={T} onSeek={seek} frame={frame}
+                running={running && c.id === cardId.current}
+                source={meta ? { url, title: meta.title, seconds: meta.seconds, lang } : null}
+              />
             ))}
           </div>
         </div>
@@ -388,8 +392,11 @@ export default function OmniWatchView() {
 }
 
 // ── one question and its answer ────────────────────────────────────────────────
-function Answer({ card, locale, onSeek, frame, running }: {
+function Answer({ card, locale, onSeek, frame, running, source }: {
   card: Card; locale: Locale | null; onSeek: (s: number) => void; frame: (s: number) => string; running: boolean;
+  /** what was watched — needed to build a brief from this answer, absent while a job is
+   *  still finding out what the video even is */
+  source: { url: string; title: string; seconds: number; lang: string } | null;
 }) {
   const sec = locale?.sections || {};
   const ui = (locale?.ui || {}) as Record<string, string>;
@@ -432,6 +439,97 @@ function Answer({ card, locale, onSeek, frame, running }: {
           {card.stats.reused && <span>♻️ video already at Qwen</span>}
         </div>
       )}
+
+      {/* Only under a teardown: a summary tells you what a video says, and you cannot
+          rebuild the shape of something from what it says. */}
+      {card.text && !card.error && card.mode === "teardown" && source && (
+        <MakeSimilar card={card} source={source} ui={ui} />
+      )}
+    </div>
+  );
+}
+
+// ── from watching to building ──────────────────────────────────────────────────
+//
+// The point where the two halves of the product finally touch. What it hands over is
+// the RHYTHM — how many shots, how long each holds — and nothing else. The subject is
+// typed here, by the person, and the box will not submit without it: a brief with no
+// subject of its own is the other person's video with the serial numbers filed off,
+// and the "Your version" section was deleted from this module for being exactly that.
+function MakeSimilar({ card, source, ui }: {
+  card: Card;
+  source: { url: string; title: string; seconds: number; lang: string };
+  ui: Record<string, string>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [topic, setTopic] = useState("");
+  const [mode, setMode] = useState<"avatar" | "voiceover">("avatar");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const go = async () => {
+    if (!topic.trim() || busy) return;
+    setBusy(true); setErr(null);
+    try {
+      const r = await fetch("/api/omniwatch/recreate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          url: source.url, title: source.title, seconds: source.seconds,
+          text: card.text, topic, mode, lang: source.lang,
+        }),
+      });
+      const j = await r.json();
+      if (!r.ok || !j.next) throw new Error(j.error || "Could not build the brief.");
+      window.location.href = j.next;
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+      setBusy(false);
+    }
+  };
+
+  if (!open) {
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        className="pill pill-warn mt-4"
+        style={{ cursor: "pointer" }}
+      >
+        <Clapperboard size={12} /> {ui.makeSimilar || "Make one like this →"}
+      </button>
+    );
+  }
+
+  return (
+    <div className="mt-4 pt-4 space-y-3" style={{ borderTop: "1px solid var(--line-soft)" }}>
+      <div className="text-sm" style={{ color: "var(--cream-dim)" }}>
+        {ui.makeSimilarWhat || "What is YOUR video about? The pacing is copied from this one; every word is yours."}
+      </div>
+      <input
+        value={topic}
+        onChange={(e) => setTopic(e.target.value)}
+        onKeyDown={(e) => { if (e.key === "Enter") go(); }}
+        placeholder={ui.makeSimilarHint || "e.g. why most cold emails get deleted in three seconds"}
+        className="w-full bg-transparent outline-none text-sm p-2 rounded"
+        style={{ color: "var(--cream)", border: "1px solid var(--line-soft)" }}
+      />
+      <div className="flex flex-wrap gap-2 items-center">
+        {(["avatar", "voiceover"] as const).map((m) => (
+          <button
+            key={m}
+            onClick={() => setMode(m)}
+            className={`pill ${mode === m ? "pill-warn" : ""}`}
+            style={{ cursor: "pointer" }}
+          >
+            {m === "avatar" ? (ui.modeAvatar || "On camera (HeyGen)") : (ui.modeVoiceover || "Voiceover")}
+          </button>
+        ))}
+        <button onClick={go} disabled={!topic.trim() || busy} className="pill pill-warn" style={{ cursor: topic.trim() ? "pointer" : "default" }}>
+          {busy ? <Loader2 size={12} className="animate-spin" /> : <ArrowRight size={12} />}
+          {ui.makeSimilarGo || "Build it in the Video tab"}
+        </button>
+      </div>
+      {err && <div className="text-sm" style={{ color: "var(--plum)" }}>⚠ {err}</div>}
     </div>
   );
 }
