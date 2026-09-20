@@ -610,6 +610,67 @@ YouTube i TikTok i to one muszą wystarczać na demo.
 
 ---
 
+## 8e. Most do montażu — obejrzany film staje się filmem do zrobienia
+
+Do dziś OmniWatch kończył się na stronie. Czytałeś rozbiórkę, zamykałeś kartę i nazajutrz
+odtwarzałeś ją z pamięci — czyli odtwarzałeś wrażenie, nie film. Teraz rozbiórka kończy
+się przyciskiem.
+
+**Ścieżka, która działa end-to-end** (sprawdzona na żywo 2026-09-20): Astros znajduje film
+→ chip `OMNI WATCHES IT` → OmniWatch ogląda → **„Make one like this"** → wpisujesz **swój**
+temat → `/video?brief=<id>` otwiera Director wypełniony: temat, długość, prezenter albo
+lektor, i pasek mówiący skąd wzięty jest rytm → skrypt na tyle scen, ile było ujęć →
+HeyGen albo ElevenLabs → b-roll → montaż z jawnymi sekundami → HyperFrames.
+
+**Granica jest wymuszona kodem, nie deklaracją.** Brief nie zapisze się bez tematu —
+endpoint zwraca błąd, nie domyślną wartość. Pola `narration_line` i `caption` są puste
+z definicji typu. Przenosi się rytm: ile ujęć i jak długo każde trwa. Sekcja „Your version"
+została skasowana właśnie za to, że czytała się jak „ukradnij ten film", i gotowy plan
+montażu z cudzymi zdaniami byłby tym samym pod inną nazwą.
+
+### Zegar wybiera się per film, i to jest wynik pomiaru
+
+Dwa źródła rytmu nie zgadzają się ze sobą, i oba mają rację na swoim terenie:
+
+| film | ffmpeg (T=0,15) | co mówi model | czyj zegar |
+|---|---|---|---|
+| TikTok, 128 s | 34 cięcia | „3–5 cięć/10 s" — zgadza się | **ffmpeg** |
+| Short 47 s, stałe kadrowanie | 2 cięcia | „6 cięć/10 s", 15 momentów | **model** |
+
+Model pytany trzykrotnie o ten sam 47-sekundowy plik odpowiadał 4, potem 12, potem 2–3
+cięcia na 10 s — jego deklarowane tempo nie jest pomiarem. Ale ffmpeg na tym samym pliku
+widzi 2 cięcia, bo **kadr się nie zmienia**: tempo niosą napisy i grafiki podmieniane
+wewnątrz jednego ujęcia, a detektor różnicy pikseli słusznie tego nie widzi jako cięcia.
+To jest dokładnie format, który robi ta społeczność. Więc `rhythmFrom` wybiera i **zapisuje
+w briefie, dlaczego** — nie ma cichego wyboru.
+
+### Co było zepsute po drugiej stronie
+
+Dwa sufity, oba niewidoczne z zewnątrz, oba podnoszone łatką z wartownikiem:
+
+- `auto/assemble` brał `scenes.slice(0, 12)` — skopiowany rytm z pięćdziesięcioma
+  scenami tracił większość siebie, a żądanie zgłaszało sukces. Teraz 60.
+- `auto/script` przyjmował `sceneCount` do 24, po czym tął wynik do 12. Teraz 60,
+  sprawdzone: prośba o 15 scen zwraca 15.
+
+Trzecia rzecz nie była sufitem, tylko pominięciem: `seconds` sterowały wyłącznie czasem
+napisów, a b-roll dalej leciał w pętli po własnych długościach klipów. Czyli napisy szły
+w przepisanym rytmie, a obraz ciął się po swojemu — a to gdzie tnie obraz jest jedyną
+rzeczą, dla której ta funkcja istnieje.
+
+### Grafiki: ffmpeg odpadł, zanim zdążył wejść
+
+Karty w rodzaju „od najlepszego do najgorszego" — to, na czym stoją przykłady HypeKita —
+miały powstawać ffmpegiem. Nie powstaną: **ffmpeg na tej maszynie nie ma `drawtext`**
+(zbudowany bez libfreetype, `ffmpeg -filters | grep drawtext` zwraca zero), a lekarstwem
+jest `brew install ffmpeg-full`. Dla nietechnicznej społeczności to znaczy „tej funkcji
+nie ma" — patrz tabela progów w §8d. Więc grafiki idą jako **HTML w kompozycji**, którą
+HyperFrames i tak renderuje do MP4: zero nowych zależności, zero setupu, i animacja
+gratis, bo GSAP już tam jest. Generator ffmpegowy zostaje jako ścieżka dla maszyn, które
+mają pełny build, i mówi wprost, czego im brakuje.
+
+---
+
 ## 9. Co dalej
 Skan kanału (§3b) — zrobiony 2026-09-20. To wejście do wszystkich aplikacji.
 
