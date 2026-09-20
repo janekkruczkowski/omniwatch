@@ -95,7 +95,17 @@ const I18N: Record<string, Locale> = {
       "presetSettingHint": "Where it was shot and with what — useful when deciding what you could actually reproduce.",
       "presetCustomLabel": "Something else…",
       "presetCustomHint": "Say what you want pulled out of every video, in your own words.",
-      "makeSimilarAngle": "Angle (optional) — e.g. the myth everyone repeats about it"
+      "makeSimilar": "Make one like this →",
+      "makeSimilarWhat": "What is YOUR video about? The pacing is copied from this one; every word is yours.",
+      "makeSimilarHint": "e.g. why most cold emails get deleted in three seconds",
+      "makeSimilarAngle": "Angle (optional) — e.g. the myth everyone repeats about it",
+      "makeSimilarGo": "Build it in the Video tab",
+      "modeAvatar": "On camera (HeyGen)",
+      "modeVoiceover": "Voiceover",
+      "purposePattern": "Same rhythm, your topic",
+      "purposePatternHint": "Retells this video's pacing and structure for your own subject — every word is yours.",
+      "purposeReview": "Talk about this video",
+      "purposeReviewHint": "Narration can discuss the source — using your own footage, not clips from it (yet)."
     }
   },
   "pl": {
@@ -185,7 +195,17 @@ const I18N: Record<string, Locale> = {
       "presetSettingHint": "Gdzie i czym to nakręcono — przydatne, gdy zastanawiasz się, co dałoby się odtworzyć.",
       "presetCustomLabel": "Coś innego…",
       "presetCustomHint": "Powiedz własnymi słowami, co chcesz wyciągnąć z każdego filmu.",
-      "makeSimilarAngle": "Kąt (opcjonalnie) — np. mit, który wszyscy powtarzają"
+      "makeSimilar": "Zrób coś podobnego →",
+      "makeSimilarWhat": "O czym jest TWÓJ film? Tempo przejmujemy z tego materiału — słowa są już całkiem Twoje.",
+      "makeSimilarHint": "np. dlaczego większość cold maili ląduje w koszu w trzy sekundy",
+      "makeSimilarAngle": "Kąt (opcjonalnie) — np. mit, który wszyscy powtarzają",
+      "makeSimilarGo": "Zbuduj w zakładce Wideo",
+      "modeAvatar": "Na kamerze (HeyGen)",
+      "modeVoiceover": "Lektor",
+      "purposePattern": "To samo tempo, Twój temat",
+      "purposePatternHint": "Przejmuje tempo i strukturę tego filmu dla Twojego tematu — słowa są w całości Twoje.",
+      "purposeReview": "Komentarz o tym filmie",
+      "purposeReviewHint": "Narracja może odnosić się do źródła — na razie na Twoim własnym materiale, bez wycinków z oryginału."
     }
   },
   "de": {
@@ -275,7 +295,17 @@ const I18N: Record<string, Locale> = {
       "presetSettingHint": "Wo und womit gedreht wurde — hilfreich, um einzuschätzen, was sich wirklich nachbauen lässt.",
       "presetCustomLabel": "Etwas anderes…",
       "presetCustomHint": "Sag mit eigenen Worten, was aus jedem Video herausgezogen werden soll.",
-      "makeSimilarAngle": "Blickwinkel (optional) — z. B. der Mythos, den alle wiederholen"
+      "makeSimilar": "So etwas machen →",
+      "makeSimilarWhat": "Worum geht es in DEINEM Video? Das Tempo wird von diesem übernommen — jedes Wort ist deins.",
+      "makeSimilarHint": "z. B. warum die meisten Kaltakquise-E-Mails in drei Sekunden gelöscht werden",
+      "makeSimilarAngle": "Blickwinkel (optional) — z. B. der Mythos, den alle wiederholen",
+      "makeSimilarGo": "Im Video-Tab bauen",
+      "modeAvatar": "Vor der Kamera (HeyGen)",
+      "modeVoiceover": "Voiceover",
+      "purposePattern": "Gleicher Rhythmus, dein Thema",
+      "purposePatternHint": "Übernimmt Tempo und Struktur dieses Videos für dein eigenes Thema — jedes Wort ist deins.",
+      "purposeReview": "Über dieses Video sprechen",
+      "purposeReviewHint": "Die Erzählung darf sich auf die Quelle beziehen — mit deinem eigenen Material, noch keine Ausschnitte daraus."
     }
   },
   "es": {
@@ -365,7 +395,17 @@ const I18N: Record<string, Locale> = {
       "presetSettingHint": "Dónde se grabó y con qué — útil para decidir qué podrías reproducir de verdad.",
       "presetCustomLabel": "Otra cosa…",
       "presetCustomHint": "Di con tus propias palabras qué quieres sacar de cada vídeo.",
-      "makeSimilarAngle": "Enfoque (opcional) — p. ej. el mito que todos repiten"
+      "makeSimilar": "Hacer uno parecido →",
+      "makeSimilarWhat": "¿De qué trata TU vídeo? El ritmo se copia de este; cada palabra es tuya.",
+      "makeSimilarHint": "p. ej. por qué la mayoría de los correos fríos se borran en tres segundos",
+      "makeSimilarAngle": "Enfoque (opcional) — p. ej. el mito que todos repiten",
+      "makeSimilarGo": "Construirlo en la pestaña Vídeo",
+      "modeAvatar": "En cámara (HeyGen)",
+      "modeVoiceover": "Voz en off",
+      "purposePattern": "Mismo ritmo, tu tema",
+      "purposePatternHint": "Reutiliza el ritmo y la estructura de este vídeo para tu propio tema — cada palabra es tuya.",
+      "purposeReview": "Hablar sobre este vídeo",
+      "purposeReviewHint": "La narración puede referirse a la fuente — con tu propio metraje, todavía sin fragmentos de ella."
     }
   },
   "fr": {
@@ -455,7 +495,17 @@ const I18N: Record<string, Locale> = {
       "presetSettingHint": "Où et avec quoi c'est tourné — utile pour évaluer ce que tu pourrais vraiment reproduire.",
       "presetCustomLabel": "Autre chose…",
       "presetCustomHint": "Dis avec tes propres mots ce que tu veux tirer de chaque vidéo.",
-      "makeSimilarAngle": "Angle (facultatif) — par ex. le mythe que tout le monde répète"
+      "makeSimilar": "En faire une pareille →",
+      "makeSimilarWhat": "De quoi parle TA vidéo ? Le rythme est repris de celle-ci ; chaque mot est le tien.",
+      "makeSimilarHint": "ex. pourquoi la plupart des cold emails sont supprimés en trois secondes",
+      "makeSimilarAngle": "Angle (facultatif) — par ex. le mythe que tout le monde répète",
+      "makeSimilarGo": "Construire dans l'onglet Vidéo",
+      "modeAvatar": "Face caméra (HeyGen)",
+      "modeVoiceover": "Voix off",
+      "purposePattern": "Même rythme, ton sujet",
+      "purposePatternHint": "Reprend le rythme et la structure de cette vidéo pour ton propre sujet — chaque mot est le tien.",
+      "purposeReview": "Parler de cette vidéo",
+      "purposeReviewHint": "La narration peut évoquer la source — avec tes propres images, pas encore d'extraits de celle-ci."
     }
   }
 };

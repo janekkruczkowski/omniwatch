@@ -77,13 +77,18 @@ export function canBuildBrief(card: Card, source: CardSource | null): boolean {
 
 /** What one card sends to /api/omniwatch/recreate. Split out so the A→B case — a card
  *  still on screen after the tab has moved to another video — is testable without a
- *  browser. */
+ *  browser.
+ *
+ *  `purpose` is last on purpose: every existing caller that does not know about it will
+ *  break loudly (wrong argument count / type) rather than silently sending `undefined`
+ *  where `mode` used to be. */
 export function briefBody(
   card: Card, source: CardSource, topic: string, angle: string, mode: "avatar" | "voiceover",
+  purpose: "pattern" | "review",
 ) {
   return {
     url: source.url, title: source.title, seconds: source.seconds,
-    text: card.text, topic, angle: angle.trim(), mode, lang: source.lang,
+    text: card.text, topic, angle: angle.trim(), mode, lang: source.lang, purpose,
   };
 }
 
@@ -597,6 +602,10 @@ function MakeSimilar({ card, source, ui }: {
   const [topic, setTopic] = useState("");
   const [angle, setAngle] = useState("");
   const [mode, setMode] = useState<"avatar" | "voiceover">("avatar");
+  // "pattern" is today's whole behaviour: the source's rhythm, retold with your own
+  // words, on your own footage. It stays the default so a person who never touches this
+  // control gets exactly what shipped before it existed.
+  const [purpose, setPurpose] = useState<"pattern" | "review">("pattern");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -607,7 +616,7 @@ function MakeSimilar({ card, source, ui }: {
       const r = await fetch("/api/omniwatch/recreate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(briefBody(card, source, topic, angle, mode)),
+        body: JSON.stringify(briefBody(card, source, topic, angle, mode, purpose)),
       });
       const j = await r.json();
       if (!r.ok || !j.next) throw new Error(j.error || "Could not build the brief.");
@@ -654,6 +663,31 @@ function MakeSimilar({ card, source, ui }: {
         className="w-full bg-transparent outline-none text-sm p-2 rounded"
         style={{ color: "var(--cream)", border: "1px solid var(--line-soft)" }}
       />
+      {/* What the narration is ALLOWED to do — not how it's spoken (that's the mode row
+          below). Two honest options: "pattern" borrows only the shape and writes an
+          entirely new script; "review" lets the narration talk about the source, but —
+          today — still cuts to your own footage, never to clips of the source itself.
+          The second label must not promise something this build does not do. */}
+      <div className="flex flex-wrap gap-2 items-center">
+        {(["pattern", "review"] as const).map((p) => (
+          <button
+            key={p}
+            onClick={() => setPurpose(p)}
+            className={`pill ${purpose === p ? "pill-warn" : ""}`}
+            style={{ cursor: "pointer" }}
+            title={p === "pattern"
+              ? (ui.purposePatternHint || "Retells this video's pacing and structure for your own subject — every word is yours.")
+              : (ui.purposeReviewHint || "Narration can discuss the source — using your own footage, not clips from it (yet).")}
+          >
+            {p === "pattern" ? (ui.purposePattern || "Same rhythm, your topic") : (ui.purposeReview || "Talk about this video")}
+          </button>
+        ))}
+      </div>
+      <div className="text-xs" style={{ color: "var(--cream-mute)" }}>
+        {purpose === "pattern"
+          ? (ui.purposePatternHint || "Retells this video's pacing and structure for your own subject — every word is yours.")
+          : (ui.purposeReviewHint || "Narration can discuss the source — using your own footage, not clips from it (yet).")}
+      </div>
       <div className="flex flex-wrap gap-2 items-center">
         {(["avatar", "voiceover"] as const).map((m) => (
           <button
