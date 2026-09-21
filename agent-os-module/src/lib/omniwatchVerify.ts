@@ -186,6 +186,47 @@ function spreadAcrossSiblings(
   return after.map((r) => now.get(r.id) ?? r);
 }
 
+/** A grid tiles. Make it tile.
+ *
+ *  The pass can leave a row contradicting itself: it corrected two slot cells to start at
+ *  0.247 — "bleeds left into the label column" — while passing the label cells beside them
+ *  at 0.18 wide. Both cannot be true, and the gap between them would render as a stripe of
+ *  the board showing through where the format has none.
+ *
+ *  An explicit correction outweighs a pass, because a pass is only the absence of an
+ *  objection: the model was asked whether a box was wrong and said nothing, which is what
+ *  it also says about a box it did not look at carefully. So a corrected edge wins, and its
+ *  neighbour is pulled to meet it. */
+function tileRows(regions: BlueprintRegion[], corrected: string[]): BlueprintRegion[] {
+  const out = new Map(regions.map((r) => [r.id, r]));
+  const rows = new Map<string, BlueprintRegion[]>();
+  for (const r of regions) {
+    if (!r.at || !r.parent) continue;
+    const k = `${r.parent}#${r.at.row}`;
+    rows.set(k, [...(rows.get(k) ?? []), r]);
+  }
+  for (const cells of rows.values()) {
+    const line = cells.sort((a, b) => (a.at!.col - b.at!.col));
+    for (let i = 0; i + 1 < line.length; i++) {
+      const a = out.get(line[i].id)!, b = out.get(line[i + 1].id)!;
+      const edgeA = a.rect[0] + a.rect[2], edgeB = b.rect[0];
+      if (Math.abs(edgeA - edgeB) < 0.005) continue;
+      const aFixed = corrected.includes(a.id), bFixed = corrected.includes(b.id);
+      if (bFixed && !aFixed) {
+        out.set(a.id, { ...a, rect: [a.rect[0], a.rect[1], Math.max(edgeB - a.rect[0], 0.01), a.rect[3]] });
+      } else if (aFixed && !bFixed) {
+        out.set(b.id, { ...b, rect: [edgeA, b.rect[1], Math.max(b.rect[0] + b.rect[2] - edgeA, 0.01), b.rect[3]] });
+      } else {
+        // Neither was judged, or both were: meet in the middle rather than pick a winner.
+        const mid = (edgeA + edgeB) / 2;
+        out.set(a.id, { ...a, rect: [a.rect[0], a.rect[1], Math.max(mid - a.rect[0], 0.01), a.rect[3]] });
+        out.set(b.id, { ...b, rect: [mid, b.rect[1], Math.max(b.rect[0] + b.rect[2] - mid, 0.01), b.rect[3]] });
+      }
+    }
+  }
+  return regions.map((r) => out.get(r.id) ?? r);
+}
+
 export type VerifyResult =
   | { ok: true; blueprint: Blueprint; checks: RegionCheck[]; corrected: string[]; frames: number }
   | { ok: false; error: string; status?: number };
@@ -245,6 +286,7 @@ export async function verifyBlueprint(
     return { ...r, rect: c.rect };
   });
   regions = spreadAcrossSiblings(bp.regions, regions, corrected);
+  regions = tileRows(regions, corrected);
 
   // Corrections go back through the same door as everything else: a "fix" that breaks the
   // blueprint is not applied, and says so.

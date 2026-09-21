@@ -106,6 +106,26 @@ test("a sibling that was already different is left alone", async () => {
   assert.deepEqual(rectOf(r.blueprint, "a-label"), [0, 0.63, 0.4, 0.09]);
 });
 
+test("a corrected edge pulls its neighbour in the same row to meet it", async () => {
+  serve();
+  const bp = board();
+  // A label column and a slot column that tile at 0.13, as the capture had them.
+  bp.regions.push({ id: "s-slot", role: "cell", rect: [0.13, 0.54, 0.87, 0.09], z: 6, parent: "board", at: { row: 1, col: 2 } });
+  bp.tracks.push({ region: "s-slot", kind: "image", varies: "episode", fill: "supply",
+    items: [{ start: 0, end: 20, value: "a headshot" }] });
+  // The model corrects the slot — "bleeds left into the label column" — and passes the
+  // label beside it. Both cannot be true.
+  answers = ['{"checks":[{"id":"s-slot","ok":false,"rect":[0.25,0.54,0.75,0.09],"note":"bleeds left"},{"id":"s-label","ok":true}]}'];
+  const { verifyBlueprint } = load();
+  const r = await verifyBlueprint(bp, "/nope.mp4", [6], (n) => path.join(dir, n));
+  assert.equal(r.ok, true);
+  const [lx, , lw] = rectOf(r.blueprint, "s-label");
+  const [sx] = rectOf(r.blueprint, "s-slot");
+  assert.equal(sx, 0.25);
+  // The label grows to meet it: no stripe of the board shows through between them.
+  assert.ok(Math.abs((lx + lw) - sx) < 0.005, `gap of ${(sx - (lx + lw)).toFixed(3)}`);
+});
+
 test("a text area may be moved but not shrunk to whatever line is showing", async () => {
   serve();
   answers = ['{"checks":[{"id":"cap","ok":false,"rect":[0.27,0.54,0.46,0.03],"note":"lower"}]}'];
