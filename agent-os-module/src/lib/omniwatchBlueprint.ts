@@ -365,3 +365,152 @@ THE REPEATING UNIT — this is what makes the video a FORMAT rather than one vid
   "episode" — anything that changes with the subject: the title, the narration, each
               image that is about this topic.
   Decide per track, by asking what a different episode of this same format would keep.`;
+
+// ── the format layer ───────────────────────────────────────────────────────────
+//
+// A capture describes one episode. A format is the same layout with the episode taken out:
+// the scaffolding kept verbatim, everything that changes reduced to a named slot, and time
+// expressed as a SHARE rather than a second.
+//
+// That last part is what makes it reusable. The captured tier list ran 20 seconds over two
+// subjects; the next one may rank five and run a minute. Absolute seconds would either
+// truncate it or leave it hanging, so a per-beat item records where it sits inside its own
+// beat (0..1) and how much of that beat it takes. Render-time multiplies those by whatever
+// the new episode's beats turn out to be.
+//
+// Derived, never asked: the model already said which tracks vary and which beat each item
+// belongs to, so this is arithmetic. Asking a second time would invite a second opinion.
+
+export interface FormatSlot {
+  /** Stable id: the region it fills plus its kind, which is unique per track. */
+  id: string;
+  region: string;
+  kind: TrackKind;
+  /** True when this slot is filled once per beat, false when it is filled once per episode
+   *  (a title, a hook line). The difference decides how many values an episode must supply. */
+  perBeat: boolean;
+  /** How many values one beat TYPICALLY needs — the median across beats, not the maximum.
+   *  One talkative subject should not set the bill for every other. */
+  perUnit: number;
+  /** What the busiest beat asked for. Kept so a filler can see the spread rather than
+   *  discovering it when a beat runs out of room. */
+  perUnitMax: number;
+  /** Where each value sits, as shares of its beat (or of the whole video when not perBeat).
+   *  Same length as perUnit. */
+  timing: { at: number; forShare: number }[];
+  /** One captured value, kept as guidance for whatever fills the slot next. Not content. */
+  example: string;
+}
+
+export interface VideoFormat {
+  version: typeof BLUEPRINT_VERSION;
+  /** No seconds: a format has no duration until an episode gives it one. */
+  canvas: { width: number; height: number; fps: number };
+  regions: BlueprintRegion[];
+  /** Scaffolding, kept as captured — tier rows, a backdrop, a frame. */
+  fixed: BlueprintTrack[];
+  slots: FormatSlot[];
+  /** How many repetitions the captured episode ran. A different episode may run a different
+   *  number; this is what it looked like, not a rule. */
+  beats: number;
+}
+
+const share = (v: number) => Math.round(v * 10000) / 10000;
+
+/** The window each beat occupied, taken across every track that mentioned it. */
+export function beatWindows(bp: Blueprint): Map<number, { start: number; end: number }> {
+  const w = new Map<number, { start: number; end: number }>();
+  for (const t of bp.tracks) {
+    for (const i of t.items) {
+      if (!i.beat) continue;
+      const cur = w.get(i.beat);
+      if (!cur) w.set(i.beat, { start: i.start, end: i.end });
+      else { cur.start = Math.min(cur.start, i.start); cur.end = Math.max(cur.end, i.end); }
+    }
+  }
+  return w;
+}
+
+/** Lift the reusable shape out of one capture. */
+export function deriveFormat(bp: Blueprint): VideoFormat {
+  const windows = beatWindows(bp);
+  const beats = windows.size;
+  const whole = { start: 0, end: bp.canvas.seconds };
+
+  const slots: FormatSlot[] = [];
+  for (const t of bp.tracks) {
+    if (t.varies === "fixed") continue;
+
+    // An episode track either repeats per beat or is supplied once. Judged by its items,
+    // not by a flag: a track whose items all carry a beat is per-beat, and one whose items
+    // carry none is a per-episode field.
+    //
+    // Tagging is not always even, though. On a real capture the model numbered the caption
+    // items and left the graphic that changes alongside them untagged, which classified an
+    // obviously per-beat track as "supplied once". So when a track carries no beats at all
+    // and the video has beat windows, each item is placed by WHERE IT FALLS: an item that
+    // sits inside a beat's window belongs to that beat. Arithmetic, not a second opinion.
+    const tagged = t.items.filter((i) => i.beat);
+    let items = t.items;
+    if (tagged.length === 0 && beats > 0) {
+      // Containment, not midpoint. A headline that runs the whole video has its midpoint
+      // inside whichever beat happens to sit in the middle, and would be mistaken for a
+      // per-beat field; an item belongs to a beat only when that beat holds most of it.
+      const placed = t.items.map((i) => {
+        const span = Math.max(i.end - i.start, 0.001);
+        for (const [n, w] of windows) {
+          const inside = Math.min(i.end, w.end) - Math.max(i.start, w.start);
+          if (inside / span >= 0.6) return { ...i, beat: n };
+        }
+        return i;
+      });
+      // Only adopt the inference when it actually explains the track.
+      if (placed.filter((i) => i.beat).length >= Math.ceil(t.items.length * 0.8)) items = placed;
+    }
+    const beated = items.filter((i) => i.beat);
+    const perBeat = beated.length > 0 && beated.length === items.length;
+
+    // Per beat, the count is what ONE beat needs — the most any single beat asked for, so a
+    // subject that got two captions is not quietly cut to the one another got.
+    let perUnit: number, perUnitMax: number;
+    let sample: BlueprintItem[];
+    if (perBeat) {
+      const byBeat = new Map<number, BlueprintItem[]>();
+      for (const i of items) {
+        const k = i.beat as number;
+        byBeat.set(k, [...(byBeat.get(k) ?? []), i]);
+      }
+      const groups = [...byBeat.values()].sort((a, b) => a.length - b.length);
+      const median = groups[Math.floor((groups.length - 1) / 2)];
+      perUnit = median.length;
+      perUnitMax = groups[groups.length - 1].length;
+      // Timing comes off a beat of typical size, so the shares describe the usual shape.
+      sample = median;
+    } else {
+      perUnit = items.length;
+      perUnitMax = items.length;
+      sample = items;
+    }
+
+    const timing = sample.map((i) => {
+      const w = perBeat && i.beat ? windows.get(i.beat) ?? whole : whole;
+      const span = Math.max(w.end - w.start, 0.001);
+      return { at: share((i.start - w.start) / span), forShare: share((i.end - i.start) / span) };
+    });
+
+    slots.push({
+      id: `${t.region}:${t.kind}`,
+      region: t.region, kind: t.kind, perBeat, perUnit, perUnitMax, timing,
+      example: sample[0]?.value ?? "",
+    });
+  }
+
+  return {
+    version: BLUEPRINT_VERSION,
+    canvas: { width: bp.canvas.width, height: bp.canvas.height, fps: bp.canvas.fps },
+    regions: bp.regions,
+    fixed: bp.tracks.filter((t) => t.varies === "fixed"),
+    slots,
+    beats,
+  };
+}

@@ -43,6 +43,42 @@ const good = () => ({
   ],
 });
 
+/** The reference this benchmark copies, reduced to two ranked subjects: a scaffolded tier
+ *  board, a presenter that holds, and captions and images that change per subject. */
+const tierList = () => ({
+  version: lib.BLUEPRINT_VERSION,
+  canvas: { width: 720, height: 1280, fps: 30, seconds: 20 },
+  regions: [
+    { id: "stage", role: "backdrop", rect: [0, 0, 1, 1], z: 0 },
+    { id: "title", role: "text", label: "headline strip", rect: [0, 0, 1, 0.08], z: 3 },
+    { id: "host", role: "figure", label: "presenter with microphone", rect: [0.1, 0.1, 0.8, 0.35], z: 2 },
+    { id: "face", role: "overlay", label: "reaction inset", rect: [0.05, 0.12, 0.15, 0.1], z: 5, parent: "host" },
+    { id: "caption", role: "text", label: "spoken line", rect: [0.05, 0.47, 0.9, 0.07], z: 4 },
+    { id: "board", role: "panel", label: "tier list", rect: [0, 0.55, 1, 0.45], z: 1, grid: { rows: 5, cols: 4 } },
+    { id: "cell_d1", role: "cell", label: "tier row D, first slot", rect: [0.15, 0.88, 0.25, 0.1], z: 2, parent: "board", at: { row: 5, col: 1 } },
+  ],
+  tracks: [
+    { region: "stage", kind: "color", varies: "fixed", items: [{ start: 0, end: 20, value: "#000000" }] },
+    { region: "title", kind: "text", varies: "episode", items: [{ start: 0, end: 20, value: "RANKING THE BEST FOOTBALLERS" }] },
+    { region: "board", kind: "image", varies: "fixed", items: [{ start: 0, end: 20, value: "five rows labelled S A B C D" }] },
+    { region: "host", kind: "video", varies: "fixed", items: [{ start: 0, end: 20, value: "a presenter holding a microphone" }] },
+    { region: "face", kind: "image", varies: "episode", items: [
+      { start: 0, end: 10, value: "a portrait of the first subject", beat: 1 },
+      { start: 10, end: 20, value: "a portrait of the second subject", beat: 2 },
+    ] },
+    { region: "caption", kind: "text", varies: "episode", items: [
+      { start: 0, end: 2, value: "Ronaldo is D tier.", beat: 1 },
+      { start: 2, end: 4, value: "Bro has more hair gel than trophies.", beat: 1 },
+      { start: 10, end: 12, value: "Messi? Man won a World Cup", beat: 2 },
+      { start: 12, end: 14, value: "looking like somebody's tired dad.", beat: 2 },
+    ] },
+    { region: "cell_d1", kind: "image", varies: "episode", items: [
+      { start: 2, end: 6, value: "hair gel beside empty trophy shelves", beat: 1 },
+      { start: 12, end: 16, value: "a World Cup trophy held by a tired man", beat: 2 },
+    ] },
+  ],
+});
+
 test("a well-formed blueprint passes, and items come back in time order", () => {
   const r = lib.validateBlueprint(good());
   assert.equal(r.ok, true, r.error);
@@ -120,4 +156,79 @@ test("every track must say whether it is the format or this episode", () => {
   const ok = lib.validateBlueprint(good());
   assert.equal(ok.blueprint.tracks.find((t) => t.region === "bg").varies, "fixed");
   assert.equal(ok.blueprint.tracks.find((t) => t.region === "cap").varies, "episode");
+});
+
+// ── the format layer ─────────────────────────────────────────────────────────────────────
+// A capture is one episode. A format is the same layout with the episode removed: the
+// scaffolding kept, everything that changes reduced to a named slot, and time as a share.
+
+test("a format has no duration, keeps the scaffolding, and asks for the rest", () => {
+  const f = lib.deriveFormat(lib.validateBlueprint(tierList()).blueprint);
+  assert.equal(f.canvas.seconds, undefined, "a format has no duration until an episode gives it one");
+  assert.equal(f.canvas.width, 720);
+  assert.deepEqual(f.fixed.map((t) => t.region).sort(), ["board", "host", "stage"]);
+  assert.deepEqual(f.slots.map((s) => s.region).sort(), ["caption", "cell_d1", "face", "title"]);
+  assert.equal(f.beats, 2);
+});
+
+test("a per-episode field is asked for once, a per-beat one for every beat", () => {
+  const f = lib.deriveFormat(lib.validateBlueprint(tierList()).blueprint);
+  const title = f.slots.find((s) => s.region === "title");
+  assert.equal(title.perBeat, false, "the headline is supplied once");
+  assert.equal(title.perUnit, 1);
+  const caption = f.slots.find((s) => s.region === "caption");
+  assert.equal(caption.perBeat, true, "captions repeat per subject");
+});
+
+test("timing is a share of the beat, so the same format stretches to a longer episode", () => {
+  // Two captures of the same shape, one twice as slow. The shares must come out identical.
+  const slow = tierList();
+  slow.canvas.seconds = 40;
+  for (const t of slow.tracks) for (const i of t.items) { i.start *= 2; i.end *= 2; }
+  const a = lib.deriveFormat(lib.validateBlueprint(tierList()).blueprint);
+  const b = lib.deriveFormat(lib.validateBlueprint(slow).blueprint);
+  const pick = (f) => f.slots.find((s) => s.region === "caption").timing;
+  assert.deepEqual(pick(a), pick(b), "shares must not depend on how long the capture ran");
+});
+
+test("one talkative beat does not set the bill for the rest", () => {
+  // Beat 1 gets four captions, beat 2 gets one. The typical ask is the median, and the
+  // spread is reported rather than hidden.
+  const bp = tierList();
+  const cap = bp.tracks.find((t) => t.region === "caption");
+  cap.items = [
+    { start: 0, end: 1, value: "a", beat: 1 }, { start: 1, end: 2, value: "b", beat: 1 },
+    { start: 2, end: 3, value: "c", beat: 1 }, { start: 3, end: 4, value: "d", beat: 1 },
+    { start: 10, end: 12, value: "e", beat: 2 },
+  ];
+  const slot = lib.deriveFormat(lib.validateBlueprint(bp).blueprint).slots.find((s) => s.region === "caption");
+  assert.equal(slot.perUnitMax, 4, "the busiest beat is still reported");
+  assert.ok(slot.perUnit < slot.perUnitMax, "the typical ask must be below the busiest beat");
+});
+
+test("a track the model forgot to number is placed by where its items fall", () => {
+  // Measured on a real capture: the caption items were numbered and the graphic changing
+  // alongside them was not, which called an obviously per-beat track "supplied once".
+  const bp = tierList();
+  const overlay = { region: "face", kind: "image", varies: "episode", items: [
+    { start: 0.5, end: 4, value: "first subject's joke image" },
+    { start: 10.5, end: 14, value: "second subject's joke image" },
+  ] };
+  bp.tracks = bp.tracks.filter((t) => t.region !== "face").concat([overlay]);
+  const slot = lib.deriveFormat(lib.validateBlueprint(bp).blueprint).slots.find((s) => s.region === "face");
+  assert.equal(slot.perBeat, true, "items sitting inside beat windows belong to those beats");
+  assert.equal(slot.perUnit, 1);
+});
+
+test("a guess that does not explain the track is not adopted", () => {
+  // Items scattered outside every beat window stay a per-episode field rather than being
+  // forced into beats they do not belong to.
+  const bp = tierList();
+  bp.canvas.seconds = 40;
+  bp.tracks = bp.tracks.filter((t) => t.region !== "face").concat([{
+    region: "face", kind: "image", varies: "episode",
+    items: [{ start: 30, end: 33, value: "an outro card" }, { start: 33, end: 36, value: "a logo" }],
+  }]);
+  const slot = lib.deriveFormat(lib.validateBlueprint(bp).blueprint).slots.find((s) => s.region === "face");
+  assert.equal(slot.perBeat, false, "nothing should be invented to make a track look repeating");
 });
