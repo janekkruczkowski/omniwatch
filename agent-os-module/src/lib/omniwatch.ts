@@ -256,6 +256,30 @@ export async function fetchVideo(url: string): Promise<{ info: VideoInfo; src: s
 }
 
 /** The whole video if it fits one request, otherwise equal parts of at most MAX_FRAMES. */
+/** A video that is already in the cache, without going back to the network.
+ *
+ *  A capture is a claim about a file, and improving the capture means running it again on
+ *  the SAME file — otherwise a change in the answer could be a change in the download. It
+ *  also makes a re-analysis free, which is what lets the schema be tested against several
+ *  different formats instead of one. */
+export async function cachedVideo(id: string): Promise<{ info: VideoInfo; src: string } | null> {
+  let dir: string;
+  try { dir = videoDir(id); } catch { return null; }
+  let src = "";
+  for (const f of ["master.mp4", "source.mp4"]) {
+    if (existsSync(path.join(dir, f))) { src = path.join(dir, f); break; }
+  }
+  if (!src) return null;
+  let info: VideoInfo;
+  try {
+    info = JSON.parse(await readFile(path.join(dir, "info.json"), "utf8")) as VideoInfo;
+  } catch {
+    info = { id, title: id, channel: "?", duration: 0, extractor: "cache" } as VideoInfo;
+  }
+  if (!info.duration) info.duration = await probeDuration(src);
+  return { info, src };
+}
+
 export async function splitParts(info: VideoInfo, src: string): Promise<{ start: number; file: string }[]> {
   const seconds = info.duration || 0;
   const n = Math.max(1, Math.ceil((seconds * fpsFor(seconds)) / MAX_FRAMES));

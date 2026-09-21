@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { startJob, getJob } from "@/lib/omniwatchJobs";
 import {
-  apiKey, fetchVideo, watch, save, fmt,
+  apiKey, fetchVideo, cachedVideo, watch, save, fmt,
   DEFAULT_LANG, PRICE_IN, PRICE_OUT, STRIP, type Mode,
 } from "@/lib/omniwatch";
 import I18N from "@/lib/omniwatchI18n";
@@ -39,7 +39,16 @@ export async function POST(req: Request) {
   const question = String(body.q || "");
   const mode: Mode = body.mode === "teardown" ? "teardown" : body.mode === "blueprint" ? "blueprint" : "ask";
   const l = I18N[String(body.lang || "")] ? String(body.lang) : DEFAULT_LANG;
-  if (!/^https?:\/\//i.test(url)) return NextResponse.json({ error: "a http(s) link is required" }, { status: 400 });
+  // Either a link to fetch, or a video already in the cache. The second is what makes a
+  // capture repeatable: the same file, analysed again, so a difference in the answer is a
+  // difference in the pipeline and not in the download.
+  const sourceId = String(body.sourceId || "").trim();
+  if (!sourceId && !/^https?:\/\//i.test(url)) {
+    return NextResponse.json({ error: "a http(s) link or a sourceId is required" }, { status: 400 });
+  }
+  if (sourceId && !await cachedVideo(sourceId)) {
+    return NextResponse.json({ error: "that video is not in the cache" }, { status: 404 });
+  }
 
   const key = await apiKey();
   if (!key) {
@@ -55,7 +64,7 @@ export async function POST(req: Request) {
     const push = () => { j.progress = { ...p }; };
     push();
 
-    const { info, src } = await fetchVideo(url);
+    const { info, src } = sourceId ? (await cachedVideo(sourceId))! : await fetchVideo(url);
     const seconds = info.duration || 0;
     p.meta = {
       id: info.id, title: info.title, channel: info.channel,
@@ -84,7 +93,7 @@ export async function POST(req: Request) {
     p.text = answer;
     p.stage = "answer";
     push();
-    await save(info, url, question, answer, l, mode).catch(() => {});
+    await save(info, url || `cache:${sourceId}`, question, answer, l, mode).catch(() => {});
 
     const result: Result = {
       ...p, text: answer,
