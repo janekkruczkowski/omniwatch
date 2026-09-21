@@ -379,6 +379,18 @@ export function validateBlueprint(raw: unknown): BlueprintCheck {
       grid = { rows, cols };
     }
 
+    // A cell is a subdivision of something, and a subdivision that cannot say WHICH
+    // subdivision it is has given up the only thing the role is for. Measured: a capture
+    // came back with five full-width "cells", no parent and no grid between them — a tier
+    // board flattened into a colour chart, with nowhere for a single item to be placed.
+    // Whatever that is, it is a panel or an overlay, and calling it a cell hid the loss.
+    if (role === "cell" && (r.at === undefined || r.at === null)) {
+      return { ok: false, error: `${at}.at is required on a cell — say which row and column it is, or make it a panel` };
+    }
+    if (role === "cell" && !parent) {
+      return { ok: false, error: `${at}.parent is required on a cell — a subdivision belongs to something` };
+    }
+
     let cellAt: { row: number; col: number } | undefined;
     if (r.at !== undefined && r.at !== null) {
       if (role !== "cell") return { ok: false, error: `${at}.at belongs on a cell, not on a ${role}` };
@@ -496,12 +508,15 @@ export function validateBlueprint(raw: unknown): BlueprintCheck {
 
   // A region nothing ever puts content into is a region that was imagined, not observed —
   // unless it is a container, because a board whose slots hold the content is real and has
-  // nothing of its own to paint.
+  // nothing of its own to paint, or unless it IS paint: a coloured backdrop, a tier row, a
+  // rule between two halves. That last case only became possible when regions learned to
+  // carry a surface, and until this rule caught up a capture that correctly described a
+  // painted backdrop was thrown out for describing it.
   const used = new Set(tracks.map((t) => t.region));
   const hasChild = new Set(regions.map((r) => r.parent).filter(Boolean) as string[]);
-  const idle = regions.find((r) => !used.has(r.id) && !hasChild.has(r.id));
+  const idle = regions.find((r) => !used.has(r.id) && !hasChild.has(r.id) && !r.paint);
   if (idle) {
-    return { ok: false, error: `region "${idle.id}" has no track and nothing inside it — every region must carry something` };
+    return { ok: false, error: `region "${idle.id}" has no track, no paint and nothing inside it — every region must carry something` };
   }
 
   return { ok: true, blueprint: { version: BLUEPRINT_VERSION, canvas: { width, height, fps, seconds }, regions, tracks } };
@@ -548,9 +563,19 @@ RULES
   subdivision of a panel. Say what the area really is in "label" — "tier row S", "webcam
   bubble", "step 2 of the recipe", "reply from mum" — and keep "role" to the six.
 - If a panel is divided into a regular structure, give it "grid" and give each part its own
-  cell region with "at". A tier list, a 2-up comparison, a leaderboard, a bingo card and a
-  side-by-side before/after are all this. Without it the structure is only a picture of
-  itself and nothing can be placed into it.
+  cell region with "parent" and "at". A tier list, a 2-up comparison, a leaderboard, a bingo
+  card and a side-by-side before/after are all this. Without it the structure is only a
+  picture of itself and nothing can be placed into it.
+- Count the columns honestly. A row that has a coloured block with a letter on the left and
+  a darker area holding items on the right is TWO cells in two columns, not one cell across
+  the row — the left one is a label and the right one is where things get placed, and a
+  video of this format puts something different in that right-hand area every time. Five
+  such rows is a 5x2 grid and ten cell regions.
+- Every cell MUST carry "parent" and "at". A region that cannot say which row and column it
+  occupies is not a cell; make it a panel or an overlay instead.
+- Where individual items sit inside a cell — each headshot on a tier row, each logo in a
+  line-up — give each one its own cell region too, with the column it occupies, so an
+  episode can fill them one at a time.
 - Every region must have at least one track, and every track at least one item.
 - z decides what is painted over what. Give overlapping regions different z.
 - A caption that changes word by word is many items on ONE caption track, each with its own

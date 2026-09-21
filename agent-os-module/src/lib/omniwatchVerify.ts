@@ -16,7 +16,7 @@
 // picture it can see is the kind of question models answer well.
 import { readFile } from "node:fs/promises";
 import { apiKey, run } from "@/lib/omniwatch";
-import { validateBlueprint, type Blueprint, type Rect } from "@/lib/omniwatchBlueprint";
+import { validateBlueprint, type Blueprint, type BlueprintRegion, type Rect } from "@/lib/omniwatchBlueprint";
 
 const API = process.env.DASHSCOPE_API || "https://dashscope-intl.aliyuncs.com";
 const MODEL = process.env.OMNI_VERIFY_MODEL || "qwen3.8-omni-flash";
@@ -79,6 +79,10 @@ claims is not in the picture at all.
 When a box is wrong, give the rectangle where that thing REALLY is, as fractions of the
 frame: [x, y, width, height], origin top-left, so [0, 0, 1, 0.1] is a strip across the top.
 Measure it; do not repeat the box you were shown and do not round to a tidy number.
+
+For an area whose content is WORDS, give the area the words sit in, not a box drawn tightly
+around the words that happen to be on screen now. A caption band is the same size when a
+short line is showing as when a long one is.
 
 If a thing is genuinely not visible in this frame — it appears later, or is hidden behind
 something — say ok true and note that, rather than inventing a rectangle for it.
@@ -149,6 +153,39 @@ function readChecks(text: string): RegionCheck[] {
   return out;
 }
 
+/** A grid says which regions are the same KIND of thing, so a correction to one of them is
+ *  a correction to all of them.
+ *
+ *  Measured: the C and D tier labels were found too narrow and fixed, while S, A and B —
+ *  identical cells in the same column, carrying the identical wrong width — were waved
+ *  through. One frame, one model, five chances to be consistent and it took three. The grid
+ *  already records that those five are one column; using it turns an inconsistent answer
+ *  into a consistent one without asking again. */
+function spreadAcrossSiblings(
+  before: BlueprintRegion[], after: BlueprintRegion[], corrected: string[],
+): BlueprintRegion[] {
+  const was = new Map(before.map((r) => [r.id, r]));
+  const now = new Map(after.map((r) => [r.id, r]));
+  const near = (a: number, b: number) => Math.abs(a - b) < 0.02;
+
+  for (const id of corrected) {
+    const old = was.get(id), fixed = now.get(id);
+    if (!old || !fixed || !old.at || !old.parent) continue;
+    for (const sib of after) {
+      if (sib.id === id || sib.parent !== old.parent || !sib.at) continue;
+      const sibWas = was.get(sib.id);
+      if (!sibWas || corrected.includes(sib.id)) continue;
+      // Same column: the horizontal measurement is shared. Same row: the vertical one.
+      if (sib.at.col === old.at.col && near(sibWas.rect[0], old.rect[0]) && near(sibWas.rect[2], old.rect[2])) {
+        now.set(sib.id, { ...sib, rect: [fixed.rect[0], sib.rect[1], fixed.rect[2], sib.rect[3]] });
+      } else if (sib.at.row === old.at.row && near(sibWas.rect[1], old.rect[1]) && near(sibWas.rect[3], old.rect[3])) {
+        now.set(sib.id, { ...sib, rect: [sib.rect[0], fixed.rect[1], sib.rect[2], fixed.rect[3]] });
+      }
+    }
+  }
+  return after.map((r) => now.get(r.id) ?? r);
+}
+
 export type VerifyResult =
   | { ok: true; blueprint: Blueprint; checks: RegionCheck[]; corrected: string[]; frames: number }
   | { ok: false; error: string; status?: number };
@@ -190,12 +227,24 @@ export async function verifyBlueprint(
   }
 
   const corrected: string[] = [];
-  const regions = bp.regions.map((r) => {
+  let regions = bp.regions.map((r) => {
     const c = best.get(r.id);
     if (!c || c.ok || !c.rect) return r;
+    // A text area is sized by the FORMAT; what is on screen is one line out of many. A
+    // correction that only shrinks it is evidence about the words, not about the area —
+    // measured: a caption band came back as the bounding box of "walks around", which
+    // would have made every other line in that format overflow it.
+    if (r.role === "text") {
+      const [, , w, h] = r.rect;
+      const [nx, ny, nw, nh] = c.rect;
+      const kept: Rect = [nx, ny, Math.max(nw, w), Math.max(nh, h)];
+      corrected.push(r.id);
+      return { ...r, rect: kept };
+    }
     corrected.push(r.id);
     return { ...r, rect: c.rect };
   });
+  regions = spreadAcrossSiblings(bp.regions, regions, corrected);
 
   // Corrections go back through the same door as everything else: a "fix" that breaks the
   // blueprint is not applied, and says so.
