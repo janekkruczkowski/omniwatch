@@ -14,7 +14,8 @@
 // crops of the watched file and the result is a trace of the original, which is how the
 // geometry gets checked; point it at generated assets and the same layout carries a
 // different subject. One renderer, both jobs.
-import type { Blueprint, BlueprintItem, BlueprintTrack, BlueprintRegion } from "@/lib/omniwatchBlueprint";
+import { splitEmphasis, type Blueprint, type BlueprintItem, type BlueprintTrack,
+  type BlueprintRegion, type TextStyle } from "@/lib/omniwatchBlueprint";
 
 export interface ComposeSources {
   /** The URL to draw for one image/video item, or null to leave the slot empty. */
@@ -55,17 +56,67 @@ const safeUrl = (u: string): string | null => {
 const pct = (n: number) => `${Math.round(n * 1000000) / 10000}%`;
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
-function boxStyle(r: BlueprintRegion): string {
+/** A hex that came through the validator, checked again here because this string is about
+ *  to become part of a style attribute. */
+const colour = (v: string | undefined): string | null =>
+  v && /^#[0-9a-fA-F]{3,8}$/.test(v) ? v : null;
+
+function boxStyle(r: BlueprintRegion, W: number, H: number): string {
   const [x, y, w, h] = r.rect;
-  return `left:${pct(x)};top:${pct(y)};width:${pct(w)};height:${pct(h)};z-index:${Math.round(r.z)}`;
+  const out = [`left:${pct(x)}`, `top:${pct(y)}`, `width:${pct(w)}`, `height:${pct(h)}`, `z-index:${Math.round(r.z)}`];
+  // The region's own surface. A tier row IS a coloured rectangle; asked to generate one,
+  // an image model produced a photograph of a tier list inside a single row.
+  const p = r.paint;
+  if (p) {
+    const fill = colour(p.fill);
+    if (fill) out.push(`background:${fill}`);
+    // Radius and border are fractions of the shorter side, so they hold at any frame size.
+    const short = Math.min(w * W, h * H);
+    if (p.radius && p.radius > 0) out.push(`border-radius:${Math.round(p.radius * short)}px`);
+    const bc = colour(p.border?.color);
+    if (bc && p.border) out.push(`border:${Math.max(1, Math.round(p.border.width * short))}px solid ${bc}`);
+  }
+  return out.join(";");
+}
+
+/** The words of one item, set the way the track says.
+ *
+ *  Emphasis is a span inside the value, so one string stays one string. A format that
+ *  underlines the word carrying the joke — and the reference does — cannot otherwise be
+ *  reproduced at all: it comes out as a flat line that reads wrong. */
+function textHtml(st: TextStyle | undefined, value: string, H: number): string {
+  const parts = splitEmphasis(value);
+  const em = st?.emphasis;
+  const emColour = colour(em?.color);
+  const body = parts.map((p) => {
+    const t = esc(st?.case === "upper" ? p.text.toUpperCase() : p.text);
+    if (!p.strong || !em || !emColour) return t;
+    if (em.style === "highlight") return `<mark style="background:${emColour};color:inherit;padding:0 .18em;border-radius:.12em">${t}</mark>`;
+    if (em.style === "underline") return `<span style="box-shadow:inset 0 -.22em 0 ${emColour}">${t}</span>`;
+    return `<span style="color:${emColour}">${t}</span>`;
+  }).join("");
+
+  const css: string[] = [];
+  const fg = colour(st?.color);
+  if (fg) css.push(`color:${fg}`);
+  if (st?.weight) css.push(`font-weight:${Math.round(st.weight)}`);
+  if (st?.size) css.push(`font-size:${Math.round(st.size * H)}px`);
+  // A stroke around the glyphs, which is what keeps a caption readable over footage.
+  const outline = colour(st?.outline);
+  if (outline) css.push(`-webkit-text-stroke:${Math.max(1, Math.round(H * 0.004))}px ${outline};paint-order:stroke fill`);
+  const plate = colour(st?.background);
+  if (plate) css.push(`background:${plate};padding:.12em .4em`);
+  return `<span${css.length ? ` style="${css.join(";")}"` : ""}>${body}</span>`;
 }
 
 /** One item, as the element its kind needs. */
-function itemHtml(t: BlueprintTrack, it: BlueprintItem, i: number, src: ComposeSources): string {
+function itemHtml(t: BlueprintTrack, it: BlueprintItem, i: number, src: ComposeSources, H: number): string {
   const timing = `data-start="${r2(it.start)}" data-duration="${r2(Math.max(it.end - it.start, 0.04))}" data-track-index="1"`;
   if (t.kind === "text") {
     if (src.tracedPixels) return "";
-    return `      <div class="it txt" ${timing}><span>${esc(it.value)}</span></div>`;
+    const align = t.style?.align ?? "center";
+    const just = align === "left" ? "flex-start" : align === "right" ? "flex-end" : "center";
+    return `      <div class="it txt" style="justify-content:${just};text-align:${align}" ${timing}>${textHtml(t.style, it.value, H)}</div>`;
   }
   if (t.kind === "color") {
     if (src.tracedPixels) return "";
@@ -105,9 +156,9 @@ export function composeBlueprint(bp: Blueprint, src: ComposeSources): string {
     const wholeUrl = whole ? safeUrl(whole) : null;
     const inner = wholeUrl
       ? `      <video class="it med" src="${wholeUrl}" muted playsinline data-start="0" data-duration="${total}" data-track-index="1"></video>`
-      : tracks.flatMap((t) => t.items.map((it, i) => itemHtml(t, it, i, src))).filter(Boolean).join("\n");
+      : tracks.flatMap((t) => t.items.map((it, i) => itemHtml(t, it, i, src, H))).filter(Boolean).join("\n");
     const label = src.debugRegions ? `      <div class="dbg">${esc(r.id)}</div>\n` : "";
-    return `    <div class="rg rg-${esc(r.role)}" id="rg-${esc(r.id)}" style="${boxStyle(r)}">\n${label}${inner}\n    </div>`;
+    return `    <div class="rg rg-${esc(r.role)}" id="rg-${esc(r.id)}" style="${boxStyle(r, W, H)}">\n${label}${inner}\n    </div>`;
   }).join("\n");
 
   const audio = src.audioUrl && safeUrl(src.audioUrl)
