@@ -44,16 +44,25 @@
 
 export const BLUEPRINT_VERSION = "omniwatch.blueprint/1";
 
-/** What a region is FOR. Fixed, because a free-text role cannot be laid out. */
+/** What a region DOES in the layout.
+ *
+ *  The first version of this list was written from one video and read like its table of
+ *  contents: title_bar, presenter, board, sticker. That is a genre, not a vocabulary — a
+ *  screen recording with a webcam bubble, a text-message story, an overhead recipe and a
+ *  split-screen debate have none of those parts, and every new format would have needed a
+ *  new word.
+ *
+ *  These six are layout functions instead, and they compose. A title strip and a word-timed
+ *  caption are both `text`, told apart by where they sit and whether they change per beat —
+ *  which is measured here anyway, and is more honest than a name. What a region is FOR in
+ *  human terms goes in `label`, where it can be anything without the schema growing. */
 export const REGION_ROLES = [
-  "title_bar",    // a persistent strip of text, usually top
-  "presenter",    // the person or character speaking
-  "inset",        // a small picture-in-picture over another region
-  "caption",      // the spoken line, on screen, usually word-timed
-  "board",        // a structure being filled in: tier list, table, bracket, scoreboard
-  "slot",         // one cell of a board, addressed by the board's own grid
-  "stage",        // full-frame footage or colour behind everything
-  "sticker",      // a small decorative or reaction element
+  "backdrop",  // fills the frame behind everything: colour, footage, a set
+  "figure",    // a subject in shot: presenter, avatar, interviewee, hands
+  "overlay",   // layered over another region: inset, bubble, logo, reaction, sticker
+  "text",      // an area whose content is words: title, caption, label, ticker
+  "panel",     // a bounded area holding structured content, often subdivided
+  "cell",      // one subdivision of a panel, addressed by grid position
 ] as const;
 export type RegionRole = (typeof REGION_ROLES)[number];
 
@@ -70,11 +79,22 @@ export interface BlueprintRegion {
   rect: Rect;
   /** Higher paints later. Explicit so two regions that overlap have a defined order. */
   z: number;
-  /** The region this one sits inside, when that is the real relationship: a slot belongs to
-   *  its board, an inset sits over the stage. Absent for a top-level region. `rect` stays a
+  /** The region this one sits inside, when that is the real relationship: a cell belongs to
+   *  its panel, an overlay sits over a figure. Absent for a top-level region. `rect` stays a
    *  fraction of the CANVAS either way — nesting records structure, not a coordinate
-   *  system, because a board that moves should not silently move its slots. */
+   *  system, because a panel that moves should not silently move its cells. */
   parent?: string;
+  /** What this area is called in the language of the format — "tier row S", "webcam
+   *  bubble", "ingredient list", "reply from mum". Free text on purpose: the roles above
+   *  have to stay closed to be laid out, and the endlessly varying part is a name. */
+  label?: string;
+  /** For a `panel` that is divided into a regular grid, how many rows and columns it has.
+   *  Tier rows, a 2-up comparison, a 3x3 bingo card, a leaderboard are all this. */
+  grid?: { rows: number; cols: number };
+  /** For a `cell`, where it sits in its parent's grid, counting from 1. This is what makes
+   *  a structure addressable: without it a tier list is a picture of a tier list, and a
+   *  clone cannot know which row an item lands in. */
+  at?: { row: number; col: number };
 }
 
 export interface BlueprintItem {
@@ -175,7 +195,38 @@ export function validateBlueprint(raw: unknown): BlueprintCheck {
       parent = r.parent.trim();
       if (parent === id) return { ok: false, error: `${at}.parent cannot be itself` };
     }
-    regions.push({ id, role: r.role as RegionRole, rect: (r.rect as number[]).slice(0, 4) as Rect, z, ...(parent ? { parent } : {}) });
+    let label: string | undefined;
+    if (r.label !== undefined && r.label !== null && r.label !== "") {
+      if (typeof r.label !== "string") return { ok: false, error: `${at}.label must be text` };
+      label = r.label.trim().slice(0, 80) || undefined;
+    }
+
+    const role = r.role as RegionRole;
+    let grid: { rows: number; cols: number } | undefined;
+    if (r.grid !== undefined && r.grid !== null) {
+      if (role !== "panel") return { ok: false, error: `${at}.grid belongs on a panel, not on a ${role}` };
+      if (!isObj(r.grid)) return { ok: false, error: `${at}.grid must be { rows, cols }` };
+      const rows = num(r.grid.rows), cols = num(r.grid.cols);
+      if (rows === null || !Number.isInteger(rows) || rows < 1 || rows > 64) return { ok: false, error: `${at}.grid.rows is out of range` };
+      if (cols === null || !Number.isInteger(cols) || cols < 1 || cols > 64) return { ok: false, error: `${at}.grid.cols is out of range` };
+      grid = { rows, cols };
+    }
+
+    let cellAt: { row: number; col: number } | undefined;
+    if (r.at !== undefined && r.at !== null) {
+      if (role !== "cell") return { ok: false, error: `${at}.at belongs on a cell, not on a ${role}` };
+      if (!isObj(r.at)) return { ok: false, error: `${at}.at must be { row, col }` };
+      const row = num(r.at.row), col = num(r.at.col);
+      if (row === null || !Number.isInteger(row) || row < 1) return { ok: false, error: `${at}.at.row must be a whole number from 1 up` };
+      if (col === null || !Number.isInteger(col) || col < 1) return { ok: false, error: `${at}.at.col must be a whole number from 1 up` };
+      cellAt = { row, col };
+    }
+
+    regions.push({
+      id, role, rect: (r.rect as number[]).slice(0, 4) as Rect, z,
+      ...(parent ? { parent } : {}), ...(label ? { label } : {}),
+      ...(grid ? { grid } : {}), ...(cellAt ? { at: cellAt } : {}),
+    });
   }
 
   // Parents are checked after the whole list, because a board may legitimately be declared
@@ -191,6 +242,18 @@ export function validateBlueprint(raw: unknown): BlueprintCheck {
       if (path.has(cur.id)) return { ok: false, error: `regions form a parent loop at "${cur.id}"` };
       path.add(cur.id);
       cur = cur.parent ? byId.get(cur.parent) : undefined;
+    }
+  }
+
+  // A cell that names a place outside its panel's grid is a measurement that cannot be
+  // rendered — row 9 of five tier rows puts the item nowhere.
+  for (const r of regions) {
+    if (!r.at) continue;
+    const host = r.parent ? byId.get(r.parent) : undefined;
+    if (!host) return { ok: false, error: `region "${r.id}" has a grid position but no parent panel` };
+    if (!host.grid) return { ok: false, error: `region "${r.id}" sits at a grid position but "${host.id}" declares no grid` };
+    if (r.at.row > host.grid.rows || r.at.col > host.grid.cols) {
+      return { ok: false, error: `region "${r.id}" is at ${r.at.row},${r.at.col} but "${host.id}" is only ${host.grid.rows}x${host.grid.cols}` };
     }
   }
 
@@ -254,7 +317,11 @@ export const BLUEPRINT_SCHEMA_PROMPT = `Return ONE JSON object and nothing else 
 {
   "version": "${BLUEPRINT_VERSION}",
   "canvas": { "width": <px>, "height": <px>, "fps": <number>, "seconds": <number> },
-  "regions": [ { "id": "<lowercase-id>", "role": <role>, "rect": [x, y, w, h], "z": <number>, "parent": "<region id, only if it sits inside one>" } ],
+  "regions": [ { "id": "<lowercase-id>", "role": <role>, "rect": [x, y, w, h], "z": <number>,
+                 "label": "<what this area is, in plain words>",
+                 "parent": "<region id, only if it sits inside one>",
+                 "grid": { "rows": <n>, "cols": <n> },   // only on a panel that is divided
+                 "at":   { "row": <n>, "col": <n> } } ], // only on a cell, counting from 1
   "tracks":  [ { "region": "<region id>", "kind": <kind>, "varies": "fixed" | "episode",
                  "items": [ { "start": <s>, "end": <s>, "value": "<what>", "beat": <n, only if part of the repeating unit> } ] } ]
 }
@@ -265,6 +332,17 @@ kind is exactly one of: ${TRACK_KINDS.join(" | ")}
 RULES
 - rect is FRACTIONS of the canvas, origin top-left: [0, 0, 1, 0.1] is a strip across the top.
   Never pixels. Measure where the thing actually sits, do not guess a tidy number.
+- The six roles are LAYOUT FUNCTIONS, not genres, and they cover any composed video:
+  backdrop is what is behind everything; figure is a subject in shot, whether a presenter,
+  an avatar, an interviewee or a pair of hands; overlay is anything layered over another
+  region; text is an area whose content is words, whether a fixed title or a caption that
+  changes word by word; panel is a bounded area holding structured content; cell is one
+  subdivision of a panel. Say what the area really is in "label" — "tier row S", "webcam
+  bubble", "step 2 of the recipe", "reply from mum" — and keep "role" to the six.
+- If a panel is divided into a regular structure, give it "grid" and give each part its own
+  cell region with "at". A tier list, a 2-up comparison, a leaderboard, a bingo card and a
+  side-by-side before/after are all this. Without it the structure is only a picture of
+  itself and nothing can be placed into it.
 - Every region must have at least one track, and every track at least one item.
 - z decides what is painted over what. Give overlapping regions different z.
 - A caption that changes word by word is many items on ONE caption track, each with its own

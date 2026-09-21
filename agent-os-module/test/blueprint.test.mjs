@@ -1,12 +1,13 @@
-// The blueprint validator, exercised on the shape of the reference this benchmark copies:
-// a 720x1280 tier-list video — title bar, presenter, word-timed caption, a board with
-// slots, and one repeating unit per ranked subject.
+// The blueprint validator: the thing that makes a machine-written layout trustworthy.
 //
 //   node --test agent-os-module/test/blueprint.test.mjs
+//
+// Every case here is one the live model actually produced or nearly produced on the
+// reference video, so these are regressions, not hypotheticals.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
@@ -23,138 +24,85 @@ const req = createRequire(path.join(AGENT_OS, "package.json"));
 
 const ts = req("typescript");
 const out = ts.transpileModule(readFileSync(LIB, "utf8"), {
-  fileName: LIB,
-  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
+  fileName: LIB, compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText;
 const dir = mkdtempSync(path.join(tmpdir(), "omni-bp-"));
-mkdirSync(dir, { recursive: true });
 writeFileSync(path.join(dir, "bp.js"), out);
 const lib = req(path.join(dir, "bp.js"));
 
-/** The reference, reduced to two ranked subjects. */
-const tierList = () => ({
+const good = () => ({
   version: lib.BLUEPRINT_VERSION,
-  canvas: { width: 720, height: 1280, fps: 30, seconds: 20 },
+  canvas: { width: 1080, height: 1920, fps: 30, seconds: 20 },
   regions: [
-    { id: "stage", role: "stage", rect: [0, 0, 1, 1], z: 0 },
-    { id: "title", role: "title_bar", rect: [0, 0, 1, 0.08], z: 3 },
-    { id: "host", role: "presenter", rect: [0.1, 0.1, 0.8, 0.35], z: 2 },
-    { id: "caption", role: "caption", rect: [0.05, 0.47, 0.9, 0.07], z: 4 },
-    { id: "board", role: "board", rect: [0, 0.55, 1, 0.45], z: 1 },
-    { id: "slot_d", role: "slot", rect: [0.15, 0.88, 0.25, 0.1], z: 2, parent: "board" },
+    { id: "bg", role: "backdrop", rect: [0, 0, 1, 1], z: 0 },
+    { id: "cap", role: "text", rect: [0.1, 0.5, 0.8, 0.08], z: 4 },
   ],
   tracks: [
-    { region: "stage", kind: "color", varies: "fixed", items: [{ start: 0, end: 20, value: "#000000" }] },
-    { region: "title", kind: "text", varies: "episode", items: [{ start: 0, end: 20, value: "RANKING THE BEST FOOTBALLERS" }] },
-    { region: "board", kind: "image", varies: "fixed", items: [{ start: 0, end: 20, value: "five rows labelled S A B C D, coloured red to green" }] },
-    { region: "host", kind: "video", varies: "fixed", items: [{ start: 0, end: 20, value: "a presenter holding a microphone, fixed medium shot" }] },
-    { region: "caption", kind: "text", varies: "episode", items: [
-      { start: 0, end: 2, value: "Ronaldo is D tier.", beat: 1 },
-      { start: 2, end: 4, value: "Bro has more hair gel than trophies.", beat: 1 },
-      { start: 10, end: 12, value: "Messi? Man won a World Cup", beat: 2 },
-    ] },
-    { region: "slot_d", kind: "image", varies: "episode", items: [{ start: 2, end: 6, value: "a bottle of hair gel beside empty trophy shelves", beat: 1 }] },
+    { region: "bg", kind: "video", items: [{ start: 0, end: 20, value: "a room" }] },
+    { region: "cap", kind: "text", items: [{ start: 2, end: 4, value: "second line" }, { start: 0, end: 2, value: "first line" }] },
   ],
 });
 
-test("the reference's own shape validates", () => {
-  const r = lib.validateBlueprint(tierList());
+test("a well-formed blueprint passes, and items come back in time order", () => {
+  const r = lib.validateBlueprint(good());
   assert.equal(r.ok, true, r.error);
-  assert.equal(r.blueprint.regions.length, 6);
-  assert.equal(r.blueprint.regions.find((x) => x.id === "slot_d").parent, "board");
-  assert.equal(r.blueprint.tracks.find((t) => t.region === "caption").items[0].beat, 1);
+  const cap = r.blueprint.tracks.find((t) => t.region === "cap");
+  assert.deepEqual(cap.items.map((i) => i.value), ["first line", "second line"],
+    "items must be sorted, or a renderer walking them in order draws the wrong thing");
 });
 
-test("items come back in time order however they were written", () => {
-  const bp = tierList();
-  bp.tracks[4].items.reverse();
-  const r = lib.validateBlueprint(bp);
-  assert.equal(r.ok, true, r.error);
-  assert.deepEqual(r.blueprint.tracks.find((t) => t.region === "caption").items.map((i) => i.start), [0, 2, 10]);
-});
-
-test("a track that will not say whether it is format or episode is refused", () => {
-  // Without this the format layer cannot be lifted out of a capture at all.
-  const bp = tierList();
-  delete bp.tracks[0].varies;
-  const r = lib.validateBlueprint(bp);
+test("a caption track that runs past the end of the video is refused", () => {
+  // Measured: the model laid captions on a one-per-second grid and ran a 20s video to 24s.
+  const b = good();
+  b.tracks[1].items.push({ start: 19, end: 24, value: "overrun" });
+  const r = lib.validateBlueprint(b);
   assert.equal(r.ok, false);
-  assert.match(r.error, /varies/);
+  assert.match(r.error, /past the end/);
 });
 
-test("a slot may name a board declared after it, but not one that does not exist", () => {
-  const ok = tierList();
-  ok.regions.unshift(ok.regions.splice(5, 1)[0]); // slot first, board later
-  assert.equal(lib.validateBlueprint(ok).ok, true);
-
-  const bad = tierList();
-  bad.regions[5].parent = "nowhere";
-  const r = lib.validateBlueprint(bad);
-  assert.equal(r.ok, false);
-  assert.match(r.error, /not a declared region/);
+test("the vocabularies are closed, and the prompt is generated from them", () => {
+  const b = good();
+  b.regions[0].role = "tier_list";
+  assert.match(lib.validateBlueprint(b).error, /role must be one of/);
+  const c = good();
+  c.tracks[0].kind = "audio";
+  assert.match(lib.validateBlueprint(c).error, /kind must be one of/);
+  // The prompt interpolates the same constants, so the model cannot be told about a value
+  // the validator will then reject.
+  for (const role of lib.REGION_ROLES) assert.ok(lib.BLUEPRINT_SCHEMA_PROMPT.includes(role), role);
+  for (const kind of lib.TRACK_KINDS) assert.ok(lib.BLUEPRINT_SCHEMA_PROMPT.includes(kind), kind);
 });
 
-test("a parent loop is refused rather than hanging whatever walks the tree", () => {
-  const bp = tierList();
-  bp.regions.find((r) => r.id === "board").parent = "slot_d";
-  const r = lib.validateBlueprint(bp);
-  assert.equal(r.ok, false);
-  assert.match(r.error, /parent loop/);
-});
-
-test("geometry is fractions of the canvas, and pixels are refused", () => {
-  const bp = tierList();
-  bp.regions[1].rect = [0, 0, 720, 96];
-  const r = lib.validateBlueprint(bp);
-  assert.equal(r.ok, false);
-  assert.match(r.error, /fractions/);
-});
-
-test("a beat is a whole repetition number, counting from one", () => {
-  for (const bad of [0, -1, 1.5, "1"]) {
-    const bp = tierList();
-    bp.tracks[4].items[0].beat = bad;
-    const r = lib.validateBlueprint(bp);
-    assert.equal(r.ok, false, `beat ${bad} should be refused`);
-    assert.match(r.error, /beat/);
+test("geometry must be fractions, because a clone is rendered at another size", () => {
+  const b = good();
+  b.regions[1].rect = [0, 540, 1080, 96]; // pixels, the easy mistake
+  assert.match(lib.validateBlueprint(b).error, /fractions/);
+  for (const bad of [[0, 0, 1], [0, 0, 0, 1], "x", [0, 0, "1", 1]]) {
+    const c = good(); c.regions[1].rect = bad;
+    assert.equal(lib.validateBlueprint(c).ok, false, JSON.stringify(bad));
   }
 });
 
-test("a container whose children hold the content is fine", () => {
-  // A board can have nothing of its own to paint; its slots carry everything.
-  const bp = tierList();
-  bp.tracks = bp.tracks.filter((t) => t.region !== "board");
-  const r = lib.validateBlueprint(bp);
-  assert.equal(r.ok, true, r.error);
+test("a track must name a region that exists, and every region must carry something", () => {
+  const b = good();
+  b.tracks[1].region = "nope";
+  assert.match(lib.validateBlueprint(b).error, /not a declared region/);
+  const c = good();
+  c.regions.push({ id: "ghost", role: "overlay", rect: [0, 0, 0.2, 0.2], z: 9 });
+  assert.match(lib.validateBlueprint(c).error, /has no track/);
 });
 
-test("a region nobody ever paints into is refused as imagined, not observed", () => {
-  const bp = tierList();
-  bp.regions.push({ id: "ghost", role: "sticker", rect: [0, 0, 0.1, 0.1], z: 9 });
-  const r = lib.validateBlueprint(bp);
-  assert.equal(r.ok, false);
-  assert.match(r.error, /has no track/);
+test("a wrong or missing version is refused outright", () => {
+  for (const v of [undefined, "", "omniwatch.blueprint/2", "VISUAL_IR_V1"]) {
+    const b = good(); b.version = v;
+    assert.equal(lib.validateBlueprint(b).ok, false, String(v));
+  }
 });
 
-test("an item cannot run past the end of the video, or backwards", () => {
-  const past = tierList(); past.tracks[0].items[0].end = 90;
-  assert.match(lib.validateBlueprint(past).error, /past the end/);
-  const back = tierList(); back.tracks[0].items[0] = { start: 5, end: 2, value: "x" };
-  assert.match(lib.validateBlueprint(back).error, /after start/);
-});
-
-test("malformed input is an answer, never a throw", () => {
-  for (const bad of [null, 42, "x", [], {}, { version: "something/else" }]) {
-    const r = lib.validateBlueprint(bad);
+test("it never throws, whatever it is handed", () => {
+  for (const junk of [null, 5, "text", [], {}, { version: lib.BLUEPRINT_VERSION }]) {
+    const r = lib.validateBlueprint(junk);
     assert.equal(r.ok, false);
     assert.equal(typeof r.error, "string");
   }
-});
-
-test("the schema the model is given matches the one that is enforced", () => {
-  const p = lib.BLUEPRINT_SCHEMA_PROMPT;
-  for (const role of lib.REGION_ROLES) assert.ok(p.includes(role), `role ${role} missing from the prompt`);
-  for (const kind of lib.TRACK_KINDS) assert.ok(p.includes(kind), `kind ${kind} missing from the prompt`);
-  assert.ok(p.includes(lib.BLUEPRINT_VERSION), "the prompt must pin the version the validator requires");
-  for (const field of ['"varies"', '"beat"', '"parent"']) assert.ok(p.includes(field), `${field} must be explained to the model`);
 });

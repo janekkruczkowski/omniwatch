@@ -55,6 +55,11 @@ const MAX_TOKENS = Number(process.env.OMNI_MAX_TOKENS || 4000);
  *  Anything longer splits and each part gets its own budget, so 20 minutes is the one
  *  length that can quietly truncate. Hence the extra room, for this mode only. */
 const MAX_TOKENS_BOTH = Number(process.env.OMNI_MAX_TOKENS_BOTH || 6000);
+// A blueprint is a long structured document, not a page of prose: eleven regions and a
+// word-timed caption track on a 20s video already run past the prose cap, and a JSON
+// object cut in half is not partially useful, it is unparseable. Measured: the first real
+// run stopped mid-item.
+const MAX_TOKENS_BLUEPRINT = Number(process.env.OMNI_MAX_TOKENS_BLUEPRINT || 16000);
 const PRESENCE_PENALTY = Number(process.env.OMNI_PRESENCE_PENALTY ?? 0.3);
 const SHORT_MAX = 3 * 60; // shorts/reels/TikToks: fast cuts, so sample at the API maximum
 const FPS_SHORT = 10;
@@ -539,8 +544,14 @@ const BLUEPRINT_WHOLE = `You are watching the whole video "{title}" by {channel}
 Your job is not to review it. Write down HOW THE SCREEN IS PUT TOGETHER, precisely enough that
 someone could rebuild the layout without ever seeing this video.
 
+This video is EXACTLY {seconds} seconds long. That number is measured from the file, not
+guessed, so it is not negotiable: no item may start or end after it, and the last thing on
+screen ends at it. If you find yourself laying entries out on a tidy one-per-second grid,
+stop and time them against what you actually hear — a run that drifts past the end is a
+blueprint that rebuilds the wrong video.
+
 Work out, in this order:
-1. The frame: how big it is, its shape, how long it runs.
+1. The frame: how big it is, its shape, and {seconds} seconds long.
 2. The places. Look at a single frame and list every distinct area that holds something of its
    own — a strip of text along the top, the person speaking, a small inset over the corner, the
    line of caption, a structure being filled in, a sticker. Measure where each one sits.
@@ -715,12 +726,12 @@ export async function watch(
   const tokens = { in: 0, out: 0 };
   ev.onEvent?.("watch", { n: ps.length, fps });
 
-  const cap = mode === "both" ? MAX_TOKENS_BOTH : MAX_TOKENS;
+  const cap = mode === "blueprint" ? MAX_TOKENS_BLUEPRINT : mode === "both" ? MAX_TOKENS_BOTH : MAX_TOKENS;
 
   let answer: string;
   if (ps.length === 1) {
     const whole = mode === "blueprint"
-      ? tpl(BLUEPRINT_WHOLE, { ...v, schema: BLUEPRINT_SCHEMA_PROMPT })
+      ? tpl(BLUEPRINT_WHOLE, { ...v, schema: BLUEPRINT_SCHEMA_PROMPT, seconds: String(info.duration || 0) })
       : tpl(WHOLE, v);
     const r = await streamOmni(key, [videoPart(uploads[0].url, fps), { type: "text", text: whole }], ev.onToken, cap);
     answer = r.text; tokens.in += r.usage.in; tokens.out += r.usage.out;
@@ -748,7 +759,12 @@ export async function watch(
   }
   // Last thing before it is shown, cached or written to the vault: a collapsed passage
   // must not reach any of the three, because all three are read as if they meant something.
-  return { answer: trimRunOn(answer), stats: { parts: ps.length, fps, reused, ...tokens } };
+  // trimRunOn looks for sentences, and a blueprint has none: it is one long punctuated
+  // structure, so the guard reads it as the collapse it was written to catch and cuts the
+  // object mid-item. The blueprint has its own check — it either parses and validates or
+  // it does not — so it is passed through whole.
+  const answerOut = mode === "blueprint" ? answer : trimRunOn(answer);
+  return { answer: answerOut, stats: { parts: ps.length, fps, reused, ...tokens } };
 }
 
 // ── the Obsidian vault ─────────────────────────────────────────────────────────
