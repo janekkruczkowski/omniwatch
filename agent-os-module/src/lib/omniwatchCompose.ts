@@ -89,7 +89,7 @@ function textHtml(st: TextStyle | undefined, value: string, H: number): string {
   const em = st?.emphasis;
   const emColour = colour(em?.color);
   const body = parts.map((p) => {
-    const t = esc(st?.case === "upper" ? p.text.toUpperCase() : p.text);
+    const t = esc(p.text);
     if (!p.strong || !em || !emColour) return t;
     if (em.style === "highlight") return `<mark style="background:${emColour};color:inherit;padding:0 .18em;border-radius:.12em">${t}</mark>`;
     if (em.style === "underline") return `<span style="box-shadow:inset 0 -.22em 0 ${emColour}">${t}</span>`;
@@ -97,6 +97,9 @@ function textHtml(st: TextStyle | undefined, value: string, H: number): string {
   }).join("");
 
   const css: string[] = [];
+  const TRANSFORM: Record<string, string> = { upper: "uppercase", lower: "lowercase", title: "capitalize" };
+  const tr = st?.case ? TRANSFORM[st.case] : undefined;
+  if (tr) css.push(`text-transform:${tr}`);
   const fg = colour(st?.color);
   if (fg) css.push(`color:${fg}`);
   if (st?.weight) css.push(`font-weight:${Math.round(st.weight)}`);

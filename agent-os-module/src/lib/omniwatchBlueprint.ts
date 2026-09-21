@@ -111,6 +111,9 @@ export interface RegionPaint {
   border?: { color: string; width: number };
 }
 
+export const TEXT_CASES = ["as-is", "upper", "lower", "title"] as const;
+export type TextCase = (typeof TEXT_CASES)[number];
+
 /** The look of words, which is not decoration — it is how a format reads.
  *
  *  Measured against a reference: its title was BLACK ON WHITE and we drew white on black;
@@ -127,7 +130,13 @@ export interface TextStyle {
   weight?: number;
   /** Height of a line as a fraction of the CANVAS height, so it scales with the frame. */
   size?: number;
-  case?: "as-is" | "upper";
+  /** How the words are cased on screen.
+   *
+   *  Four, not two. The first format this schema met shouts in capitals, so "upper" and
+   *  "as-is" looked like the whole world; the second one sets every caption in lower case
+   *  and was REFUSED by the validator. A vocabulary drawn from one video is the failure
+   *  this field is now a record of. */
+  case?: "as-is" | "upper" | "lower" | "title";
   align?: "left" | "center" | "right";
   /** How a marked span is set apart. In `value`, the span is wrapped in [[double
    *  brackets]] — one string stays one string, and a format that emphasises nothing simply
@@ -290,8 +299,10 @@ function readStyle(v: unknown, at: string): { style?: TextStyle; error?: string 
     st.size = z;
   }
   if (v.case !== undefined && v.case !== null) {
-    if (v.case !== "as-is" && v.case !== "upper") return { error: `${at}.case must be "as-is" or "upper"` };
-    st.case = v.case;
+    if (!TEXT_CASES.includes(v.case as TextCase)) {
+      return { error: `${at}.case must be one of ${TEXT_CASES.join(", ")}` };
+    }
+    st.case = v.case as TextCase;
   }
   if (v.align !== undefined && v.align !== null) {
     if (v.align !== "left" && v.align !== "center" && v.align !== "right") return { error: `${at}.align must be left, center or right` };
@@ -515,7 +526,8 @@ export const BLUEPRINT_SCHEMA_PROMPT = `Return ONE JSON object and nothing else 
                  "fill": <fill>,                          // where the content comes from
                  "style": { "color": "#rrggbb", "background": "#rrggbb", "outline": "#rrggbb",
                             "weight": <100..900>, "size": <fraction of canvas height>,
-                            "case": "as-is" | "upper", "align": "left" | "center" | "right",
+                            "case": ${TEXT_CASES.map((c) => `"${c}"`).join(" | ")},
+                            "align": "left" | "center" | "right",
                             "emphasis": { "style": "highlight" | "underline" | "color",
                                           "color": "#rrggbb" } },   // text tracks only
                  "items": [ { "start": <s>, "end": <s>, "value": "<what>", "beat": <n, only if part of the repeating unit> } ] } ]
