@@ -110,6 +110,15 @@ export interface ProduceOptions {
   /** Rebuild the watched video: slots that ask to be supplied are cut from it instead of
    *  left empty. For a reproduction, not for a new episode. */
   cutSupplies?: boolean;
+  /** Ask a provider only for these regions, and take everything else from the source.
+   *
+   *  A budget is a real constraint, not a hypothetical: a whole episode of pictures costs
+   *  more than the account has, while changing WHO is on screen costs one clip. Naming the
+   *  regions that must be new is the difference between "cannot run at all" and "runs, and
+   *  says plainly which parts are still the original". */
+  onlyRegions?: string[];
+  /** Cheapest usable clips, for proving a path rather than shipping a film. */
+  resolution?: "480p" | "720p";
 }
 
 export interface ProduceResult {
@@ -121,14 +130,18 @@ export interface ProduceResult {
 export async function produce(bp: Blueprint, o: ProduceOptions = {}): Promise<ProduceResult> {
   const videoModel = o.videoModel ?? "grok";
   const stillModel = o.stillModel ?? "gpt-image-2.5";
-  const jobs = o.generate === false ? [] : jobsFor(bp, videoModel);
+  let jobs = o.generate === false ? [] : jobsFor(bp, videoModel);
+  if (o.onlyRegions?.length) {
+    const want = new Set(o.onlyRegions);
+    jobs = jobs.filter((j) => want.has(j.region));
+  }
   const made: SlotDone[] = [];
   const assets: Record<string, unknown> = { ...(o.assets ?? {}) };
 
   await pool(jobs, LANES, async (j) => {
     const t0 = Date.now();
     const r = j.kind === "video"
-      ? await videoClip(j.prompt, j.aspect as Aspect, { model: videoModel, seconds: j.seconds })
+      ? await videoClip(j.prompt, j.aspect as Aspect, { model: videoModel, seconds: j.seconds, resolution: o.resolution })
       : await kieStill(j.prompt, j.aspect as never, stillModel);
     if (r.ok) {
       assets[j.slot] = r.name;

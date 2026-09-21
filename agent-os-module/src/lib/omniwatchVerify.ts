@@ -27,6 +27,8 @@ export const PER_PASS = 6;
  *  JPEG is 78 KB and comes back in four seconds, while the full 720x1280 frame ran past
  *  three minutes and timed out. Boxes four pixels thick survive the downscale easily. */
 const CHECK_WIDTH = 540;
+/** How many separate looks must object before an objection becomes a correction. */
+const MIN_AGREE = 2;
 
 const PENS = [
   { css: "#FF0000", name: "pure red" },
@@ -228,7 +230,9 @@ function tileRows(regions: BlueprintRegion[], corrected: string[]): BlueprintReg
 }
 
 export type VerifyResult =
-  | { ok: true; blueprint: Blueprint; checks: RegionCheck[]; corrected: string[]; frames: number }
+  | { ok: true; blueprint: Blueprint; checks: RegionCheck[]; corrected: string[];
+      /** Objections raised by only one look: worth another look, not worth acting on. */
+      suspected: RegionCheck[]; frames: number }
   | { ok: false; error: string; status?: number };
 
 /** Look at the capture, region by region, and hand back a corrected blueprint.
@@ -243,7 +247,11 @@ export async function verifyBlueprint(
   if (!key) return { ok: false, status: 503, error: "No DashScope key, so nothing can be checked." };
 
   const byId = new Map(bp.regions.map((r) => [r.id, r]));
-  const best = new Map<string, RegionCheck>();
+  // Every opinion, kept. One look is an opinion; agreement between looks is a measurement.
+  // Measured: the same capture checked twice came back with three corrections the first
+  // time and none the second, and applying either alone would have been a coin toss
+  // presented as a finding.
+  const said = new Map<string, RegionCheck[]>();
   let frames = 0;
 
   for (const sec of at) {
@@ -258,16 +266,37 @@ export async function verifyBlueprint(
       catch (e) { return { ok: false, status: 502, error: String((e as Error).message || e) }; }
       for (const c of readChecks(answer)) {
         if (!byId.has(c.id)) continue;
-        const had = best.get(c.id);
-        // A region only has to be right ONCE to be right: it may be absent from another
-        // frame, and an absence must not overrule a sighting.
-        if (had?.ok) continue;
-        if (!had || (!c.ok && c.rect) || c.ok) best.set(c.id, c);
+        said.set(c.id, [...(said.get(c.id) ?? []), c]);
       }
     }
   }
 
   const corrected: string[] = [];
+  const suspected: RegionCheck[] = [];
+  const best = new Map<string, RegionCheck>();
+  for (const [id, opinions] of said) {
+    const fixes = opinions.filter((o) => !o.ok && o.rect);
+    // A region absent from one frame and correct in another is correct; an absence must
+    // not outvote a sighting, so only the objections are counted.
+    if (!fixes.length) continue;
+    // Objections agree when they point at nearly the same rectangle. Two that disagree
+    // about where a thing IS are two guesses, not a measurement.
+    const groups: RegionCheck[][] = [];
+    for (const f of fixes) {
+      const near = groups.find((g) => g[0].rect!.every((v, i) => Math.abs(v - f.rect![i]) <= 0.05));
+      if (near) near.push(f); else groups.push([f]);
+    }
+    const agreed = groups.sort((a, b) => b.length - a.length)[0];
+    if (agreed.length < MIN_AGREE) {
+      // Reported, not applied. A single opinion is a thing to look at again, not a fact.
+      suspected.push({ ...agreed[0], note: `${agreed[0].note ?? ""} (seen once in ${frames} looks)`.trim() });
+      continue;
+    }
+    // The agreed rectangle is their average, which is steadier than any one of them.
+    const mean = [0, 1, 2, 3].map((i) => agreed.reduce((s2, g) => s2 + g.rect![i], 0) / agreed.length) as Rect;
+    best.set(id, { ...agreed[0], rect: mean });
+  }
+
   let regions = bp.regions.map((r) => {
     const c = best.get(r.id);
     if (!c || c.ok || !c.rect) return r;
@@ -292,5 +321,9 @@ export async function verifyBlueprint(
   // blueprint is not applied, and says so.
   const checked = validateBlueprint({ ...bp, regions });
   if (!checked.ok) return { ok: false, status: 502, error: `the corrections do not validate: ${checked.error}` };
-  return { ok: true, blueprint: checked.blueprint, checks: [...best.values()], corrected, frames };
+  return {
+    ok: true, blueprint: checked.blueprint,
+    checks: [...said.values()].map((o) => o[o.length - 1]),
+    corrected, suspected, frames,
+  };
 }

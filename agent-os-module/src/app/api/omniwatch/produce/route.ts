@@ -59,6 +59,9 @@ export async function POST(req: Request) {
     audio: typeof parsed.audio === "string" ? parsed.audio : undefined,
     generate: parsed.generate !== false,
     cutSupplies: parsed.cutSupplies === true,
+    onlyRegions: Array.isArray(parsed.onlyRegions)
+      ? parsed.onlyRegions.filter((r): r is string => typeof r === "string") : undefined,
+    resolution: parsed.resolution === "480p" ? "480p" : parsed.resolution === "720p" ? "720p" : undefined,
     videoModel, stillModel,
   });
 

@@ -85,9 +85,9 @@ const rectOf = (bp, id) => bp.regions.find((r) => r.id === id).rect;
 
 test("a correction to one cell of a column reaches its identical siblings", async () => {
   serve();
-  answers = ['{"checks":[{"id":"b-label","ok":false,"rect":[0,0.72,0.25,0.09],"note":"too narrow"}]}'];
+  answers = ['{"checks":[{"id":"b-label","ok":false,"rect":[0,0.72,0.25,0.09],"note":"too narrow"}]}', '{"checks":[{"id":"b-label","ok":false,"rect":[0,0.72,0.25,0.09],"note":"too narrow"}]}'];
   const { verifyBlueprint } = load();
-  const r = await verifyBlueprint(board(), "/nope.mp4", [6], (n) => path.join(dir, n));
+  const r = await verifyBlueprint(board(), "/nope.mp4", [6, 14], (n) => path.join(dir, n));
   assert.equal(r.ok, true);
   // The one the model judged.
   assert.deepEqual(rectOf(r.blueprint, "b-label"), [0, 0.72, 0.25, 0.09]);
@@ -100,9 +100,9 @@ test("a sibling that was already different is left alone", async () => {
   serve();
   const bp = board();
   bp.regions.find((r) => r.id === "a-label").rect = [0, 0.63, 0.4, 0.09];
-  answers = ['{"checks":[{"id":"b-label","ok":false,"rect":[0,0.72,0.25,0.09]}]}'];
+  answers = ['{"checks":[{"id":"b-label","ok":false,"rect":[0,0.72,0.25,0.09]}]}', '{"checks":[{"id":"b-label","ok":false,"rect":[0,0.72,0.25,0.09]}]}'];
   const { verifyBlueprint } = load();
-  const r = await verifyBlueprint(bp, "/nope.mp4", [6], (n) => path.join(dir, n));
+  const r = await verifyBlueprint(bp, "/nope.mp4", [6, 14], (n) => path.join(dir, n));
   assert.deepEqual(rectOf(r.blueprint, "a-label"), [0, 0.63, 0.4, 0.09]);
 });
 
@@ -115,9 +115,9 @@ test("a corrected edge pulls its neighbour in the same row to meet it", async ()
     items: [{ start: 0, end: 20, value: "a headshot" }] });
   // The model corrects the slot — "bleeds left into the label column" — and passes the
   // label beside it. Both cannot be true.
-  answers = ['{"checks":[{"id":"s-slot","ok":false,"rect":[0.25,0.54,0.75,0.09],"note":"bleeds left"},{"id":"s-label","ok":true}]}'];
+  answers = ['{"checks":[{"id":"s-slot","ok":false,"rect":[0.25,0.54,0.75,0.09],"note":"bleeds left"},{"id":"s-label","ok":true}]}', '{"checks":[{"id":"s-slot","ok":false,"rect":[0.25,0.54,0.75,0.09],"note":"bleeds left"},{"id":"s-label","ok":true}]}'];
   const { verifyBlueprint } = load();
-  const r = await verifyBlueprint(bp, "/nope.mp4", [6], (n) => path.join(dir, n));
+  const r = await verifyBlueprint(bp, "/nope.mp4", [6, 14], (n) => path.join(dir, n));
   assert.equal(r.ok, true);
   const [lx, , lw] = rectOf(r.blueprint, "s-label");
   const [sx] = rectOf(r.blueprint, "s-slot");
@@ -128,9 +128,9 @@ test("a corrected edge pulls its neighbour in the same row to meet it", async ()
 
 test("a text area may be moved but not shrunk to whatever line is showing", async () => {
   serve();
-  answers = ['{"checks":[{"id":"cap","ok":false,"rect":[0.27,0.54,0.46,0.03],"note":"lower"}]}'];
+  answers = ['{"checks":[{"id":"cap","ok":false,"rect":[0.27,0.54,0.46,0.03],"note":"lower"}]}', '{"checks":[{"id":"cap","ok":false,"rect":[0.27,0.54,0.46,0.03],"note":"lower"}]}'];
   const { verifyBlueprint } = load();
-  const r = await verifyBlueprint(board(), "/nope.mp4", [6], (n) => path.join(dir, n));
+  const r = await verifyBlueprint(board(), "/nope.mp4", [6, 14], (n) => path.join(dir, n));
   const [x, y, w, h] = rectOf(r.blueprint, "cap");
   assert.equal(y, 0.54);            // the position it really sits at is taken
   assert.equal(w, 0.84);            // the width the format gives it is kept
@@ -140,9 +140,9 @@ test("a text area may be moved but not shrunk to whatever line is showing", asyn
 
 test("a text area IS allowed to grow", async () => {
   serve();
-  answers = ['{"checks":[{"id":"cap","ok":false,"rect":[0.02,0.54,0.96,0.12]}]}'];
+  answers = ['{"checks":[{"id":"cap","ok":false,"rect":[0.02,0.54,0.96,0.12]}]}', '{"checks":[{"id":"cap","ok":false,"rect":[0.02,0.54,0.96,0.12]}]}'];
   const { verifyBlueprint } = load();
-  const r = await verifyBlueprint(board(), "/nope.mp4", [6], (n) => path.join(dir, n));
+  const r = await verifyBlueprint(board(), "/nope.mp4", [6, 14], (n) => path.join(dir, n));
   assert.deepEqual(rectOf(r.blueprint, "cap"), [0.02, 0.54, 0.96, 0.12]);
 });
 
@@ -160,9 +160,9 @@ test("a sighting in one frame outranks an absence in another", async () => {
 
 test("a correction that is not a rectangle on this canvas is not a correction", async () => {
   serve();
-  answers = ['{"checks":[{"id":"cap","ok":false,"rect":[0,0,0,0.5]},{"id":"s-label","ok":false,"rect":[9,9,9,9]}]}'];
+  answers = ['{"checks":[{"id":"cap","ok":false,"rect":[0,0,0,0.5]},{"id":"s-label","ok":false,"rect":[9,9,9,9]}]}', '{"checks":[{"id":"cap","ok":false,"rect":[0,0,0,0.5]},{"id":"s-label","ok":false,"rect":[9,9,9,9]}]}'];
   const { verifyBlueprint } = load();
-  const r = await verifyBlueprint(board(), "/nope.mp4", [6], (n) => path.join(dir, n));
+  const r = await verifyBlueprint(board(), "/nope.mp4", [6, 14], (n) => path.join(dir, n));
   assert.deepEqual(r.corrected, []);
 });
 
@@ -170,7 +170,50 @@ test("prose instead of JSON changes nothing, and does not throw", async () => {
   serve();
   answers = ["I had a look and everything seems fine to me."];
   const { verifyBlueprint } = load();
-  const r = await verifyBlueprint(board(), "/nope.mp4", [6], (n) => path.join(dir, n));
+  const r = await verifyBlueprint(board(), "/nope.mp4", [6, 14], (n) => path.join(dir, n));
   assert.equal(r.ok, true);
   assert.deepEqual(r.corrected, []);
+});
+
+test("one look objecting is a suspicion, not a correction", async () => {
+  serve();
+  // The same capture checked twice really did come back with three corrections and then
+  // none; acting on either alone would be a coin toss presented as a finding.
+  answers = [
+    '{"checks":[{"id":"cap","ok":false,"rect":[0.08,0.54,0.84,0.07],"note":"lower"}]}',
+    '{"checks":[{"id":"cap","ok":true}]}',
+  ];
+  const { verifyBlueprint } = load();
+  const r = await verifyBlueprint(board(), "/nope.mp4", [6, 14], (n) => path.join(dir, n));
+  assert.deepEqual(r.corrected, []);
+  assert.deepEqual(rectOf(r.blueprint, "cap"), [0.08, 0.47, 0.84, 0.07]);
+  assert.equal(r.suspected.length, 1);
+  assert.equal(r.suspected[0].id, "cap");
+  assert.match(r.suspected[0].note, /seen once/);
+});
+
+test("two looks that disagree about WHERE it is are two guesses", async () => {
+  serve();
+  answers = [
+    '{"checks":[{"id":"cap","ok":false,"rect":[0.08,0.54,0.84,0.07]}]}',
+    '{"checks":[{"id":"cap","ok":false,"rect":[0.30,0.20,0.30,0.05]}]}',
+  ];
+  const { verifyBlueprint } = load();
+  const r = await verifyBlueprint(board(), "/nope.mp4", [6, 14], (n) => path.join(dir, n));
+  assert.deepEqual(r.corrected, []);
+  assert.equal(r.suspected.length, 1);
+});
+
+test("two looks that agree are averaged, and that is a correction", async () => {
+  serve();
+  answers = [
+    '{"checks":[{"id":"cap","ok":false,"rect":[0.08,0.54,0.84,0.07]}]}',
+    '{"checks":[{"id":"cap","ok":false,"rect":[0.10,0.56,0.82,0.07]}]}',
+  ];
+  const { verifyBlueprint } = load();
+  const r = await verifyBlueprint(board(), "/nope.mp4", [6, 14], (n) => path.join(dir, n));
+  assert.deepEqual(r.corrected, ["cap"]);
+  const [x, y] = rectOf(r.blueprint, "cap");
+  assert.ok(Math.abs(x - 0.09) < 1e-9, `x ${x}`);
+  assert.ok(Math.abs(y - 0.55) < 1e-9, `y ${y}`);
 });

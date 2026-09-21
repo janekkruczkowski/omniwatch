@@ -42,7 +42,9 @@ export async function POST(req: Request) {
   // Default to a third and two thirds of the way in: far enough from the opening for the
   // format to be fully on screen, and two of them so a region that comes and goes is seen.
   const asked = Array.isArray(parsed.at) ? parsed.at : null;
-  const at = (asked ?? [bp.canvas.seconds / 3, (bp.canvas.seconds * 2) / 3])
+  // Three looks by default, not two: a correction has to be seen twice before it counts,
+  // and with only two looks that demands unanimity, which throws away real findings.
+  const at = (asked ?? [bp.canvas.seconds * 0.25, bp.canvas.seconds * 0.5, bp.canvas.seconds * 0.75])
     .map((n) => Number(n))
     .filter((n) => Number.isFinite(n) && n >= 0 && n < bp.canvas.seconds)
     .slice(0, MAX_AT);
@@ -52,7 +54,7 @@ export async function POST(req: Request) {
   const r = await verifyBlueprint(bp, source, at, (name) => path.join(work, name));
   if (!r.ok) return NextResponse.json({ error: r.error }, { status: r.status ?? 502 });
   return NextResponse.json({
-    ok: true, blueprint: r.blueprint, checks: r.checks, corrected: r.corrected,
+    ok: true, blueprint: r.blueprint, checks: r.checks, corrected: r.corrected, suspected: r.suspected,
     frames: r.frames, lookedAt: at,
   });
 }
