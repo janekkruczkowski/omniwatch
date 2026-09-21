@@ -33,11 +33,14 @@ function loadProbe() {
   const out = ts.transpileModule(src, {
     fileName: LIB,
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
-  }).outputText.replace(/require\("@\/lib\/omniwatchI18n"\)/g, 'require("./i18n")');
+  }).outputText
+    .replace(/require\("@\/lib\/omniwatchI18n"\)/g, 'require("./i18n")')
+    .replace(/require\("@\/lib\/omniwatchBlueprint"\)/g, 'require("./blueprint")');
   const dir = mkdtempSync(path.join(tmpdir(), "omni-dur-"));
   mkdirSync(dir, { recursive: true });
   writeFileSync(path.join(dir, "omniwatch.js"), out);
   writeFileSync(path.join(dir, "i18n.js"), "module.exports = { __esModule: true, default: { en: { sections: {} } } };");
+  writeFileSync(path.join(dir, "blueprint.js"), "module.exports = { BLUEPRINT_SCHEMA_PROMPT: '' };");
   return req(path.join(dir, "omniwatch.js"));
 }
 

@@ -21,6 +21,7 @@ import os from "node:os";
 import path from "node:path";
 
 import I18N from "@/lib/omniwatchI18n";
+import { BLUEPRINT_SCHEMA_PROMPT } from "@/lib/omniwatchBlueprint";
 
 export const OMNI_ROOT = path.join(os.homedir(), ".agentic-os", "omniwatch");
 export const CACHE_ROOT = path.join(OMNI_ROOT, "cache");
@@ -74,7 +75,7 @@ export const STRIP = 16; // thumbnails in the timeline strip
 // "both" is one request, not two. The frames are what cost money and they are the same
 // frames; asking for a second document off the same upload adds output tokens only —
 // fractions of a cent — while running it twice would pay for the whole video again.
-export type Mode = "ask" | "teardown" | "both";
+export type Mode = "ask" | "teardown" | "both" | "blueprint";
 export interface VideoInfo {
   id: string;
   title: string;
@@ -533,6 +534,28 @@ Banned, because they are true of almost every video and so describe none of it: 
 "engaging", "dynamic", "high energy", "keeps the viewer hooked", "modern editing". Say the concrete thing or
 say nothing. If a line has nothing left to say, end it — never pad a line to make it look complete.`;
 
+const BLUEPRINT_WHOLE = `You are watching the whole video "{title}" by {channel} ({duration}) — video AND audio.
+
+Your job is not to review it. Write down HOW THE SCREEN IS PUT TOGETHER, precisely enough that
+someone could rebuild the layout without ever seeing this video.
+
+Work out, in this order:
+1. The frame: how big it is, its shape, how long it runs.
+2. The places. Look at a single frame and list every distinct area that holds something of its
+   own — a strip of text along the top, the person speaking, a small inset over the corner, the
+   line of caption, a structure being filled in, a sticker. Measure where each one sits.
+3. What goes into each place, and when. Watch the whole run: text that changes, images that
+   appear, a shot that holds. Each change is its own entry with its own start and end.
+
+What people get wrong here, so do not:
+- Do not flatten the screen into one thing per moment. Four things can be on screen at once,
+  and usually are.
+- Do not treat a change of on-screen text as a cut. If the camera holds and only the words
+  change, that is one video item and many text items.
+- Do not round the geometry to tidy fractions. Measure.
+
+{schema}`;
+
 const WHOLE = `You are watching the whole video "{title}" by {channel} ({duration}) — video AND audio.
 {task}
 Base everything strictly on what is said and shown — never invent. Write in {lang}. Markdown, exactly these
@@ -601,6 +624,11 @@ ${TEARDOWN_TASK}`
     task = q
       ? `${TEARDOWN_TASK}\nThe reader is about to film about: ${q}\nWhere a choice would not survive that move, say so and say why. Do not write their script.`
       : TEARDOWN_TASK;
+  }
+  else if (mode === "blueprint") {
+    // Answered as data, not sections. Kept out of the markdown path entirely so the two
+    // cannot drift into half-prose, half-JSON.
+    sections = ""; task = "";
   }
   else if (q) { sections = SECTIONS_QUESTION; task = `The user will NOT watch it. They want to know:\n\nQUESTION: ${q}\n`; }
   else { sections = SECTIONS_SUMMARY; task = "Write a summary for someone who will NOT watch it."; }
@@ -691,7 +719,10 @@ export async function watch(
 
   let answer: string;
   if (ps.length === 1) {
-    const r = await streamOmni(key, [videoPart(uploads[0].url, fps), { type: "text", text: tpl(WHOLE, v) }], ev.onToken, cap);
+    const whole = mode === "blueprint"
+      ? tpl(BLUEPRINT_WHOLE, { ...v, schema: BLUEPRINT_SCHEMA_PROMPT })
+      : tpl(WHOLE, v);
+    const r = await streamOmni(key, [videoPart(uploads[0].url, fps), { type: "text", text: whole }], ev.onToken, cap);
     answer = r.text; tokens.in += r.usage.in; tokens.out += r.usage.out;
   } else {
     const seconds = info.duration || 0;

@@ -37,7 +37,7 @@ export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}));
   const url = String(body.url || "").trim();
   const question = String(body.q || "");
-  const mode: Mode = body.mode === "teardown" ? "teardown" : "ask";
+  const mode: Mode = body.mode === "teardown" ? "teardown" : body.mode === "blueprint" ? "blueprint" : "ask";
   const l = I18N[String(body.lang || "")] ? String(body.lang) : DEFAULT_LANG;
   if (!/^https?:\/\//i.test(url)) return NextResponse.json({ error: "a http(s) link is required" }, { status: 400 });
 
