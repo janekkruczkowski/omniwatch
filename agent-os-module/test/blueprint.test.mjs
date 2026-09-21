@@ -38,8 +38,8 @@ const good = () => ({
     { id: "cap", role: "text", rect: [0.1, 0.5, 0.8, 0.08], z: 4 },
   ],
   tracks: [
-    { region: "bg", kind: "video", items: [{ start: 0, end: 20, value: "a room" }] },
-    { region: "cap", kind: "text", items: [{ start: 2, end: 4, value: "second line" }, { start: 0, end: 2, value: "first line" }] },
+    { region: "bg", kind: "video", varies: "fixed", items: [{ start: 0, end: 20, value: "a room" }] },
+    { region: "cap", kind: "text", varies: "episode", items: [{ start: 2, end: 4, value: "second line" }, { start: 0, end: 2, value: "first line" }] },
   ],
 });
 
@@ -105,4 +105,19 @@ test("it never throws, whatever it is handed", () => {
     assert.equal(r.ok, false);
     assert.equal(typeof r.error, "string");
   }
+});
+
+test("every track must say whether it is the format or this episode", () => {
+  // This is the axis the clone benchmark turns on: copy the video exactly, change the host
+  // and the subject. "fixed" is what survives that swap, "episode" is what gets rewritten.
+  // A track that does not declare which cannot be reused as a format at all.
+  const b = good();
+  delete b.tracks[0].varies;
+  assert.match(lib.validateBlueprint(b).error, /varies must be/);
+  const c = good();
+  c.tracks[0].varies = "sometimes";
+  assert.match(lib.validateBlueprint(c).error, /varies must be/);
+  const ok = lib.validateBlueprint(good());
+  assert.equal(ok.blueprint.tracks.find((t) => t.region === "bg").varies, "fixed");
+  assert.equal(ok.blueprint.tracks.find((t) => t.region === "cap").varies, "episode");
 });

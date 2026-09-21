@@ -1,0 +1,550 @@
+{
+  "version": "omniwatch.blueprint/1",
+  "canvas": {
+    "width": 1080,
+    "height": 1920,
+    "fps": 30,
+    "seconds": 20
+  },
+  "regions": [
+    {
+      "id": "background",
+      "role": "backdrop",
+      "rect": [
+        0,
+        0,
+        1,
+        1
+      ],
+      "z": 0,
+      "label": "Room background with light blue walls, posters, and a door"
+    },
+    {
+      "id": "title_banner",
+      "role": "text",
+      "rect": [
+        0,
+        0,
+        1,
+        0.12
+      ],
+      "z": 1,
+      "label": "Top title banner"
+    },
+    {
+      "id": "speaker",
+      "role": "figure",
+      "rect": [
+        0.1,
+        0.12,
+        0.8,
+        0.45
+      ],
+      "z": 2,
+      "label": "Woman speaking into a microphone"
+    },
+    {
+      "id": "player_inset",
+      "role": "overlay",
+      "rect": [
+        0.1,
+        0.2,
+        0.25,
+        0.15
+      ],
+      "z": 3,
+      "label": "Floating circular inset showing the current player"
+    },
+    {
+      "id": "captions",
+      "role": "text",
+      "rect": [
+        0.1,
+        0.5,
+        0.8,
+        0.08
+      ],
+      "z": 4,
+      "label": "Dynamic subtitles with highlighted words"
+    },
+    {
+      "id": "tier_list",
+      "role": "panel",
+      "rect": [
+        0,
+        0.55,
+        1,
+        0.45
+      ],
+      "z": 5,
+      "label": "Tier list table",
+      "grid": {
+        "rows": 5,
+        "cols": 2
+      }
+    },
+    {
+      "id": "tier_s_label",
+      "role": "cell",
+      "rect": [
+        0,
+        0.55,
+        0.15,
+        0.09
+      ],
+      "z": 5,
+      "parent": "tier_list",
+      "at": {
+        "row": 1,
+        "col": 1
+      },
+      "label": "S tier label"
+    },
+    {
+      "id": "tier_a_label",
+      "role": "cell",
+      "rect": [
+        0,
+        0.64,
+        0.15,
+        0.09
+      ],
+      "z": 5,
+      "parent": "tier_list",
+      "at": {
+        "row": 2,
+        "col": 1
+      },
+      "label": "A tier label"
+    },
+    {
+      "id": "tier_b_label",
+      "role": "cell",
+      "rect": [
+        0,
+        0.73,
+        0.15,
+        0.09
+      ],
+      "z": 5,
+      "parent": "tier_list",
+      "at": {
+        "row": 3,
+        "col": 1
+      },
+      "label": "B tier label"
+    },
+    {
+      "id": "tier_c_label",
+      "role": "cell",
+      "rect": [
+        0,
+        0.82,
+        0.15,
+        0.09
+      ],
+      "z": 5,
+      "parent": "tier_list",
+      "at": {
+        "row": 4,
+        "col": 1
+      },
+      "label": "C tier label"
+    },
+    {
+      "id": "tier_d_label",
+      "role": "cell",
+      "rect": [
+        0,
+        0.91,
+        0.15,
+        0.09
+      ],
+      "z": 5,
+      "parent": "tier_list",
+      "at": {
+        "row": 5,
+        "col": 1
+      },
+      "label": "D tier label"
+    },
+    {
+      "id": "tier_s_content",
+      "role": "cell",
+      "rect": [
+        0.15,
+        0.55,
+        0.85,
+        0.09
+      ],
+      "z": 5,
+      "parent": "tier_list",
+      "at": {
+        "row": 1,
+        "col": 2
+      },
+      "label": "S tier content area"
+    },
+    {
+      "id": "tier_a_content",
+      "role": "cell",
+      "rect": [
+        0.15,
+        0.64,
+        0.85,
+        0.09
+      ],
+      "z": 5,
+      "parent": "tier_list",
+      "at": {
+        "row": 2,
+        "col": 2
+      },
+      "label": "A tier content area"
+    },
+    {
+      "id": "tier_b_content",
+      "role": "cell",
+      "rect": [
+        0.15,
+        0.73,
+        0.85,
+        0.09
+      ],
+      "z": 5,
+      "parent": "tier_list",
+      "at": {
+        "row": 3,
+        "col": 2
+      },
+      "label": "B tier content area"
+    },
+    {
+      "id": "tier_c_content",
+      "role": "cell",
+      "rect": [
+        0.15,
+        0.82,
+        0.85,
+        0.09
+      ],
+      "z": 5,
+      "parent": "tier_list",
+      "at": {
+        "row": 4,
+        "col": 2
+      },
+      "label": "C tier content area"
+    },
+    {
+      "id": "tier_d_content",
+      "role": "cell",
+      "rect": [
+        0.15,
+        0.91,
+        0.85,
+        0.09
+      ],
+      "z": 5,
+      "parent": "tier_list",
+      "at": {
+        "row": 5,
+        "col": 2
+      },
+      "label": "D tier content area"
+    },
+    {
+      "id": "meme_overlay",
+      "role": "overlay",
+      "rect": [
+        0.05,
+        0.55,
+        0.9,
+        0.35
+      ],
+      "z": 6,
+      "label": "Large temporary image overlays covering the tier list"
+    }
+  ],
+  "tracks": [
+    {
+      "region": "background",
+      "kind": "video",
+      "varies": "fixed",
+      "items": [
+        {
+          "start": 0,
+          "end": 20,
+          "value": "Static room background with light blue walls, posters, and a door"
+        }
+      ]
+    },
+    {
+      "region": "title_banner",
+      "kind": "text",
+      "varies": "fixed",
+      "items": [
+        {
+          "start": 0,
+          "end": 20,
+          "value": "RANKING THE BEST FOOTBALLERS ⚽"
+        }
+      ]
+    },
+    {
+      "region": "speaker",
+      "kind": "video",
+      "varies": "fixed",
+      "items": [
+        {
+          "start": 0,
+          "end": 20,
+          "value": "Woman with black hair, wearing a spiked cap and choker, speaking into a microphone"
+        }
+      ]
+    },
+    {
+      "region": "tier_s_label",
+      "kind": "text",
+      "varies": "fixed",
+      "items": [
+        {
+          "start": 0,
+          "end": 20,
+          "value": "S"
+        }
+      ]
+    },
+    {
+      "region": "tier_a_label",
+      "kind": "text",
+      "varies": "fixed",
+      "items": [
+        {
+          "start": 0,
+          "end": 20,
+          "value": "A"
+        }
+      ]
+    },
+    {
+      "region": "tier_b_label",
+      "kind": "text",
+      "varies": "fixed",
+      "items": [
+        {
+          "start": 0,
+          "end": 20,
+          "value": "B"
+        }
+      ]
+    },
+    {
+      "region": "tier_c_label",
+      "kind": "text",
+      "varies": "fixed",
+      "items": [
+        {
+          "start": 0,
+          "end": 20,
+          "value": "C"
+        }
+      ]
+    },
+    {
+      "region": "tier_d_label",
+      "kind": "text",
+      "varies": "fixed",
+      "items": [
+        {
+          "start": 0,
+          "end": 20,
+          "value": "D"
+        }
+      ]
+    },
+    {
+      "region": "tier_s_content",
+      "kind": "image",
+      "varies": "fixed",
+      "items": [
+        {
+          "start": 0,
+          "end": 20,
+          "value": "Portrait of Cristiano Ronaldo"
+        }
+      ]
+    },
+    {
+      "region": "tier_a_content",
+      "kind": "image",
+      "varies": "fixed",
+      "items": [
+        {
+          "start": 0,
+          "end": 20,
+          "value": "Portrait of Erling Haaland"
+        }
+      ]
+    },
+    {
+      "region": "tier_b_content",
+      "kind": "image",
+      "varies": "fixed",
+      "items": [
+        {
+          "start": 0,
+          "end": 20,
+          "value": "Portraits of Kevin De Bruyne and Jude Bellingham"
+        }
+      ]
+    },
+    {
+      "region": "tier_c_content",
+      "kind": "image",
+      "varies": "fixed",
+      "items": [
+        {
+          "start": 0,
+          "end": 20,
+          "value": "Portraits of Harry Kane and Luka Modric"
+        }
+      ]
+    },
+    {
+      "region": "tier_d_content",
+      "kind": "image",
+      "varies": "fixed",
+      "items": [
+        {
+          "start": 0,
+          "end": 20,
+          "value": "Portraits of Antoine Griezmann, Neymar, and Karim Benzema"
+        }
+      ]
+    },
+    {
+      "region": "player_inset",
+      "kind": "image",
+      "varies": "episode",
+      "items": [
+        {
+          "start": 0,
+          "end": 10,
+          "value": "Circular inset photo of Cristiano Ronaldo",
+          "beat": 1
+        },
+        {
+          "start": 10,
+          "end": 20,
+          "value": "Circular inset photo of Lionel Messi",
+          "beat": 2
+        }
+      ]
+    },
+    {
+      "region": "captions",
+      "kind": "text",
+      "varies": "episode",
+      "items": [
+        {
+          "start": 0,
+          "end": 1.5,
+          "value": "Ronaldo is D tier.",
+          "beat": 1
+        },
+        {
+          "start": 1.5,
+          "end": 4.5,
+          "value": "Bro has more hair gel than trophies at this point.",
+          "beat": 1
+        },
+        {
+          "start": 4.5,
+          "end": 7.5,
+          "value": "Built like a Greek god, plays like a Greek tragedy.",
+          "beat": 1
+        },
+        {
+          "start": 7.5,
+          "end": 10,
+          "value": "But hey, at least he's got the most followers on Instagram.",
+          "beat": 1
+        },
+        {
+          "start": 10,
+          "end": 14,
+          "value": "Messi? Man won a World Cup looking like somebody's tired dad.",
+          "beat": 2
+        },
+        {
+          "start": 14,
+          "end": 19,
+          "value": "Walks around for 89 minutes, touches the ball three times, and somehow you just watched a hat trick.",
+          "beat": 2
+        },
+        {
+          "start": 19,
+          "end": 20,
+          "value": "Definitely S tier.",
+          "beat": 2
+        }
+      ]
+    },
+    {
+      "region": "meme_overlay",
+      "kind": "image",
+      "varies": "episode",
+      "items": [
+        {
+          "start": 2,
+          "end": 3,
+          "value": "Image of hair gel jar and slicked back hair",
+          "beat": 1
+        },
+        {
+          "start": 3,
+          "end": 4,
+          "value": "Image of a golden trophy in a stadium",
+          "beat": 1
+        },
+        {
+          "start": 4.5,
+          "end": 5.5,
+          "value": "Image of a classical Greek statue",
+          "beat": 1
+        },
+        {
+          "start": 5.5,
+          "end": 6.5,
+          "value": "Image of a dramatic Greek tragedy scene",
+          "beat": 1
+        },
+        {
+          "start": 8,
+          "end": 10,
+          "value": "Screenshot of Penaldo's Instagram profile showing 679 million followers",
+          "beat": 1
+        },
+        {
+          "start": 12,
+          "end": 14,
+          "value": "Photo of a heavily edited, older-looking Messi holding the World Cup",
+          "beat": 2
+        },
+        {
+          "start": 14,
+          "end": 17,
+          "value": "Photo of a person lying on a grass field",
+          "beat": 2
+        },
+        {
+          "start": 17,
+          "end": 19,
+          "value": "Image of a soccer ball with three top hats",
+          "beat": 2
+        }
+      ]
+    }
+  ]
+}
