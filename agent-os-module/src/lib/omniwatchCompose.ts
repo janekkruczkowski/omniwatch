@@ -92,11 +92,14 @@ function boxStyle(r: BlueprintRegion, W: number, H: number): string {
  *  so it errs wide. */
 function fitSize(text: string, boxW: number, boxH: number, desired: number): number {
   const chars = Math.max(text.replace(/\s+/g, " ").trim().length, 1);
-  const usableW = Math.max(boxW * 0.96, 1), usableH = Math.max(boxH * 0.96, 1);
+  // Headroom on both axes. A plate behind the line carries padding, and a display face's
+  // line box is taller than its nominal size — measured: a two-line title computed to fit
+  // at 1.15 line-height came out with its descenders cut off.
+  const usableW = Math.max(boxW * 0.94, 1), usableH = Math.max(boxH * 0.92, 1);
   for (let f = Math.round(desired); f > 8; f--) {
     const perLine = Math.max(Math.floor(usableW / (f * 0.52)), 1);
     const lines = Math.ceil(chars / perLine);
-    if (lines * f * 1.15 <= usableH) return f;
+    if (lines * f * 1.32 <= usableH) return f;
   }
   return 8;
 }
