@@ -100,13 +100,39 @@ test("the four sources are the whole vocabulary, and each kind gets a sane defau
   assert.equal(bp.defaultFill("video"), "generate");
 });
 
-test("style belongs to words only", () => {
+test("a style on a picture is dropped and named, not fatal", () => {
+  // The model reaches for "style" to describe a card's white face and dark border, which
+  // is really the region's paint. Nothing there can draw, so refusing a whole capture over
+  // it would turn a modelling slip into a lost analysis — but a silent drop would let the
+  // slip become a habit.
   const b = row();
   b.tracks.push({ region: "board", kind: "image", varies: "fixed",
     style: { color: "#FFFFFF" }, items: [{ start: 0, end: 20, value: "x" }] });
   const c = bp.validateBlueprint(b);
-  assert.equal(c.ok, false);
-  assert.match(c.error, /style belongs on a text track/);
+  assert.equal(c.ok, true);
+  assert.equal(c.blueprint.tracks.find((t) => t.kind === "image").style, undefined);
+  assert.equal(c.notes.length, 1);
+  assert.match(c.notes[0], /no words to set/);
+});
+
+test("a clean blueprint has nothing to report", () => {
+  const c = bp.validateBlueprint(row());
+  assert.equal(c.ok, true);
+  assert.deepEqual(c.notes, []);
+});
+
+test("words too long for their box are shrunk to fit, not clipped", () => {
+  const b = row();
+  b.tracks[1].items = [{ start: 6, end: 7, value: "Built like a Greek god, plays like a Greek [[tragedy.]]" }];
+  const c = bp.validateBlueprint(b);
+  const html = compose.composeBlueprint(c.blueprint, { assetFor: () => null });
+  // The caption's own element: the tier label above it carries its own size.
+  const cap = html.slice(html.indexOf('id="rg-cap"'));
+  const size = Number(/font-size:(\d+)px/.exec(cap)[1]);
+  // The caption strip is 84% x 7% of 720x1280 — 605x90 — and the captured size would put
+  // fifty-four characters on two clipped lines.
+  assert.ok(size < 45, `expected a shrunk size, got ${size}`);
+  assert.ok(size > 10, `expected something still readable, got ${size}`);
 });
 
 test("an emphasised span is split out of the words, and plain text is left alone", () => {

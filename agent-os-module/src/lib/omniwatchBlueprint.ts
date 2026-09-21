@@ -111,6 +111,17 @@ export interface RegionPaint {
   border?: { color: string; width: number };
 }
 
+/** The SHAPE of the lettering, not a font name.
+ *
+ *  A vision model can tell a heavy geometric sans from a condensed grotesque from a slab;
+ *  it cannot tell you the file was Montserrat Black. Asking for a family name would get a
+ *  guess, and a guess in this field is a string going into a stylesheet. A closed set of
+ *  shapes is what can honestly be observed AND safely rendered — and without any of it the
+ *  renderer puts Inter under everything, which is how five tier letters came out in
+ *  visibly the wrong lettering. */
+export const FONT_SHAPES = ["sans", "sans-condensed", "sans-rounded", "display", "serif", "slab", "mono", "handwritten"] as const;
+export type FontShape = (typeof FONT_SHAPES)[number];
+
 export const TEXT_CASES = ["as-is", "upper", "lower", "title"] as const;
 export type TextCase = (typeof TEXT_CASES)[number];
 
@@ -122,10 +133,16 @@ export type TextCase = (typeof TEXT_CASES)[number];
 export interface TextStyle {
   /** Hex, the glyphs themselves. */
   color?: string;
-  /** Hex, a plate behind the whole line. */
+  /** Hex, a PLATE behind the whole line — a solid block the words sit on.
+   *
+   *  Not the same thing as `outline`, and a capture reported both at once for a caption
+   *  that had only a stroke, which drew a black bar across a frame that had none. A plate
+   *  is visible where there are no letters; a stroke is only ever touching them. */
   background?: string;
   /** Hex, a stroke around the glyphs — what keeps a caption readable over footage. */
   outline?: string;
+  /** The shape of the lettering. */
+  font?: FontShape;
   /** 400-900. */
   weight?: number;
   /** Height of a line as a fraction of the CANVAS height, so it scales with the frame. */
@@ -254,21 +271,28 @@ const HEX = /^#[0-9a-fA-F]{3,8}$/;
 const hex = (v: unknown): string | null =>
   typeof v === "string" && HEX.test(v.trim()) ? v.trim() : null;
 
+/** Absent, or said to be absent. A model writing this schema says "no outline" by leaving
+ *  the field empty as often as by leaving it out, and elsewhere in this validator an empty
+ *  string already means absent — parent, label. Refusing it only here made a capture that
+ *  had correctly observed "this text has no stroke" fail to validate. */
+const unset = (v: unknown): boolean =>
+  v === undefined || v === null || (typeof v === "string" && v.trim() === "");
+
 function readPaint(v: unknown, at: string): { paint?: RegionPaint; error?: string } {
-  if (v === undefined || v === null) return {};
+  if (unset(v)) return {};
   if (!isObj(v)) return { error: `${at} must be an object` };
   const paint: RegionPaint = {};
-  if (v.fill !== undefined && v.fill !== null) {
+  if (!unset(v.fill)) {
     const f = hex(v.fill);
     if (!f) return { error: `${at}.fill must be a hex colour` };
     paint.fill = f;
   }
-  if (v.radius !== undefined && v.radius !== null) {
+  if (!unset(v.radius)) {
     const r = num(v.radius);
     if (r === null || r < 0 || r > 1) return { error: `${at}.radius must be 0..1 of the shorter side` };
     paint.radius = r;
   }
-  if (v.border !== undefined && v.border !== null) {
+  if (!unset(v.border)) {
     if (!isObj(v.border)) return { error: `${at}.border must be { color, width }` };
     const c = hex(v.border.color), w = num(v.border.width);
     if (!c) return { error: `${at}.border.color must be a hex colour` };
@@ -279,36 +303,42 @@ function readPaint(v: unknown, at: string): { paint?: RegionPaint; error?: strin
 }
 
 function readStyle(v: unknown, at: string): { style?: TextStyle; error?: string } {
-  if (v === undefined || v === null) return {};
+  if (unset(v)) return {};
   if (!isObj(v)) return { error: `${at} must be an object` };
   const st: TextStyle = {};
   for (const k of ["color", "background", "outline"] as const) {
-    if (v[k] === undefined || v[k] === null) continue;
+    if (unset(v[k])) continue;
     const c = hex(v[k]);
     if (!c) return { error: `${at}.${k} must be a hex colour` };
     st[k] = c;
   }
-  if (v.weight !== undefined && v.weight !== null) {
+  if (!unset(v.font)) {
+    if (!FONT_SHAPES.includes(v.font as FontShape)) {
+      return { error: `${at}.font must be one of ${FONT_SHAPES.join(", ")}` };
+    }
+    st.font = v.font as FontShape;
+  }
+  if (!unset(v.weight)) {
     const w = num(v.weight);
     if (w === null || w < 100 || w > 900) return { error: `${at}.weight must be 100..900` };
     st.weight = Math.round(w / 100) * 100;
   }
-  if (v.size !== undefined && v.size !== null) {
+  if (!unset(v.size)) {
     const z = num(v.size);
     if (z === null || z <= 0 || z > 0.5) return { error: `${at}.size must be a fraction of canvas height up to 0.5` };
     st.size = z;
   }
-  if (v.case !== undefined && v.case !== null) {
+  if (!unset(v.case)) {
     if (!TEXT_CASES.includes(v.case as TextCase)) {
       return { error: `${at}.case must be one of ${TEXT_CASES.join(", ")}` };
     }
     st.case = v.case as TextCase;
   }
-  if (v.align !== undefined && v.align !== null) {
+  if (!unset(v.align)) {
     if (v.align !== "left" && v.align !== "center" && v.align !== "right") return { error: `${at}.align must be left, center or right` };
     st.align = v.align;
   }
-  if (v.emphasis !== undefined && v.emphasis !== null) {
+  if (!unset(v.emphasis)) {
     if (!isObj(v.emphasis)) return { error: `${at}.emphasis must be { style, color }` };
     const style = v.emphasis.style;
     if (style !== "highlight" && style !== "underline" && style !== "color") {
@@ -321,11 +351,22 @@ function readStyle(v: unknown, at: string): { style?: TextStyle; error?: string 
   return { style: Object.keys(st).length ? st : undefined };
 }
 
-export type BlueprintCheck = { ok: true; blueprint: Blueprint } | { ok: false; error: string };
+/** A check that passed may still have thrown something away.
+ *
+ *  Two different failures need two different answers. A measurement that would RENDER
+ *  WRONGLY is refused outright — a colour that is not a colour, a cell with no place in its
+ *  grid. Something merely redundant should not cost the whole capture: a style on an image
+ *  track cannot affect a single pixel, and rejecting a twenty-region blueprint over it
+ *  turns a modelling slip into a lost analysis. Those are dropped and NAMED, so a slip
+ *  stays visible instead of becoming a silent habit. */
+export type BlueprintCheck =
+  | { ok: true; blueprint: Blueprint; notes: string[] }
+  | { ok: false; error: string };
 
 /** Never throws: a blueprint that came back malformed is a reason to say what is wrong,
  *  not a 500 from halfway through a render. */
 export function validateBlueprint(raw: unknown): BlueprintCheck {
+  const notes: string[] = [];
   if (!isObj(raw)) return { ok: false, error: "the blueprint must be a JSON object" };
   if (raw.version !== BLUEPRINT_VERSION) return { ok: false, error: `version must be "${BLUEPRINT_VERSION}"` };
 
@@ -475,7 +516,10 @@ export function validateBlueprint(raw: unknown): BlueprintCheck {
     const styleRead = readStyle(t.style, `${at}.style`);
     if (styleRead.error) return { ok: false, error: styleRead.error };
     if (styleRead.style && kind !== "text") {
-      return { ok: false, error: `${at}.style belongs on a text track, not on a ${kind} track` };
+      // A card's white face and dark border are the REGION's paint, not the words' style;
+      // the model reaches for "style" for both. Nothing here can draw, so it is dropped.
+      notes.push(`${at}.style was dropped — a ${kind} track has no words to set; that looks like the region's paint`);
+      styleRead.style = undefined;
     }
     if (!Array.isArray(t.items) || t.items.length === 0) return { ok: false, error: `${at}.items must not be empty` };
     if (t.items.length > MAX_ITEMS) return { ok: false, error: `${at}.items has too many entries (max ${MAX_ITEMS})` };
@@ -519,7 +563,7 @@ export function validateBlueprint(raw: unknown): BlueprintCheck {
     return { ok: false, error: `region "${idle.id}" has no track, no paint and nothing inside it — every region must carry something` };
   }
 
-  return { ok: true, blueprint: { version: BLUEPRINT_VERSION, canvas: { width, height, fps, seconds }, regions, tracks } };
+  return { ok: true, notes, blueprint: { version: BLUEPRINT_VERSION, canvas: { width, height, fps, seconds }, regions, tracks } };
 }
 
 /** The schema as the model is told it, kept beside the validator so the two cannot drift:
@@ -540,6 +584,7 @@ export const BLUEPRINT_SCHEMA_PROMPT = `Return ONE JSON object and nothing else 
   "tracks":  [ { "region": "<region id>", "kind": <kind>, "varies": "fixed" | "episode",
                  "fill": <fill>,                          // where the content comes from
                  "style": { "color": "#rrggbb", "background": "#rrggbb", "outline": "#rrggbb",
+                            "font": <font>,
                             "weight": <100..900>, "size": <fraction of canvas height>,
                             "case": ${TEXT_CASES.map((c) => `"${c}"`).join(" | ")},
                             "align": "left" | "center" | "right",
@@ -551,6 +596,7 @@ export const BLUEPRINT_SCHEMA_PROMPT = `Return ONE JSON object and nothing else 
 role is exactly one of: ${REGION_ROLES.join(" | ")}
 kind is exactly one of: ${TRACK_KINDS.join(" | ")}
 fill is exactly one of: ${FILL_SOURCES.join(" | ")}
+font is exactly one of: ${FONT_SHAPES.join(" | ")}
 
 RULES
 - rect is FRACTIONS of the canvas, origin top-left: [0, 0, 1, 0.1] is a strip across the top.
@@ -579,7 +625,11 @@ RULES
 - Every region must have at least one track, and every track at least one item.
 - z decides what is painted over what. Give overlapping regions different z.
 - A caption that changes word by word is many items on ONE caption track, each with its own
-  start and end — not one item for the whole video.
+  start and end — not one item for the whole video, and NOT one item per sentence. Count
+  the times the words on screen change and make that many items. If three words appear, then
+  three more replace them, that is two items, even though it is one sentence. A caption
+  track that holds a whole sentence for three seconds when the real one changed five times
+  is a different video.
 - For kind "text", value is the exact words on screen, verbatim, including emoji.
 - For kind "image" or "video", value describes what is depicted, concretely enough that
   someone could recreate it without seeing the original.
@@ -598,6 +648,18 @@ COLOUR AND TYPE — without these the layout is right and the video is wrong
   "emphasis" and wrap that word in the value with double square brackets:
   "plays like a Greek [[tragedy.]]". Do not use the brackets anywhere else.
 - Black text on white is not the same format as white text on black. Say which it is.
+- "background" and "outline" are different things and a line often has only one. A
+  background is a solid PLATE the words sit on, visible in the gaps between letters and
+  beyond the last one. An outline only ever touches the letters. If the words sit over
+  footage with a dark edge around each letter, that is an outline and there is NO
+  background. Giving both when the video has only a stroke draws a bar across the frame.
+- "font" is the SHAPE of the lettering as you can see it, not a font you are guessing the
+  name of. Heavy and geometric is "display"; ordinary is "sans"; narrow is
+  "sans-condensed"; soft-cornered is "sans-rounded".
+- Measure the top edge of a band that sits near the top of the frame. Short-form video
+  leaves a margin above the first element for the phone's own clock, status bar and camera
+  cutout, so a title strip usually does NOT start at y 0. If there is a gap above it, the
+  rect starts below 0 — say where it really starts.
 
 WHERE EACH SLOT'S CONTENT COMES FROM — "fill"
 - "draw"     the renderer makes it from this blueprint: words, colours, a coloured row, a

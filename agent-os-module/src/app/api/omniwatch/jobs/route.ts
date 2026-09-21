@@ -37,7 +37,8 @@ export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}));
   const url = String(body.url || "").trim();
   const question = String(body.q || "");
-  const mode: Mode = body.mode === "teardown" ? "teardown" : body.mode === "blueprint" ? "blueprint" : "ask";
+  const MODES: Mode[] = ["ask", "teardown", "both", "blueprint", "screentext"];
+  const mode: Mode = MODES.includes(body.mode as Mode) ? (body.mode as Mode) : "ask";
   const l = I18N[String(body.lang || "")] ? String(body.lang) : DEFAULT_LANG;
   // Either a link to fetch, or a video already in the cache. The second is what makes a
   // capture repeatable: the same file, analysed again, so a difference in the answer is a

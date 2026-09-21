@@ -80,7 +80,7 @@ export const STRIP = 16; // thumbnails in the timeline strip
 // "both" is one request, not two. The frames are what cost money and they are the same
 // frames; asking for a second document off the same upload adds output tokens only —
 // fractions of a cent — while running it twice would pay for the whole video again.
-export type Mode = "ask" | "teardown" | "both" | "blueprint";
+export type Mode = "ask" | "teardown" | "both" | "blueprint" | "screentext";
 export interface VideoInfo {
   id: string;
   title: string;
@@ -563,6 +563,37 @@ Banned, because they are true of almost every video and so describe none of it: 
 "engaging", "dynamic", "high energy", "keeps the viewer hooked", "modern editing". Say the concrete thing or
 say nothing. If a line has nothing left to say, end it — never pad a line to make it look complete.`;
 
+// Reading what is WRITTEN, which is not the same question as what was said.
+//
+// An aligner gives the spoken words to the hundredth of a second and is the right tool for
+// speech. It cannot tell you that the caption on screen is shorter than the sentence, that
+// a title sits there in silence, that a number ticks up, or that one word is boxed. Only
+// something that can see does that — and this project has a cheap one, which the tools it
+// is measured against do not. So both are asked, and where they disagree that disagreement
+// is itself a finding.
+const SCREENTEXT_WHOLE = `You are watching the whole video "{title}" by {channel} ({duration}).
+
+Report EVERY piece of text that appears on screen, and nothing else.
+
+Rules:
+- One entry each time the text CHANGES. If three words are replaced by three more, that is
+  two entries, even inside one sentence.
+- "text" is exactly what is written, verbatim, including punctuation, emoji and casing. Do
+  not correct it, do not complete it, and do not write what was SAID if the screen shows
+  something shorter or different.
+- "start" and "end" are seconds from the beginning of the video, as precise as you can make
+  them. The video runs {seconds} seconds; nothing may end after that.
+- "where" is a short plain name for the area it sits in — "title bar", "caption", "tier row
+  letter", "price tag", "name badge".
+- If one word or phrase inside an entry is set apart — boxed, underlined, in another colour
+  — repeat it in "marked". Otherwise leave "marked" out.
+- Include text that nobody speaks: titles, labels, numbers, watermarks, buttons.
+- Do not include text that is part of a photograph of the real world unless it is placed
+  there as part of the video's design.
+
+Return ONE JSON object and nothing else — no prose, no markdown fence:
+{"screen":[{"start":<s>,"end":<s>,"where":"<area>","text":"<verbatim>","marked":"<word>"}]}`;
+
 const BLUEPRINT_WHOLE = `You are watching the whole video "{title}" by {channel} ({duration}) — video AND audio.
 
 Your job is not to review it. Write down HOW THE SCREEN IS PUT TOGETHER, precisely enough that
@@ -660,7 +691,7 @@ ${TEARDOWN_TASK}`
       ? `${TEARDOWN_TASK}\nThe reader is about to film about: ${q}\nWhere a choice would not survive that move, say so and say why. Do not write their script.`
       : TEARDOWN_TASK;
   }
-  else if (mode === "blueprint") {
+  else if (mode === "screentext" || mode === "blueprint") {
     // Answered as data, not sections. Kept out of the markdown path entirely so the two
     // cannot drift into half-prose, half-JSON.
     sections = ""; task = "";
@@ -750,13 +781,16 @@ export async function watch(
   const tokens = { in: 0, out: 0 };
   ev.onEvent?.("watch", { n: ps.length, fps });
 
-  const cap = mode === "blueprint" ? MAX_TOKENS_BLUEPRINT : mode === "both" ? MAX_TOKENS_BOTH : MAX_TOKENS;
+  const cap = mode === "blueprint" || mode === "screentext"
+    ? MAX_TOKENS_BLUEPRINT : mode === "both" ? MAX_TOKENS_BOTH : MAX_TOKENS;
 
   let answer: string;
   if (ps.length === 1) {
     const whole = mode === "blueprint"
       ? tpl(BLUEPRINT_WHOLE, { ...v, schema: BLUEPRINT_SCHEMA_PROMPT, seconds: String(info.duration || 0) })
-      : tpl(WHOLE, v);
+      : mode === "screentext"
+        ? tpl(SCREENTEXT_WHOLE, { ...v, seconds: String(info.duration || 0) })
+        : tpl(WHOLE, v);
     const r = await streamOmni(key, [videoPart(uploads[0].url, fps), { type: "text", text: whole }], ev.onToken, cap);
     answer = r.text; tokens.in += r.usage.in; tokens.out += r.usage.out;
   } else {
@@ -787,7 +821,7 @@ export async function watch(
   // structure, so the guard reads it as the collapse it was written to catch and cuts the
   // object mid-item. The blueprint has its own check — it either parses and validates or
   // it does not — so it is passed through whole.
-  const answerOut = mode === "blueprint" ? answer : trimRunOn(answer);
+  const answerOut = mode === "blueprint" || mode === "screentext" ? answer : trimRunOn(answer);
   return { answer: answerOut, stats: { parts: ps.length, fps, reused, ...tokens } };
 }
 

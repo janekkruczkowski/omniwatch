@@ -79,12 +79,34 @@ function boxStyle(r: BlueprintRegion, W: number, H: number): string {
   return out.join(";");
 }
 
+/** The largest size at which these words still fit in this box.
+ *
+ *  A format states a size; an EPISODE states words, and a longer line in the same slot has
+ *  to hold. Measured: a caption band 648x77 given "Built like a Greek god, plays like a
+ *  Greek tragedy." at the captured 45px wrapped to two lines, and the region clips, so the
+ *  viewer saw the middle of two half-lines. Shrinking is the only behaviour that keeps a
+ *  format honest when the words change, which is the entire point of a format.
+ *
+ *  Glyph width is estimated, not measured — there is no layout engine here. 0.52 of the
+ *  font size is a heavy sans average, and erring narrow would be the dangerous direction,
+ *  so it errs wide. */
+function fitSize(text: string, boxW: number, boxH: number, desired: number): number {
+  const chars = Math.max(text.replace(/\s+/g, " ").trim().length, 1);
+  const usableW = Math.max(boxW * 0.96, 1), usableH = Math.max(boxH * 0.96, 1);
+  for (let f = Math.round(desired); f > 8; f--) {
+    const perLine = Math.max(Math.floor(usableW / (f * 0.52)), 1);
+    const lines = Math.ceil(chars / perLine);
+    if (lines * f * 1.15 <= usableH) return f;
+  }
+  return 8;
+}
+
 /** The words of one item, set the way the track says.
  *
  *  Emphasis is a span inside the value, so one string stays one string. A format that
  *  underlines the word carrying the joke — and the reference does — cannot otherwise be
  *  reproduced at all: it comes out as a flat line that reads wrong. */
-function textHtml(st: TextStyle | undefined, value: string, H: number): string {
+function textHtml(st: TextStyle | undefined, value: string, H: number, box: { w: number; h: number }): string {
   const parts = splitEmphasis(value);
   const em = st?.emphasis;
   const emColour = colour(em?.color);
@@ -97,13 +119,29 @@ function textHtml(st: TextStyle | undefined, value: string, H: number): string {
   }).join("");
 
   const css: string[] = [];
+  // A closed set of shapes, each mapped to a stack that exists on a rendering machine. The
+  // blueprint never carries a font name, so nothing a model invented reaches a stylesheet.
+  const FONTS: Record<string, string> = {
+    sans: 'Inter, "Helvetica Neue", Arial, sans-serif',
+    "sans-condensed": '"Arial Narrow", "Helvetica Neue Condensed", "Roboto Condensed", Inter, sans-serif',
+    "sans-rounded": '"SF Pro Rounded", "Varela Round", "Trebuchet MS", Inter, sans-serif',
+    display: '"Impact", "Haettenschweiler", "Arial Black", Inter, sans-serif',
+    serif: 'Georgia, "Times New Roman", serif',
+    slab: '"Rockwell", "Roboto Slab", Georgia, serif',
+    mono: '"SF Mono", Menlo, Consolas, monospace',
+    handwritten: '"Bradley Hand", "Segoe Script", cursive',
+  };
+  if (st?.font && FONTS[st.font]) css.push(`font-family:${FONTS[st.font]}`);
   const TRANSFORM: Record<string, string> = { upper: "uppercase", lower: "lowercase", title: "capitalize" };
   const tr = st?.case ? TRANSFORM[st.case] : undefined;
   if (tr) css.push(`text-transform:${tr}`);
   const fg = colour(st?.color);
   if (fg) css.push(`color:${fg}`);
   if (st?.weight) css.push(`font-weight:${Math.round(st.weight)}`);
-  if (st?.size) css.push(`font-size:${Math.round(st.size * H)}px`);
+  // The plain text, for measuring: the brackets are markup, not words on screen.
+  const plain = parts.map((p) => p.text).join("");
+  const want = st?.size ? st.size * H : H * 0.032;
+  css.push(`font-size:${fitSize(plain, box.w, box.h, want)}px`);
   // A stroke around the glyphs, which is what keeps a caption readable over footage.
   const outline = colour(st?.outline);
   if (outline) css.push(`-webkit-text-stroke:${Math.max(1, Math.round(H * 0.004))}px ${outline};paint-order:stroke fill`);
@@ -113,13 +151,16 @@ function textHtml(st: TextStyle | undefined, value: string, H: number): string {
 }
 
 /** One item, as the element its kind needs. */
-function itemHtml(t: BlueprintTrack, it: BlueprintItem, i: number, src: ComposeSources, H: number): string {
+function itemHtml(
+  t: BlueprintTrack, it: BlueprintItem, i: number, src: ComposeSources,
+  H: number, box: { w: number; h: number },
+): string {
   const timing = `data-start="${r2(it.start)}" data-duration="${r2(Math.max(it.end - it.start, 0.04))}" data-track-index="1"`;
   if (t.kind === "text") {
     if (src.tracedPixels) return "";
     const align = t.style?.align ?? "center";
     const just = align === "left" ? "flex-start" : align === "right" ? "flex-end" : "center";
-    return `      <div class="it txt" style="justify-content:${just};text-align:${align}" ${timing}>${textHtml(t.style, it.value, H)}</div>`;
+    return `      <div class="it txt" style="justify-content:${just};text-align:${align}" ${timing}>${textHtml(t.style, it.value, H, box)}</div>`;
   }
   if (t.kind === "color") {
     if (src.tracedPixels) return "";
@@ -159,7 +200,7 @@ export function composeBlueprint(bp: Blueprint, src: ComposeSources): string {
     const wholeUrl = whole ? safeUrl(whole) : null;
     const inner = wholeUrl
       ? `      <video class="it med" src="${wholeUrl}" muted playsinline data-start="0" data-duration="${total}" data-track-index="1"></video>`
-      : tracks.flatMap((t) => t.items.map((it, i) => itemHtml(t, it, i, src, H))).filter(Boolean).join("\n");
+      : tracks.flatMap((t) => t.items.map((it, i) => itemHtml(t, it, i, src, H, { w: r.rect[2] * W, h: r.rect[3] * H }))).filter(Boolean).join("\n");
     const label = src.debugRegions ? `      <div class="dbg">${esc(r.id)}</div>\n` : "";
     return `    <div class="rg rg-${esc(r.role)}" id="rg-${esc(r.id)}" style="${boxStyle(r, W, H)}">\n${label}${inner}\n    </div>`;
   }).join("\n");
