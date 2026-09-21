@@ -179,3 +179,29 @@ test("a run with no brief still sends no output, so the landscape default stands
   assert.match(source, /assembler keeps its own landscape default/,
     "the reason a brief-less run is unchanged should be stated where it is done");
 });
+
+// ── Wan as the third b-roll engine ───────────────────────────────────────────────────────
+// MiniMax and Grok both need an OAuth sign-in. On a machine without one the Director could
+// not finish a run at all, which is how a film ended up with an empty background.
+
+test("Wan is offered, and is the fallback when another engine fails", () => {
+  assert.match(source, /engine: "minimax" \| "grok" \| "wan"/, "the engine union must include Wan");
+  assert.match(source, /\{ v: "wan", l: "Wan" \}/, "Wan must be selectable in the b-roll engine toggle");
+  assert.match(source, /\["wan", "grok", "minimax"\] as DirectorRun\["engine"\]\[\]\)\.find\(\(e\) => e !== eng\)/,
+    "the fallback order must be fixed and must drop the engine that just failed");
+});
+
+test("a Wan clip is taken as finished, not polled for a task id", () => {
+  // The other two answer with a task to poll; ours answers with the stored clip. Treating
+  // it like the others would leave every scene stuck on \"processing\".
+  assert.match(source, /fetch\("\/api\/omniwatch\/broll"/, "Wan must go to the module's own route");
+  assert.match(source, /if \(j\.ok && j\.url\) setRun[\s\S]{0,160}status: "done", url: j\.url/,
+    "a Wan answer with a url is a finished clip");
+});
+
+test("Wan is asked for the brief's own frame", () => {
+  // A portrait reference filled with landscape footage is the failure the output-size work
+  // exists to stop; the footage has to agree with the frame, not just the canvas.
+  assert.match(source, /o\.height > o\.width \? "9:16" : o && o\.width > o\.height \? "16:9" : "9:16"/,
+    "the clip's aspect must follow the brief's source frame");
+});

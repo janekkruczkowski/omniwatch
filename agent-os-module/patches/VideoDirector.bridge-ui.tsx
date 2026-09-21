@@ -33,7 +33,7 @@ type GenStatus = "idle" | "processing" | "done" | "failed";
 interface BrollState { status: GenStatus; url?: string; taskId?: string; slug?: string; err?: string }
 interface AvatarState { status: GenStatus; videoId?: string; url?: string; err?: string }
 interface DirectorRun {
-  id: string; topic: string; durationSec: number; mode: "avatar" | "voiceover"; engine: "minimax" | "grok";
+  id: string; topic: string; durationSec: number; mode: "avatar" | "voiceover"; engine: "minimax" | "grok" | "wan";
   voiceEngine: "elevenlabs" | "minimax" | "local"; elevenVoiceId?: string; elevenVoiceName?: string;
   brand: string; avatarId?: string; avatarName?: string; voiceId?: string; voiceName?: string;
   stage: Stage; script?: Script; scriptEngine?: "claude" | "local";
@@ -379,8 +379,29 @@ export default function VideoDirector() {
 
   function genBroll(i: number, prompt: string, provider?: DirectorRun["engine"], triedOther = false) {
     const eng = provider ?? run.engine;
-    const other: DirectorRun["engine"] = eng === "minimax" ? "grok" : "minimax";
+    // Fixed order, current engine removed. Wan is first because it answers with a key in a
+    // file rather than an OAuth sign-in, so on a machine where the other two are signed out
+    // it is the one that can actually finish a run.
+    const other = (["wan", "grok", "minimax"] as DirectorRun["engine"][]).find((e) => e !== eng)!;
     setRun((r) => ({ ...r, broll: { ...r.broll, [i]: { status: "processing" } } }));
+
+    if (eng === "wan") {
+      // Wan answers with the finished clip, already stored in OmniWatch's assets — there is
+      // no task to poll. The frame follows the brief: a portrait reference must not be
+      // filled with landscape footage.
+      const o = run.omni?.output;
+      const aspect = o && o.height > o.width ? "9:16" : o && o.width > o.height ? "16:9" : "9:16";
+      fetch("/api/omniwatch/broll", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ prompt, aspect }),
+      }).then((r) => r.json()).then((j) => {
+        if (j.ok && j.url) setRun((r) => ({ ...r, broll: { ...r.broll, [i]: { status: "done", url: j.url } } }));
+        else if (!triedOther) genBroll(i, prompt, other, true);
+        else setRun((r) => ({ ...r, broll: { ...r.broll, [i]: { status: "failed", err: j.error || "wan failed" } } }));
+      }).catch((e) => { if (!triedOther) genBroll(i, prompt, other, true); else setRun((r) => ({ ...r, broll: { ...r.broll, [i]: { status: "failed", err: String(e) } } })); });
+      return;
+    }
+
     fetch("/api/hermes/studio/generate", {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ kind: "video", prompt, provider: eng }),
@@ -567,7 +588,7 @@ function BriefStage({ run, update, busy, onWrite, avatars, elevenVoices, elevenS
           <Toggle options={[{ v: "avatar", l: "Presenter", icon: <User size={11} /> }, { v: "voiceover", l: "Voiceover", icon: <Mic2 size={11} /> }]} value={run.mode} onChange={(v) => update({ mode: v as DirectorRun["mode"] })} />
         </Field>
         <Field label="B-roll engine">
-          <Toggle options={[{ v: "grok", l: "Grok" }, { v: "minimax", l: "MiniMax" }]} value={run.engine} onChange={(v) => update({ engine: v as DirectorRun["engine"] })} />
+          <Toggle options={[{ v: "wan", l: "Wan" }, { v: "grok", l: "Grok" }, { v: "minimax", l: "MiniMax" }]} value={run.engine} onChange={(v) => update({ engine: v as DirectorRun["engine"] })} />
         </Field>
         {run.mode === "avatar" && (
           <Field label="Avatar (lip-synced to the voice)">
