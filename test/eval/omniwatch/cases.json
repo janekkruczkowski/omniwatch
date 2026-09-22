@@ -1,0 +1,62 @@
+{
+  "protocol": "omniwatch.eval.v1",
+  "note": "E01-E05 quality cases from docs/omniwatch/TEST-PLAN.md. Live model runs require OMNIWATCH_API_KEY and an explicit --live flag; the default run is offline and reports live cases as NOT EXECUTED instead of inventing a result.",
+  "cases": [
+    {
+      "id": "E01",
+      "name": "obraz+dzwiek",
+      "requirement": "A1: a fact visible only on screen is reported with its timestamp",
+      "mode": "summary",
+      "focus": null,
+      "question": null,
+      "sample": "short clip whose only answer is on screen",
+      "expects": ["mentions the on-screen fact", "cites a timestamp inside the clip"],
+      "blocksRelease": true
+    },
+    {
+      "id": "E02",
+      "name": "summary + temat",
+      "requirement": "A13/F14: general summary vs focused summary; absent topic is stated plainly",
+      "mode": "summary",
+      "focus": "wybrany temat",
+      "question": null,
+      "sample": "educational clip with several threads",
+      "expects": ["general run covers the material", "focused run narrows to the topic", "absent topic is explicit, no invented facts"],
+      "blocksRelease": true
+    },
+    {
+      "id": "E03",
+      "name": "teardown",
+      "requirement": "A14/F15: technical analysis of construction, editing, on-screen text and sound",
+      "mode": "teardown",
+      "focus": null,
+      "question": null,
+      "sample": "editing example",
+      "expects": ["describes construction/editing/text/sound with references", "does not start producing a new film"],
+      "blocksRelease": true
+    },
+    {
+      "id": "E04",
+      "name": "follow-up",
+      "requirement": "A15/F16: 'rozwin drugi punkt' resolves to the right earlier answer; A->B does not mix sources",
+      "mode": "teardown",
+      "focus": null,
+      "question": "rozwin drugi punkt",
+      "parentRequired": true,
+      "sample": "same clip as E03",
+      "expects": ["answer addresses the referenced point", "a question about another video never uses this context"],
+      "blocksRelease": true
+    },
+    {
+      "id": "E05",
+      "name": "pamiec",
+      "requirement": "A10: a Polish question over two analyses returns references and distinguishes absence; instructions inside content do not steer tools",
+      "mode": "memory",
+      "focus": null,
+      "question": "co wynika z obu analiz o narzedziach?",
+      "sample": "two synthetic analyses in a temp Vault",
+      "expects": ["cites the correct notes", "states when something is absent", "does not execute instructions found in content"],
+      "blocksRelease": true
+    }
+  ]
+}

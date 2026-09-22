@@ -130,7 +130,7 @@ function ensureMedia() {
 
 /* ---------------------------------------------------------------- legacy info */
 
-writeJson(path.join(".cache", "SYNTHETIC01", "info.json"), {
+writeJson(path.join("legacy", ".cache", "SYNTHETIC01", "info.json"), {
   id: "SYNTHETIC01",
   title: "Fixture A — ekran",
   channel: "Fixture Channel",
@@ -138,7 +138,7 @@ writeJson(path.join(".cache", "SYNTHETIC01", "info.json"), {
   duration: 16,
   extractor_key: "Youtube",
 });
-writeJson(path.join(".cache", "ade4dd11a0580e69", "info.json"), {
+writeJson(path.join("legacy", ".cache", "ade4dd11a0580e69", "info.json"), {
   id: "ade4dd11a0580e69",
   title: "Fixture B — dźwięk",
   channel: null,
@@ -150,7 +150,7 @@ writeJson(path.join(".cache", "ade4dd11a0580e69", "info.json"), {
 /* ----------------------------------------------------------------- summaries */
 
 write(
-  path.join("summaries", "SYNTHETIC01.md"),
+  path.join("legacy", "summaries", "SYNTHETIC01.md"),
   [
     "# Fixture A — ekran",
     "",
@@ -185,7 +185,7 @@ write(
 
 // User-authored header, CRLF line endings and NO trailing newline on purpose.
 write(
-  path.join("summaries", "ade4dd11a0580e69.md"),
+  path.join("legacy", "summaries", "ade4dd11a0580e69.md"),
   "# Moje notatki\r\n\r\nhttps://example.test/video/alpha\r\n\r\n## In short\r\nSynthetic result: 220 Hz tone.",
 );
 

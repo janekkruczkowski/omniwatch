@@ -210,6 +210,10 @@ function applyLang() {
   chips($('#heroChips'), '#q'); chips($('#followChips'), '#q2', () => ask($('#q2').value));
 }
 let vid = null, url = null, strip = [], seconds = 0, t0 = 0, timerId = null, es = null, card = null, question = '', partsDone = 0, lastAnswer = '';
+// A conversation is identified by its own id, never by the URL alone; `parent` points
+// at the previous answer so a follow-up continues the right thread (D9).
+let conversationId = null, parentTurnId = null;
+const newConversationId = () => (crypto.randomUUID ? crypto.randomUUID() : `conv_${Date.now()}_${Math.random().toString(16).slice(2)}`);
 const toSec = t => t.split(':').map(Number).reduce((a, b) => a * 60 + b, 0);
 const fmt = s => { s = Math.floor(s); const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, x = String(s % 60).padStart(2, '0');
   return h ? `${h}:${String(m).padStart(2, '0')}:${x}` : `${m}:${x}`; };
@@ -320,7 +324,8 @@ function ask(q) {
   t0 = performance.now(); clearInterval(timerId);
   timerId = setInterval(() => $('#timer').textContent = ((performance.now() - t0) / 1000).toFixed(1) + 's', 100);
 
-  es = new EventSource(`/api/watch?url=${encodeURIComponent(url)}&q=${encodeURIComponent(q)}&lang=${lang}&mode=${mode}`);
+  const thread = `${conversationId ? `&conversation=${encodeURIComponent(conversationId)}` : ''}${parentTurnId ? `&parent=${encodeURIComponent(parentTurnId)}` : ''}`;
+  es = new EventSource(`/api/watch?url=${encodeURIComponent(url)}&q=${encodeURIComponent(q)}&lang=${lang}&mode=${mode}${thread}`);
   const on = (ev, fn) => es.addEventListener(ev, e => fn(JSON.parse(e.data)));
   const finish = () => { es.close(); es = null; clearInterval(timerId); $('#strip').classList.remove('scanning'); $('#go').disabled = $('#go2').disabled = false; };
   on('stage', d => {
@@ -335,6 +340,7 @@ function ask(q) {
     seconds = d.seconds;
     if (vid !== d.id) {
       vid = d.id; strip = d.strip;
+      conversationId = newConversationId(); parentTurnId = null;  // a new film is a new thread
       $('#player').src = `/video/${d.id}.mp4`;
       $('#stripCard').style.display = '';
       $('#strip').innerHTML = strip.map(t => `<div class="clip" data-t="${t}"><img src="${frame(t)}"><span>${fmt(t)}</span></div>`).join('');
@@ -347,11 +353,24 @@ function ask(q) {
   on('uploaded', d => { $('#upinfo').textContent = d.reused ? T().cached : ''; });
   on('part_done', d => { $('#parts').children[d.i].className = 'ok'; $('#wcount').textContent = `${++partsDone}/${$('#parts').children.length}`; });
   on('merge', () => pending(T().pendingMerge));
-  on('answer', d => { lastAnswer = d.text; renderMd(card.querySelector('.md'), d.text); });
+  const showAnswer = d => { lastAnswer = d.text; renderMd(card.querySelector('.md'), d.text); };
+  on('answer', showAnswer);
+  on('answer.text', showAnswer);
+  on('turn', d => { if (d.conversationId) conversationId = d.conversationId; if (d.turnId) parentTurnId = d.turnId; });
   on('done', d => {
     finish(); setStep('end'); document.body.classList.add('idle');
+    if (typeof d.text === 'string' && d.text) showAnswer(d);
     highlight(lastAnswer);
-    card.insertAdjacentHTML('beforeend', `<div class="stats"><span>⏱ <b>${d.seconds}s</b></span>${d.parts > 1 ? `<span>${T().statParts.replace('{n}', d.parts)}</span>` : ''}<span>💰 <b>$${d.cost.toFixed(3)}</b> · ${(d.tokens / 1000).toFixed(0)}k tokenów</span>${d.reused ? `<span>${T().statReused}</span>` : ''}</div>`);
+    const usage = d.usage || null;
+    const parts = usage ? usage.parts : d.parts;
+    const reused = usage ? usage.reused : d.reused;
+    const tokens = usage ? (usage.in || 0) + (usage.out || 0) : d.tokens;
+    const elapsed = typeof d.seconds === 'number' ? d.seconds : Math.round((performance.now() - t0) / 1000);
+    // Unknown cost stays unknown: never render a null/absent price as $0.000.
+    const cost = usage && usage.costKnown === true && typeof usage.costUsd === 'number'
+      ? `<span>💰 <b>$${usage.costUsd.toFixed(3)}</b>${typeof tokens === 'number' ? ` · ${(tokens / 1000).toFixed(0)}k tokenów` : ''}</span>`
+      : `<span>💰 <b>${T().statCostUnknown}</b></span>`;
+    card.insertAdjacentHTML('beforeend', `<div class="stats"><span>⏱ <b>${elapsed}s</b></span>${parts > 1 ? `<span>${T().statParts.replace('{n}', parts)}</span>` : ''}${cost}${reused ? `<span>${T().statReused}</span>` : ''}</div>`);
     $('#q2').focus();
   });
   on('error', d => { finish(); card.querySelector('.md').innerHTML = `<div class="err">⚠ ${esc(d.message)}</div>`; });

@@ -1,127 +1,104 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["openai>=1.52", "rich>=13", "requests>=2.31", "fastapi>=0.110", "uvicorn>=0.29"]
+# dependencies = []
 # ///
-"""OmniWatch web UI — paste a link, ask a question, Qwen Omni watches the video for you.
+"""OmniWatch web launcher - a thin wrapper around the shared Node runtime.
 
-    uv run app.py            # http://localhost:8765
+    uv run app.py            # http://127.0.0.1:8765
+
+The HTTP/SSE surface and the analysis both live in Node
+(`apps/standalone/server.mjs` over `packages/omniwatch/src/runtime`). This file only
+finds Node, checks the version and replaces itself with that launcher, so the release
+keeps its start command and its local address.
+
+A missing Node or a missing runtime artifact is reported before anything starts.
 """
 from __future__ import annotations
 
-import json
-import queue
+import os
+import re
+import shutil
 import subprocess
-import threading
-import time
+import sys
+from pathlib import Path
 
-import uvicorn
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, StreamingResponse
+ROOT = Path(__file__).resolve().parent
+MIN_NODE = (22, 22, 3)
+MIN_NODE_TEXT = ".".join(str(part) for part in MIN_NODE)
 
-import omniwatch as ow
+HELP = """OmniWatch - lokalny panel (paste a link, ask a question).
 
-PRICE_IN, PRICE_OUT = 0.15 / 1e6, 0.47 / 1e6  # USD per token, qwen3.8-omni-flash
-STRIP = 16  # thumbnails in the film strip
+  uv run app.py            # http://127.0.0.1:8765
 
-app = FastAPI()
+Panel obsluguje ten sam interfejs co wydana beta:
+  GET /                     interfejs WWW
+  GET /i18n.json            tlumaczenia
+  GET /api/watch?url&q&lang&mode
+  GET /video/{id}.mp4       pobrany film (Range/seeking)
+  GET /frame/{id}/{sec}.jpg klatka filmu
 
+Dane i konfiguracja leza obok skryptow: .env, .cache/, summaries/ (beta) oraz
+katalog danych nowego runtime (domyslnie ./data).
+"""
 
-@app.get("/")
-def index():
-    return FileResponse(ow.ROOT / "static" / "index.html")
-
-
-@app.get("/i18n.json")
-def i18n():
-    return FileResponse(ow.ROOT / "static" / "i18n.json")
-
-
-def cached_video(vid: str):
-    src = ow.CACHE / vid / "source.mp4"
-    if not vid.replace("-", "").replace("_", "").isalnum() or not src.exists():
-        raise HTTPException(404)
-    return src
+INSTALL_HINT = f"""OmniWatch wymaga Node {MIN_NODE_TEXT} lub nowszego.
+Zainstaluj Node 22 LTS: https://nodejs.org/download/release/v22.22.3/
+Po instalacji uruchom ponownie: uv run app.py
+Stary silnik Python nie jest uruchamiany awaryjnie.
+"""
 
 
-@app.get("/video/{vid}.mp4")
-def video(vid: str):
-    """The downloaded file itself — plays any platform yt-dlp supports; Range requests make seeking work."""
-    return FileResponse(cached_video(vid), media_type="video/mp4")
+def find_node() -> str | None:
+    """`OMNIWATCH_NODE` wins (an explicit install path); otherwise PATH is used."""
+    override = os.environ.get("OMNIWATCH_NODE")
+    if override:
+        return override if os.path.isfile(override) and os.access(override, os.X_OK) else None
+    return shutil.which("node")
 
 
-@app.get("/frame/{vid}/{sec}.jpg")
-def frame(vid: str, sec: int):
-    """A real frame from the downloaded video — visual proof of what the model saw."""
-    src = cached_video(vid)
-    out = ow.CACHE / vid / "frames" / f"{sec}.jpg"
-    if not out.exists():
-        out.parent.mkdir(exist_ok=True)
-        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-ss", str(sec), "-i", str(src),
-                        "-frames:v", "1", "-vf", "scale=480:-2", "-q:v", "4", str(out)], check=True)
-    return FileResponse(out, headers={"Cache-Control": "max-age=86400"})
+def node_version(node: str) -> tuple[int, int, int] | None:
+    try:
+        result = subprocess.run([node, "--version"], capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    match = re.match(r"v?(\d+)\.(\d+)\.(\d+)", result.stdout.strip())
+    if not match:
+        return None
+    return (int(match.group(1)), int(match.group(2)), int(match.group(3)))
 
 
-def pipeline(url: str, question: str, lang: str, mode: str, emit):
-    t0 = time.time()
-    cli = ow.client()
+def main(argv: list[str]) -> int:
+    if "--help" in argv or "-h" in argv:
+        sys.stdout.write(HELP)
+        return 0
 
-    emit("stage", step="download")
-    info, src = ow.fetch(url)
-    seconds = info.get("duration") or 0
-    emit("meta", id=info["id"], title=info.get("title"), channel=info.get("channel") or info.get("uploader"),
-         duration=ow.fmt(seconds), seconds=seconds,
-         strip=[round(seconds * (i + 0.5) / STRIP) for i in range(STRIP)])
-    emit("stage", step="upload")
+    node = find_node()
+    if node is None:
+        sys.stderr.write(INSTALL_HINT)
+        return 4
 
-    def on_event(name, **d):
-        if name == "watch":
-            emit("stage", step="watch", parts=d["n"], fps=d["fps"])
-        elif name in ("parts", "uploaded", "part_done", "merge"):
-            emit(name, **d)
+    version = node_version(node)
+    if version is None or version < MIN_NODE:
+        found = ".".join(str(part) for part in version) if version else "nieznana"
+        sys.stderr.write(INSTALL_HINT)
+        sys.stderr.write(f"Znaleziona wersja Node: {found}.\n")
+        return 4
 
-    last = [0.0]
+    server = ROOT / "server.mjs"
+    if not server.is_file():
+        sys.stderr.write(
+            f"Nie znaleziono serwera runtime: {server}\n"
+            "Zainstaluj wydanie OmniWatch (instalator kopiuje rdzen razem z aplikacja).\n"
+        )
+        return 4
 
-    def on_tok(txt):
-        if last[0] == 0.0:
-            emit("stage", step="answer")
-        if time.time() - last[0] > 0.1:
-            last[0] = time.time()
-            emit("answer", text=txt)
-
-    answer, st = ow.watch(cli, info, src, question, lang, on_event, on_tok, mode)
-    emit("answer", text=answer)
-    ow.save(info, url, question, answer, lang, mode)
-    emit("done", seconds=round(time.time() - t0), tokens=st["in"] + st["out"], parts=st["parts"],
-         reused=st["reused"], cost=round(st["in"] * PRICE_IN + st["out"] * PRICE_OUT, 4))
-
-
-@app.get("/api/watch")
-def api_watch(url: str, q: str = "", lang: str = ow.LANG, mode: str = "ask"):
-    events: queue.Queue = queue.Queue()
-
-    def emit(event, **data):
-        events.put(f"event: {event}\ndata: {json.dumps(data)}\n\n")
-
-    def worker():
-        try:
-            pipeline(url, q, lang if lang in ow.I18N else ow.LANG, "teardown" if mode == "teardown" else "ask", emit)
-        except Exception as e:  # surface any failure to the UI
-            emit("error", message=str(e)[-600:])
-        finally:
-            events.put(None)
-
-    threading.Thread(target=worker, daemon=True).start()
-
-    def gen():
-        while (item := events.get()) is not None:
-            yield item
-
-    return StreamingResponse(gen(), media_type="text/event-stream",
-                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    env = dict(os.environ)
+    env.setdefault("OMNIWATCH_APP_ROOT", str(ROOT))
+    # execve replaces this process: the Node server owns the exit code and signals.
+    os.execve(node, [node, str(server), *argv], env)
+    return 4  # unreachable
 
 
 if __name__ == "__main__":
-    if gone := ow.cleanup():
-        print(f"Cache: removed {len(gone)} unused video(s) (older than {ow.CACHE_TTL / 3600:.0f} h)")
-    uvicorn.run(app, host="127.0.0.1", port=8765, log_level="warning")
+    sys.exit(main(sys.argv[1:]))
