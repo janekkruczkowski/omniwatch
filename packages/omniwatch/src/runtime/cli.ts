@@ -14,6 +14,7 @@ import { pathToFileURL } from "node:url";
 import { OmniWatchError, toOmniWatchError } from "../contracts/errors.ts";
 import { ANALYSIS_VERSION } from "../contracts/types.ts";
 import type { AnalysisRequest, Mode } from "../contracts/types.ts";
+import { readRunReport, reportPayload, runScan, scanPayload } from "../collections/index.ts";
 import { deliverOperation } from "../storage/delivery.ts";
 import { OperationJournal } from "../storage/operations.ts";
 import { parseSourceUrl } from "../sources/url.ts";
@@ -106,7 +107,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
   return { command, positionals, flags };
 }
 
-const KNOWN_COMMANDS = new Set(["analyze", "worker", "status", "report", "pause", "cancel"]);
+const KNOWN_COMMANDS = new Set(["analyze", "worker", "status", "report", "pause", "cancel", "scan"]);
 
 /**
  * Validate everything that does not need configuration before touching the data
@@ -131,6 +132,9 @@ export function validateInvocation(parsed: ParsedArgs): void {
   }
   if (parsed.command === "report" && !parsed.flags.get("run") && parsed.positionals.length === 0) {
     throw new OmniWatchError("invalid_input", "Podaj przebieg: omniwatch report --run <id>");
+  }
+  if (parsed.command === "scan" && !parsed.flags.get("collection")) {
+    throw new OmniWatchError("invalid_input", "Podaj kolekcje: omniwatch scan --collection <id>");
   }
   if (parsed.command === "analyze") modeFromFlags(parsed);
 }
@@ -211,6 +215,8 @@ export async function runCli(argv: string[], io: CliIo = defaultIo): Promise<num
         return commandStatus(wiring, io, json);
       case "report":
         return commandReport(parsed, wiring, io, json);
+      case "scan":
+        return await commandScan(parsed, wiring, io, json);
       case "pause":
       case "cancel": {
         const operationId = parsed.positionals[0];
@@ -463,6 +469,56 @@ function commandReport(parsed: ParsedArgs, wiring: RuntimeWiring, io: CliIo, jso
     { protocol: "omniwatch.runtime.v1", runId, reports },
     json,
     reports.map((report) => `${report.id}  ${report.state}  nowe=${report.newAnalyses}  ${report.summary}`).join("\n"),
+  );
+  return EXIT_CODES.ok;
+}
+
+/**
+ * The one scan operation Hermes and the manual button share (D8): the caller passes
+ * a collection id, never a prompt. Zero new material produces no report.
+ */
+async function commandScan(parsed: ParsedArgs, wiring: RuntimeWiring, io: CliIo, json: boolean): Promise<number> {
+  const collectionId = stringFlag(parsed, "collection");
+  if (!collectionId) throw new OmniWatchError("invalid_input", "Podaj kolekcje: omniwatch scan --collection <id>");
+  const maxRaw = stringFlag(parsed, "max-new");
+  const maxNewItems = maxRaw === null ? undefined : Number(maxRaw);
+  if (maxNewItems !== undefined && (!Number.isInteger(maxNewItems) || maxNewItems < 0)) {
+    throw new OmniWatchError("invalid_input", `--max-new wymaga nieujemnej liczby calkowitej (otrzymano "${maxRaw}").`);
+  }
+  const language = stringFlag(parsed, "lang");
+  const mode = parsed.flags.get("teardown") === true ? "teardown" : undefined;
+  // `--source <url>` (repeatable) defines or extends the collection's source list.
+  const sourceUrls = listFlag(parsed, "source");
+  const sources = [];
+  for (const url of sourceUrls) {
+    sources.push(await wiring.deps.source.resolve({ url }));
+  }
+
+  const outcome = await runScan({
+    deps: wiring.deps,
+    request: {
+      collectionId,
+      trigger: stringFlag(parsed, "trigger") === "schedule" ? "schedule" : "cli",
+      settings: {
+        ...(mode ? { mode } : {}),
+        ...(stringFlag(parsed, "focus") !== null ? { focus: stringFlag(parsed, "focus") } : {}),
+        ...(stringFlag(parsed, "question") !== null ? { question: stringFlag(parsed, "question") } : {}),
+        ...(language ? { language } : {}),
+        ...(maxNewItems !== undefined ? { maxNewItems } : {}),
+      },
+      confirmPaidListing: parsed.flags.get("confirm-paid-listing") === true,
+      ...(sources.length > 0 ? { sources } : {}),
+    },
+    onProgress: (event) => {
+      if (json) io.stdout(`${JSON.stringify({ protocol: "omniwatch.runtime.v1", event: "scan-progress", progress: event })}\n`);
+    },
+  });
+
+  const payload = scanPayload(outcome);
+  print(
+    payload,
+    json,
+    `skan ${outcome.runId}: ${outcome.state}, nowe ${outcome.newItems}, oczekujace ${outcome.pendingItems}`,
   );
   return EXIT_CODES.ok;
 }
