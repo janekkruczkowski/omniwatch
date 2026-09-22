@@ -64,7 +64,12 @@
       "teardownPlaceholder": "What you are about to film (optional) — what transfers, what does not",
       "teardownSubmit": "Take it apart →",
       "teardownCard": "Teardown: how this video is made",
-      "badgeBeats": "SHOT BY SHOT"
+      "badgeBeats": "SHOT BY SHOT",
+      "errorTitle": "Could not analyse this video",
+      "retry": "Try again",
+      "errorGeneric": "The analysis stopped with an error.",
+      "errorConnection": "Connection to the analysis was interrupted.",
+      "errorConnectionAfterAnswer": "Connection interrupted before the answer finished; the partial text above is kept."
     }
   },
   "pl": {
@@ -132,7 +137,12 @@
       "teardownPlaceholder": "Co zamierzasz nagrać (opcjonalnie) — co się przeniesie, a co nie",
       "teardownSubmit": "Rozłóż na części →",
       "teardownCard": "Rozbiórka: jak zrobiony jest ten film",
-      "badgeBeats": "UJĘCIE PO UJĘCIU"
+      "badgeBeats": "UJĘCIE PO UJĘCIU",
+      "errorTitle": "Nie udalo sie przeanalizowac filmu",
+      "retry": "Sprobuj ponownie",
+      "errorGeneric": "Analiza zakonczyla sie bledem.",
+      "errorConnection": "Polaczenie z analiza zostalo przerwane.",
+      "errorConnectionAfterAnswer": "Polaczenie przerwane przed koncem odpowiedzi; czesciowy tekst powyzej zostaje zachowany."
     }
   },
   "de": {
@@ -200,7 +210,12 @@
       "teardownPlaceholder": "Dein Thema / deine Nische (optional) — für die Adaption",
       "teardownSubmit": "Zerlegen →",
       "teardownCard": "Analyse: wie dieses Video gemacht ist",
-      "badgeBeats": "EINSTELLUNG FÜR EINSTELLUNG"
+      "badgeBeats": "EINSTELLUNG FÜR EINSTELLUNG",
+      "errorTitle": "Video konnte nicht analysiert werden",
+      "retry": "Erneut versuchen",
+      "errorGeneric": "Die Analyse wurde mit einem Fehler beendet.",
+      "errorConnection": "Die Verbindung zur Analyse wurde unterbrochen.",
+      "errorConnectionAfterAnswer": "Verbindung vor dem Ende der Antwort unterbrochen; der bisherige Text bleibt erhalten."
     }
   },
   "es": {
@@ -268,7 +283,12 @@
       "teardownPlaceholder": "Tu tema / nicho (opcional) — para la adaptación",
       "teardownSubmit": "Desmontarlo →",
       "teardownCard": "Análisis: cómo está hecho este vídeo",
-      "badgeBeats": "PLANO A PLANO"
+      "badgeBeats": "PLANO A PLANO",
+      "errorTitle": "No se pudo analizar el video",
+      "retry": "Reintentar",
+      "errorGeneric": "El analisis termino con un error.",
+      "errorConnection": "Se interrumpio la conexion con el analisis.",
+      "errorConnectionAfterAnswer": "Conexion interrumpida antes de terminar la respuesta; se conserva el texto parcial."
     }
   },
   "fr": {
@@ -336,7 +356,12 @@
       "teardownPlaceholder": "Ton sujet / ta niche (optionnel) — pour l'adaptation",
       "teardownSubmit": "Décortiquer →",
       "teardownCard": "Décorticage : comment cette vidéo est faite",
-      "badgeBeats": "PLAN PAR PLAN"
+      "badgeBeats": "PLAN PAR PLAN",
+      "errorTitle": "Impossible d analyser cette video",
+      "retry": "Reessayer",
+      "errorGeneric": "L analyse s est arretee sur une erreur.",
+      "errorConnection": "La connexion a l analyse a ete interrompue.",
+      "errorConnectionAfterAnswer": "Connexion interrompue avant la fin de la reponse ; le texte partiel est conserve."
     }
   }
 }

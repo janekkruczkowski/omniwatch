@@ -313,6 +313,49 @@ function newCard(q) {
 }
 const pending = t => { const p = card.querySelector('.pending'); if (p) p.textContent = t; };
 
+/**
+ * Terminal error state. A failed run must not keep a title, spinner and progress
+ * looking active: the card is closed, the strip stops scanning, and the user gets a
+ * clear reason plus a retry. The previous port left "Pobieram film..." spinning.
+ */
+/**
+ * Close the active stream and reset the running controls.
+ *
+ * Defined at page scope, not inside `ask()`: `fail()` needs it, and a transport
+ * failure can arrive from the EventSource's own `onerror`, which is not nested in
+ * `ask()`'s closure. Keeping the teardown here is what makes the error path reliable
+ * instead of throwing "finish is not defined" while the spinner stays up.
+ */
+function stopRun() {
+  if (es) { es.close(); es = null; }
+  clearInterval(timerId);
+  $('#strip').classList.remove('scanning');
+  $('#go').disabled = $('#go2').disabled = false;
+}
+
+function fail(message) {
+  stopRun();
+  document.body.classList.remove('running'); document.body.classList.add('idle');
+  setStep('end');
+  $('#strip').classList.remove('scanning');
+  $('#parts').style.display = 'none';
+  $('#wcount').textContent = '';
+  $('#upinfo').textContent = '';
+  $('#title').textContent = T().errorTitle;
+  $('#sub').textContent = '';
+  if (card) {
+    const md = card.querySelector('.md');
+    if (md) {
+      md.innerHTML = `<div class="err" role="alert">⚠ ${esc(message)}</div>` +
+        `<div class="retry"><button type="button" id="retryBtn">${T().retry}</button></div>`;
+      const retry = md.querySelector('#retryBtn');
+      if (retry) retry.addEventListener('click', () => { card.classList.add('old'); ask(question); });
+    }
+  }
+  $('#url').focus();
+  $('#go').disabled = $('#go2').disabled = false;
+}
+
 function ask(q) {
   if (es) return;
   q = (q || '').trim(); question = q;
@@ -327,7 +370,7 @@ function ask(q) {
   const thread = `${conversationId ? `&conversation=${encodeURIComponent(conversationId)}` : ''}${parentTurnId ? `&parent=${encodeURIComponent(parentTurnId)}` : ''}`;
   es = new EventSource(`/api/watch?url=${encodeURIComponent(url)}&q=${encodeURIComponent(q)}&lang=${lang}&mode=${mode}${thread}`);
   const on = (ev, fn) => es.addEventListener(ev, e => fn(JSON.parse(e.data)));
-  const finish = () => { es.close(); es = null; clearInterval(timerId); $('#strip').classList.remove('scanning'); $('#go').disabled = $('#go2').disabled = false; };
+  const finish = () => stopRun();
   on('stage', d => {
     setStep(d.step);
     if (d.step === 'upload') pending(T().pendingUpload);
@@ -373,8 +416,12 @@ function ask(q) {
     card.insertAdjacentHTML('beforeend', `<div class="stats"><span>⏱ <b>${elapsed}s</b></span>${parts > 1 ? `<span>${T().statParts.replace('{n}', parts)}</span>` : ''}${cost}${reused ? `<span>${T().statReused}</span>` : ''}</div>`);
     $('#q2').focus();
   });
-  on('error', d => { finish(); card.querySelector('.md').innerHTML = `<div class="err">⚠ ${esc(d.message)}</div>`; });
-  es.onerror = () => { if (es) finish(); };  // never auto-reconnect: that would restart the whole job
+  on('error', d => fail(d && d.message ? d.message : T().errorGeneric));
+  es.onerror = () => {
+    // A transport failure before any answer is also terminal; never auto-reconnect,
+    // because reconnecting would restart the whole (possibly paid) job.
+    if (es) fail(lastAnswer ? T().errorConnectionAfterAnswer : T().errorConnection);
+  };
 }
 
 $('#f').addEventListener('submit', e => { e.preventDefault(); url = $('#url').value.trim(); if (url) ask($('#q').value); });

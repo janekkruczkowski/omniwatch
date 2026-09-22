@@ -122,6 +122,13 @@ export interface RuntimeConfigFile {
   /** Environment variable names; the config file never carries the secret itself. */
   apiKeyEnv?: string;
   apiBaseUrlEnv?: string;
+  /**
+   * Effective non-secret endpoint the shell already resolved (for example the
+   * documented provider default when the user configured only a key). The runtime
+   * prefers the environment variable when the user set one explicitly, then this
+   * value, so a deployment default cannot be lost between the shell and the worker.
+   */
+  apiBaseUrlDefault?: string | null;
   model?: ModelConfig;
   source?: SourceConfig;
 }
@@ -638,13 +645,21 @@ function configPort(
   const memoryRoot = file.memoryRoot ? resolve(file.memoryRoot) : join(dataDir, "knowledge");
   const apiKeyEnv = file.apiKeyEnv ?? "OMNIWATCH_API_KEY";
   const apiBaseUrlEnv = file.apiBaseUrlEnv ?? "OMNIWATCH_API_BASE";
+  const apiBaseUrlDefault =
+    typeof file.apiBaseUrlDefault === "string" && file.apiBaseUrlDefault.trim() !== ""
+      ? file.apiBaseUrlDefault
+      : null;
   return {
     dataDir,
     memoryRoot,
     language: file.language ?? "pl",
     modelName: file.modelName ?? "stub-model",
     apiKey: () => environment[apiKeyEnv] ?? null,
-    apiBaseUrl: () => environment[apiBaseUrlEnv] ?? null,
+    apiBaseUrl: () => {
+      const configured = environment[apiBaseUrlEnv];
+      if (typeof configured === "string" && configured.trim() !== "") return configured;
+      return apiBaseUrlDefault;
+    },
     maxFramesPerPart: () => numberOr(file.maxFramesPerPart, 8),
     cacheHours: () => numberOr(file.cacheHours, 48),
     configPath: configPath ?? undefined,

@@ -31,6 +31,8 @@
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
+
+import { readIntegrationFile } from "./shell-integration.mjs";
 import {
   copyFileSync,
   existsSync,
@@ -128,6 +130,7 @@ function parseArgs(argv) {
     rollback: false,
     backup: null,
     help: false,
+    skipIntegration: false,
   };
   const argvList = [...argv];
   for (let i = 0; i < argvList.length; i++) {
@@ -142,6 +145,11 @@ function parseArgs(argv) {
         options.target = next();
         break;
       case "--root":
+        options.root = resolve(next());
+        break;
+      // `--host` was used in an early QA instruction; accept it as a clear alias for
+      // `--root` instead of failing with "nieznany argument".
+      case "--host":
         options.root = resolve(next());
         break;
       case "--tarball":
@@ -173,6 +181,9 @@ function parseArgs(argv) {
         break;
       case "--skip-nav":
         options.skipNav = true;
+        break;
+      case "--skip-integration":
+        options.skipIntegration = true;
         break;
       case "--check":
       case "--dry-run":
@@ -470,6 +481,78 @@ function shellFiles(target, root) {
   return { required: [join(root, "app.py"), join(root, "omniwatch.py")], navRoot: null };
 }
 
+/**
+ * Plan the Agent OS shell integration (routes/UI/libs) declared by the manifest.
+ * Paths are relative to the Agent OS ROOT and start with `source/`. A file that the
+ * host already had and the installer does not own is a CONFLICT, never an overwrite:
+ * the film project's own modules must survive (SPEC: analysis release must not
+ * replace production code).
+ */
+function planIntegration(options, manifest, previous, conflicts, warnings) {
+  const integration = manifest.shellIntegration;
+  if (!integration || options.target !== "agent-os") return [];
+  const files = integration.files ?? [];
+  if (files.length === 0) {
+    warnings.push(
+      "manifest nie zawiera plikow integracji Agent OS - panel pozostanie niezmieniony; " +
+        "przebuduj wydanie z katalogiem agent-os-module",
+    );
+    return [];
+  }
+  const moduleRoot = join(REPO_ROOT, "agent-os-module");
+  const managedBefore = previous?.integrationFiles ?? {};
+  const protectedHost = new Set(integration.protectedHostFiles ?? []);
+  const planned = [];
+  for (const file of files) {
+    const absolute = join(options.root, ...file.path.split("/"));
+    const rel = relative(options.root, absolute);
+    const plannedItem = {
+      absolute,
+      rel,
+      kind: "integration",
+      entry: { path: file.path, data: readIntegrationFile(moduleRoot, file.path), mode: file.mode },
+      sha256After: file.sha256,
+    };
+    if (!existsSync(absolute)) {
+      planned.push(plannedItem);
+      continue;
+    }
+    const current = sha256File(absolute);
+    const ownedBefore = managedBefore[rel] ?? null;
+    if (protectedHost.has(rel.replace(/^source\//, ""))) {
+      // Film-production modules are never touched, whatever the manifest says.
+      conflicts.push({
+        path: rel,
+        reason: "plik nalezy do projektu produkcji filmow - instalator analizy go nie dotyka",
+      });
+      continue;
+    }
+    if (ownedBefore === null) {
+      // FIRST install into a host that already ships OmniWatch (the released beta
+      // layout). These are the very files this release supersedes, so adopting them
+      // is the documented upgrade path - they are backed up and the ownership is
+      // recorded, and from now on an unowned edit is a conflict again.
+      if (current === file.sha256) {
+        // Byte-identical to the release; adopt without touching it.
+        planned.push({ ...plannedItem, unchanged: true, adopt: true });
+        continue;
+      }
+      planned.push({ ...plannedItem, adopt: true });
+      continue;
+    }
+    if (ownedBefore !== current) {
+      conflicts.push({
+        path: rel,
+        reason: "plik integracji zmieniony poza instalatorem od ostatniej instalacji OmniWatch",
+      });
+      continue;
+    }
+    planned.push(plannedItem);
+  }
+  return planned;
+}
+
+
 function verifyShell(target, root) {
   if (!existsSync(root) || !statSync(root).isDirectory()) {
     throw new InstallError(`katalog docelowy nie istnieje lub nie jest katalogiem: ${root}`);
@@ -753,7 +836,18 @@ function planNav(options, previous, conflicts, warnings) {
 
 function planInstall(options, layout, manifest, entries, previous) {
   const version = manifest.library.version;
-  const releaseDir = join(layout.releasesDir, version);
+  /**
+   * The release directory is keyed on the ARTIFACT HASH, not just the version.
+   *
+   * A rebuilt artifact that still carries version 0.2.0 (the normal case while a
+   * revision is under QA) must not collide with the previously unpacked release.
+   * Keying on the hash gives each artifact its own directory, so nothing is ever
+   * overwritten or deleted and the user-edit conflict rule stays strict: an edit
+   * inside an existing release directory is still a conflict, because that exact
+   * hash directory is only ever written by the install that created it.
+   */
+  const artifactTag = (manifest.artifact?.sha256 ?? "").slice(0, 12);
+  const releaseDir = join(layout.releasesDir, artifactTag ? `${version}-${artifactTag}` : version);
   const planned = [];
   const conflicts = [];
   const warnings = [];
@@ -774,19 +868,9 @@ function planInstall(options, layout, manifest, entries, previous) {
     planned.push(item);
   }
   if (releaseDirExists) {
-    const releaseItems = planned.filter((item) => item.kind === "release");
-    for (const item of releaseItems) {
-      if (!item.unchanged) {
-        conflicts.push({
-          path: item.rel,
-          reason:
-            "katalog wydania juz istnieje i rozni sie od tej paczki (ten sam numer wersji, inna zawartosc)",
-        });
-      }
-    }
-    if (!conflicts.length) {
-      warnings.push(`wydanie ${version} jest juz rozpakowane z identyczna zawartoscia`);
-    }
+    warnings.push(
+      `wydanie ${version} (${artifactTag}) jest juz rozpakowane; instalator nie nadpisuje tego katalogu`,
+    );
   }
 
   // Files this installer owned and the user has since changed are reported, never
@@ -830,7 +914,19 @@ function planInstall(options, layout, manifest, entries, previous) {
       conflicts.push({ path: entry.path, reason: `kotwica: ${entry.error}` });
     }
   }
-  return { releaseDir, planned, nav, conflicts, warnings, version };
+
+  // The Agent OS shell integration: routes, UI and libs that make /omniwatch use the
+  // shared engine. Refused for a file the host already has (never overwrite film code).
+  const integration = options.skipIntegration
+    ? []
+    : planIntegration(options, manifest, previous, conflicts, warnings);
+  if (options.target === "agent-os" && !options.skipIntegration && integration.length === 0) {
+    warnings.push(
+      "brak plikow integracji do instalacji - panel Agent OS nie zostanie zaktualizowany",
+    );
+  }
+
+  return { releaseDir, planned, nav, integration, conflicts, warnings, version };
 }
 
 /* ----------------------------------------------------------------- apply ---- */
@@ -852,6 +948,9 @@ function snapshotBackup(options, layout, plan, previous, backupId) {
     record(item.rel, item.absolute);
   }
   for (const file of plan.nav) record(file.rel, file.absolute);
+  for (const item of plan.integration ?? []) {
+    if (existsSync(item.absolute)) record(item.rel, item.absolute);
+  }
   if (previous && existsSync(layout.manifestFile)) {
     record(relative(options.root, layout.manifestFile), layout.manifestFile);
   }
@@ -862,6 +961,9 @@ function snapshotBackup(options, layout, plan, previous, backupId) {
     .map((item) => item.rel);
   for (const file of plan.nav) {
     if (!existsSync(file.absolute)) absent.push(file.rel);
+  }
+  for (const item of plan.integration ?? []) {
+    if (!existsSync(item.absolute)) absent.push(item.rel);
   }
   const releaseCreated = existsSync(plan.releaseDir) ? null : relative(options.root, plan.releaseDir);
   mkdirSync(dir, { recursive: true });
@@ -942,6 +1044,17 @@ function applyInstall(options, layout, manifest, plan, previous, tools) {
   }
   crashPoint("after-release");
 
+  // Agent OS shell integration: write the new routes/UI/libs. Ownership was planned
+  // above, so a host file we do not own is a conflict and never reaches this point.
+  let integrationWritten = 0;
+  for (const item of plan.integration ?? []) {
+    mkdirSync(dirname(item.absolute), { recursive: true });
+    writeFileSync(item.absolute, item.entry.data, { mode: item.entry.mode || 0o644 });
+    integrationWritten += 1;
+  }
+  if (integrationWritten > 0) log(`· zainstalowano integracje Agent OS (${integrationWritten} plikow)`);
+  crashPoint("after-integration");
+
   // Navigation is the only host-owned file this installer edits.
   const navResults = [];
   if (plan.nav.length) {
@@ -981,6 +1094,10 @@ function applyInstall(options, layout, manifest, plan, previous, tools) {
   for (const file of plan.nav) {
     if (existsSync(file.absolute)) navHashes[file.rel] = sha256File(file.absolute);
   }
+  const integrationHashes = {};
+  for (const item of plan.integration ?? []) {
+    if (existsSync(item.absolute)) integrationHashes[item.rel] = sha256File(item.absolute);
+  }
   const managedFiles = {};
   for (const item of plan.planned) {
     if ((item.kind === "release" || item.kind === "current") && existsSync(item.absolute)) {
@@ -1002,6 +1119,12 @@ function applyInstall(options, layout, manifest, plan, previous, tools) {
     tools: tools.required,
     managedFiles,
     navFiles: navHashes,
+    /**
+     * Files this installer placed inside the host shell. They are the only host
+     * files a later install may replace without asking; anything else stays the
+     * host's own code.
+     */
+    integrationFiles: integrationHashes,
     navSkip: options.skipNav,
     inFlight: options.inFlight ?? null,
   };

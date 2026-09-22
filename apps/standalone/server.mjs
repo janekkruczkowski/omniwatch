@@ -26,6 +26,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { createOpenAiModelPort } from "../../packages/omniwatch/src/analysis/index.ts";
 import { OmniWatchError } from "../../packages/omniwatch/src/contracts/errors.ts";
+import { uploadPolicyUrl } from "../../packages/omniwatch/src/contracts/endpoints.ts";
 import { ANALYSIS_VERSION } from "../../packages/omniwatch/src/contracts/types.ts";
 import { createRuntimeWiring } from "../../packages/omniwatch/src/runtime/poc.ts";
 import { enqueueAnalysis } from "../../packages/omniwatch/src/runtime/queue.ts";
@@ -331,11 +332,13 @@ export function createStandaloneMediaTool(options) {
       if (verdict.valid && typeof known[name]?.url === "string") {
         return { url: known[name].url, reused: true };
       }
-      const apiBase = (config.apiBaseUrl() ?? "").replace(/\/+$/, "");
       const key = config.apiKey();
       if (!key) throw new Error("Brak klucza modelu do uploadu materialu.");
+      // The upload API lives on the DashScope HOST (`/api/v1/uploads`), not under
+      // `compatible-mode/v1` - that prefix belongs to the chat endpoint only.
+      const policyEndpoint = uploadPolicyUrl(config.apiBaseUrl(), config.modelName);
       const policyResponse = await fetch(
-        `${apiBase}/api/v1/uploads?action=getPolicy&model=${encodeURIComponent(config.modelName)}`,
+        policyEndpoint,
         { headers: { Authorization: `Bearer ${key}` } },
       );
       if (!policyResponse.ok) throw new Error(`Upload policy HTTP ${policyResponse.status}`);
@@ -545,6 +548,104 @@ export function resolveMediaPath(context, vid, name) {
   return null;
 }
 
+/** Where a frame for a freshly downloaded video should be written. */
+export function frameTargetPath(context, vid, sec) {
+  const safe = assertSafeLegacyId(vid);
+  const fresh = path.join(context.config.cacheDir, safe);
+  if (existsSync(path.join(fresh, "source.mp4"))) {
+    return { dir: fresh, file: path.join(fresh, "frames", `${sec}.jpg`) };
+  }
+  for (const dir of legacyCacheDirsFor(context.config.appRoot, safe)) {
+    if (existsSync(path.join(dir, "source.mp4"))) {
+      return { dir, file: path.join(dir, "frames", `${sec}.jpg`) };
+    }
+  }
+  return null;
+}
+
+/**
+ * Generate one frame with ffmpeg, exactly like the released beta did
+ * (`-ss <sec> -i source.mp4 -frames:v 1 -vf scale=480:-2 -q:v 4`).
+ *
+ * The port originally only SERVED an existing frame file, so a freshly downloaded
+ * video produced 404s for all 16 strip thumbnails - QA saw `naturalWidth === 0`.
+ * Generation is on demand, deterministic and idempotent: the second request serves
+ * the file that the first one wrote.
+ */
+export async function ensureFrameFile(context, vid, sec, options = {}) {
+  const existing = resolveMediaPath(context, vid, path.join("frames", `${sec}.jpg`));
+  if (existing) return { file: existing, generated: false };
+
+  const target = frameTargetPath(context, vid, sec);
+  if (!target) return null;
+  const source = resolveMediaPath(context, vid, "source.mp4");
+  if (!source) return null;
+
+  mkdirSync(path.dirname(target.file), { recursive: true });
+  const ffmpegBin = options.ffmpegPath ?? process.env.OMNIWATCH_FFMPEG ?? "ffmpeg";
+  /**
+   * Seeking past the end of the file makes ffmpeg fail to open an encoder. The strip
+   * requests whole seconds up to the reported duration, so a seek can legitimately
+   * land beyond the last frame (rounding, slightly shorter real stream). Clamp the
+   * seek inside the file instead of 500-ing the thumbnail.
+   */
+  const duration = await probeDurationSeconds(source, options.ffmpegPath);
+  const target_sec = duration && Number.isFinite(duration) ? Math.max(0, Math.min(sec, Math.max(0, duration - 0.5))) : sec;
+  const args = [
+    "-y",
+    "-loglevel",
+    "error",
+    "-ss",
+    String(target_sec),
+    "-i",
+    source,
+    "-frames:v",
+    "1",
+    // Keep an even width for the encoder; `-2` keeps the aspect ratio.
+    "-vf",
+    "scale=480:-2",
+    "-q:v",
+    "4",
+    "-f",
+    "image2",
+    target.file,
+  ];
+  const result = await new Promise((resolve) => {
+    const child = spawn(ffmpegBin, args, { stdio: ["ignore", "ignore", "pipe"] });
+    let stderr = "";
+    child.stderr?.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.once("error", (error) => resolve({ ok: false, message: String(error.message) }));
+    child.once("exit", (code) => resolve({ ok: code === 0, message: code === 0 ? "" : stderr.trim() }));
+  });
+  if (!result.ok || !existsSync(target.file)) {
+    return { file: null, generated: false, error: result.message || "ffmpeg nie utworzyl klatki" };
+  }
+  return { file: target.file, generated: true };
+}
+
+/** Duration in seconds via ffprobe; null when it cannot be determined. */
+async function probeDurationSeconds(source, ffprobePath) {
+  const bin = ffprobePath ?? process.env.OMNIWATCH_FFPROBE ?? "ffprobe";
+  return new Promise((resolve) => {
+    const child = spawn(
+      bin,
+      ["-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", source],
+      { stdio: ["ignore", "pipe", "ignore"] },
+    );
+    let out = "";
+    child.stdout?.on("data", (chunk) => {
+      out += chunk.toString();
+    });
+    child.once("error", () => resolve(null));
+    child.once("exit", (code) => {
+      const value = Number.parseFloat(out.trim());
+      resolve(code === 0 && Number.isFinite(value) ? value : null);
+    });
+  });
+}
+
 async function serveFile(req, res, file, contentType) {
   const size = statSync(file).size;
   const range = parseRange(req.headers.range, size);
@@ -674,12 +775,21 @@ export async function handleRequest(req, res, context) {
     if (frame) {
       const vid = decodeURIComponent(frame[1]);
       const sec = Number(frame[2]);
-      const existing = resolveMediaPath(context, vid, path.join("frames", `${sec}.jpg`));
-      if (existing) {
-        await serveFile(req, res, existing, "image/jpeg");
+      // Serve an existing frame; otherwise generate it from the downloaded video the
+      // way the released beta did. A missing video is still an honest 404.
+      const produced = await ensureFrameFile(context, vid, sec, { ffmpegPath: context.ffmpegPath });
+      if (produced?.file) {
+        await serveFile(req, res, produced.file, "image/jpeg");
         return;
       }
-      sendJson(res, 404, { error: "not_found", message: `Brak klatki ${sec}s dla ${vid}.` });
+      if (produced?.error) {
+        sendJson(res, 500, {
+          error: "source_unavailable",
+          message: `Nie udalo sie utworzyc klatki ${sec}s dla ${vid}: ${produced.error}`,
+        });
+        return;
+      }
+      sendJson(res, 404, { error: "not_found", message: `Brak materialu dla klatki ${sec}s (${vid}).` });
       return;
     }
   }
@@ -731,7 +841,9 @@ export function createStandaloneServer(options = {}) {
     const wiring = createRuntimeWiring({
       dataDir: config.dataDir,
       config: runtimeConfigDocument(config),
-      environment: env,
+      // Secrets stay in this process: `.env` values are merged under the real
+      // process environment so a key configured the beta way is still found.
+      environment: config.effectiveEnv ?? env,
       source,
       ...(options.model ? { model: options.model } : {}),
       ...(options.clock ? { clock: options.clock } : {}),

@@ -30,6 +30,12 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { gunzipSync } from "node:zlib";
 
+import {
+  AGENT_OS_PROTECTED_FILES,
+  EXCLUDED_FILM_ROUTES,
+  collectAgentOsIntegration,
+} from "./shell-integration.mjs";
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, "..", "..");
 const CORE = join(ROOT, "packages", "omniwatch");
@@ -296,6 +302,21 @@ async function main() {
         `package.json deklaruje ${entry.path}, ale tego pliku nie ma w zbudowanym pakiecie ` +
         "(brak zrodla wejsciowego w packages/omniwatch/src) - konsument nie moze zaimportowac korzenia pakietu",
     );
+
+  // The Agent OS shell integration travels with the release: the shared library is
+  // useless to the panel if its new routes/UI/libs are not installed. QA found the
+  // panel still starting at teardown because only the core was shipped.
+  const moduleRoot = join(ROOT, "agent-os-module");
+  const integrationEntries = existsSync(moduleRoot)
+    ? collectAgentOsIntegration(moduleRoot)
+    : { entries: [], missing: ["agent-os-module (brak katalogu)"] };
+  if (integrationEntries.missing.length) {
+    warnings.push(
+      `integracja Agent OS niekompletna - brak ${integrationEntries.missing.join(", ")}; ` +
+        "instalator nie zainstaluje panelu i zglosi to jako blad preflight",
+    );
+  }
+
   const manifest = {
     schema: 1,
     generatedAt: new Date().toISOString(),
@@ -335,6 +356,18 @@ async function main() {
     files,
     fileCount: files.length,
     totalBytes: files.reduce((sum, file) => sum + file.bytes, 0),
+    /**
+     * Files the installer places INSIDE the Agent OS shell (paths relative to the
+     * Agent OS root, i.e. starting with `source/`). Content is not embedded: the
+     * installer reads the bytes from the checkout/module tree next to the manifest.
+     */
+    shellIntegration: {
+      target: "agent-os",
+      rootPrefix: "source",
+      files: integrationEntries.entries,
+      protectedHostFiles: AGENT_OS_PROTECTED_FILES,
+      excludedFilmRoutes: EXCLUDED_FILM_ROUTES,
+    },
     warnings,
   };
   const manifestPath = join(

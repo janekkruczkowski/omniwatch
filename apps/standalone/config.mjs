@@ -129,6 +129,14 @@ export function loadStandaloneConfig(options = {}) {
     appRoot,
     envFile: file.path,
     envFileExists: file.exists,
+    /**
+     * The effective environment the RUNTIME must resolve secrets from: process
+     * environment first (the beta's precedence), then the `.env` next to the
+     * scripts. Passing only `process.env` lost a key that lived in `.env` and made
+     * the runtime report a missing key for a correctly configured installation.
+     * Never serialised to the runtime config FILE: that file carries names only.
+     */
+    effectiveEnv: { ...fileValues, ...env },
     apiKey,
     apiKeyPresent: typeof apiKey === "string" && apiKey.trim() !== "",
     apiBase,
@@ -185,6 +193,13 @@ export function runtimeConfigDocument(config) {
     cacheHours: config.cacheHours,
     apiKeyEnv: API_KEY_ENV,
     apiBaseUrlEnv: API_BASE_ENV,
+    /**
+     * The endpoint the user effectively has: an explicit env/file value, or the
+     * documented provider default. Without this the runtime only saw a variable
+     * NAME and failed with "Brak adresu API modelu analizy" when the user set just
+     * the key - the released beta used DEFAULT_API_BASE in exactly that case.
+     */
+    apiBaseUrlDefault: config.apiBase,
     model: { kind: "openai", timeoutMs: 600000, idleTimeoutMs: 120000 },
   };
 }

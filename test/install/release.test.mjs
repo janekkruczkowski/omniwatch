@@ -313,13 +313,23 @@ test("T16: build emits one tarball with a manifest and no secrets", () => {
   }
 });
 
+/**
+ * The release directory is keyed on the artifact hash, so tests must read the
+ * installed path from the install manifest instead of assuming the version alone.
+ */
+function installedReleaseDir(root, installSubdir = "omniwatch") {
+  const manifest = JSON.parse(readFileSync(join(root, installSubdir, "install-manifest.json"), "utf8"));
+  // `release` is recorded relative to the install root, so strip the subdir prefix.
+  return join(root, installSubdir, manifest.release.replace(new RegExp(`^${installSubdir}/`), ""));
+}
+
 test("T16: the same tarball installs into a fresh Agent OS copy and a fresh standalone copy", async () => {
   const agentOs = makeAgentOsHost();
   const agentResult = runInstaller(["--target", "agent-os", "--root", agentOs]);
   assert.equal(agentResult.status, 0, agentResult.stderr);
   assert.equal(agentResult.json.sha256, release.manifest.artifact.sha256, "same artifact in both shells");
   assert.equal(agentResult.json.contracts.analysisVersion, release.manifest.contracts.analysisVersion);
-  const installedRelease = join(agentOs, "omniwatch", "releases", release.manifest.library.version);
+  const installedRelease = installedReleaseDir(agentOs);
   assert.ok(existsSync(join(installedRelease, "dist", "contracts", "index.js")));
   const installedContracts = await import(
     `${pathToFileURL(join(installedRelease, "dist", "contracts", "index.js")).href}?v=${Date.now()}`
@@ -339,18 +349,7 @@ test("T16: the same tarball installs into a fresh Agent OS copy and a fresh stan
   assert.equal(standaloneResult.status, 0, standaloneResult.stderr);
   assert.equal(standaloneResult.json.sha256, release.manifest.artifact.sha256, "same artifact in both shells");
   assert.ok(
-    existsSync(
-      join(
-        standalone,
-        "vendor",
-        "omniwatch",
-        "releases",
-        release.manifest.library.version,
-        "dist",
-        "contracts",
-        "index.js",
-      ),
-    ),
+    existsSync(join(installedReleaseDir(standalone, "vendor/omniwatch"), "dist", "contracts", "index.js")),
   );
   assert.deepEqual(standaloneResult.json.navFiles, [], "standalone has no Agent OS navigation to register");
 });
@@ -411,15 +410,7 @@ test("T16: a host file the user modified is a conflict and is not overwritten", 
   assert.equal(first.status, 0, first.stderr);
   const currentBefore = readFileSync(join(agentOs, "omniwatch", "current"));
   const sidebarPath = join(agentOs, "source", "src", "components", "Sidebar.tsx");
-  const managedPath = join(
-    agentOs,
-    "omniwatch",
-    "releases",
-    release.manifest.library.version,
-    "dist",
-    "contracts",
-    "index.js",
-  );
+  const managedPath = join(installedReleaseDir(agentOs), "dist", "contracts", "index.js");
   const managedBefore = readFileSync(managedPath);
   assert.ok(managedBefore.length > 0);
 
@@ -448,13 +439,7 @@ test("T16: an interrupted install leaves the previous release usable", () => {
   const first = runInstaller(["--target", "agent-os", "--root", agentOs]);
   assert.equal(first.status, 0, first.stderr);
   const currentBefore = readFileSync(join(agentOs, "omniwatch", "current"));
-  const markerPath = join(
-    agentOs,
-    "omniwatch",
-    "releases",
-    release.manifest.library.version,
-    "package.json",
-  );
+  const markerPath = join(installedReleaseDir(agentOs), "package.json");
   const markerBefore = sha256File(markerPath);
 
   const interrupted = runInstaller(["--target", "agent-os", "--root", agentOs], {

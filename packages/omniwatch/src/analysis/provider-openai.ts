@@ -18,6 +18,7 @@
  */
 
 import { OmniWatchError } from "../contracts/errors.ts";
+import { chatCompletionsUrl } from "../contracts/endpoints.ts";
 import type {
   AttemptSink,
   ConfigPort,
@@ -72,12 +73,7 @@ function missingConfig(message: string, actionLabel: string): OmniWatchError {
 }
 
 /** Accept `/v1`, `/compatible-mode/v1`, a bare host, or a full endpoint. */
-export function chatCompletionsUrl(base: string): string {
-  const trimmed = base.trim().replace(/\/+$/, "");
-  if (/\/chat\/completions$/.test(trimmed)) return trimmed;
-  if (/\/(?:compatible-mode\/)?v1$/.test(trimmed)) return `${trimmed}/chat/completions`;
-  return `${trimmed}/v1/chat/completions`;
-}
+export { chatCompletionsUrl };
 
 function errorCodeOf(error: unknown): string {
   const cause = (error as { cause?: { code?: string } } | undefined)?.cause;
