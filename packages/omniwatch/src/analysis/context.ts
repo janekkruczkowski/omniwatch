@@ -92,6 +92,13 @@ export function buildConversationContext(input: BuildContextInput): Conversation
   const sameConversation = input.turns.filter((turn) => turn.conversationId === input.conversationId);
   const byId = new Map(sameConversation.map((turn) => [turn.turnId, turn]));
   const question = (input.question ?? "").trim();
+  /**
+   * A plain summary/teardown request is NOT a continuation: it must not pick up
+   * whatever answer happened to be written last, otherwise repeating the same URL
+   * would compute a new analysisKey and pay for the same work again (SPEC A6).
+   * History is only used when the user asks a question or points at a parent turn.
+   */
+  const isContinuation = question !== "" || Boolean(input.parentTurnId);
 
   const required: ConversationTurn[] = [];
   if (input.parentTurnId) {
@@ -113,7 +120,7 @@ export function buildConversationContext(input: BuildContextInput): Conversation
       cursor = turn.parentTurnId;
     }
     required.reverse(); // oldest first
-  } else {
+  } else if (question !== "") {
     // No explicit parent: a continuing question still refers to the newest answer, so
     // that answer is required. Nothing is guessed from the question text.
     const assistants = sameConversation.filter((turn) => turn.role === "assistant").sort(byCreatedAt);
@@ -132,7 +139,7 @@ export function buildConversationContext(input: BuildContextInput): Conversation
   // With an explicit parent, only the ancestor chain is context: a sibling branch that
   // answered off the same parent is a different thread of the conversation and must not
   // leak into this answer. Without a parent, older turns are optional history.
-  const others = input.parentTurnId
+  const others = input.parentTurnId || !isContinuation
     ? []
     : sameConversation
       .filter((turn) => !requiredIds.has(turn.turnId))
