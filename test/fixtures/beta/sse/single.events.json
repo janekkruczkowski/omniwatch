@@ -1,0 +1,89 @@
+[
+  {
+    "event": "stage",
+    "data": {
+      "step": "download"
+    }
+  },
+  {
+    "event": "meta",
+    "data": {
+      "id": "SYNTHETIC01",
+      "title": "Fixture A — ekran",
+      "channel": "Fixture Channel",
+      "duration": "0:16",
+      "seconds": 16,
+      "strip": [
+        0,
+        2,
+        2,
+        4,
+        4,
+        6,
+        6,
+        8,
+        8,
+        10,
+        10,
+        12,
+        12,
+        14,
+        14,
+        16
+      ]
+    }
+  },
+  {
+    "event": "stage",
+    "data": {
+      "step": "upload"
+    }
+  },
+  {
+    "event": "parts",
+    "data": {
+      "n": 1,
+      "starts": [
+        0
+      ]
+    }
+  },
+  {
+    "event": "uploaded",
+    "data": {
+      "reused": true
+    }
+  },
+  {
+    "event": "stage",
+    "data": {
+      "step": "watch",
+      "parts": 1,
+      "fps": 10
+    }
+  },
+  {
+    "event": "stage",
+    "data": {
+      "step": "answer"
+    }
+  },
+  {
+    "event": "answer.text",
+    "data": {
+      "text": "Synthetic result: the screen shows 7."
+    }
+  },
+  {
+    "event": "done",
+    "data": {
+      "text": "Synthetic result: the screen shows 7.",
+      "usage": {
+        "in": 1000,
+        "out": 200,
+        "parts": 1,
+        "reused": true
+      }
+    }
+  }
+]

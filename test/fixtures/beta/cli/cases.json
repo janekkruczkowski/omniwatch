@@ -1,0 +1,72 @@
+[
+  {
+    "argv": [
+      "https://youtu.be/SYNTHETIC01"
+    ],
+    "expected": {
+      "mode": "summary",
+      "language": "from-config",
+      "exitCode": 0
+    }
+  },
+  {
+    "argv": [
+      "https://youtu.be/SYNTHETIC01",
+      "-q",
+      "Co pokazuje ekran?"
+    ],
+    "expected": {
+      "mode": "summary",
+      "question": "Co pokazuje ekran?",
+      "exitCode": 0
+    }
+  },
+  {
+    "argv": [
+      "https://youtu.be/SYNTHETIC01",
+      "--lang",
+      "en"
+    ],
+    "expected": {
+      "language": "en",
+      "exitCode": 0
+    }
+  },
+  {
+    "argv": [
+      "https://youtu.be/SYNTHETIC01",
+      "--teardown"
+    ],
+    "expected": {
+      "mode": "teardown",
+      "exitCode": 0
+    }
+  },
+  {
+    "argv": [
+      "https://youtu.be/SYNTHETIC01",
+      "-q",
+      "Zażółć gęślą jaźń"
+    ],
+    "expected": {
+      "questionPreservedUtf8": true,
+      "exitCode": 0
+    }
+  },
+  {
+    "argv": [],
+    "expected": {
+      "exitCode": 2,
+      "errorClass": "invalid_input"
+    }
+  },
+  {
+    "argv": [
+      "http://127.0.0.1:9999/x"
+    ],
+    "expected": {
+      "exitCode": 2,
+      "errorClass": "invalid_input"
+    }
+  }
+]

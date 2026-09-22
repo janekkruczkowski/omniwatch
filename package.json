@@ -13,7 +13,8 @@
   "scripts": {
     "build": "node scripts/release/build-core.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --test --test-concurrency=1 packages/omniwatch/test/ apps/standalone/test/",
+    "test": "node scripts/test-all.mjs",
+    "test:core": "node --test packages/omniwatch/test/*.test.mjs",
     "test:contract": "node --test packages/omniwatch/test/contract-smoke.test.mjs",
     "test:integration": "node --test test/integration/",
     "test:e2e": "node --test test/e2e/",

@@ -1,0 +1,7 @@
+{
+  "modelCallsDuringMigration": 0,
+  "downloadsDuringMigration": 0,
+  "summarisedFilesModified": 0,
+  "legacyIdsRewritten": 0,
+  "note": "Migration reads configuration and old results; it never pays for analysis."
+}

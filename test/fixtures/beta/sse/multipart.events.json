@@ -1,0 +1,44 @@
+[
+  {
+    "event": "stage",
+    "data": {
+      "step": "download"
+    }
+  },
+  {
+    "event": "parts",
+    "data": {
+      "n": 2,
+      "starts": [
+        0,
+        1200
+      ]
+    }
+  },
+  {
+    "event": "uploaded",
+    "data": {
+      "reused": false
+    }
+  },
+  {
+    "event": "stage",
+    "data": {
+      "step": "watch",
+      "parts": 2,
+      "fps": 10
+    }
+  },
+  {
+    "event": "done",
+    "data": {
+      "text": "Two parts merged.",
+      "usage": {
+        "in": 2400,
+        "out": 400,
+        "parts": 2,
+        "reused": false
+      }
+    }
+  }
+]

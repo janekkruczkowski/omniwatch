@@ -1,0 +1,15 @@
+[
+  {
+    "event": "stage",
+    "data": {
+      "step": "download"
+    }
+  },
+  {
+    "event": "error",
+    "data": {
+      "error": "missing_config",
+      "message": "Brak klucza modelu."
+    }
+  }
+]

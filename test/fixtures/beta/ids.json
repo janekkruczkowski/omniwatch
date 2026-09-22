@@ -1,0 +1,24 @@
+{
+  "youtube": [
+    "https://www.youtube.com/watch?v=SYNTHETIC01",
+    "https://youtube.com/shorts/SYNTHETIC01",
+    "https://www.youtube.com/live/SYNTHETIC01",
+    "https://www.youtube.com/embed/SYNTHETIC01",
+    "https://youtu.be/SYNTHETIC01"
+  ],
+  "nonYoutube": [
+    {
+      "url": "https://example.test/video/alpha",
+      "expectedLegacyId": "ade4dd11a0580e69"
+    },
+    {
+      "url": "https://example.test/video/alpha?x=1",
+      "expectedLegacyId": "ade4dd11a0580e69"
+    },
+    {
+      "url": "https://example.test/video/alpha#clip",
+      "expectedLegacyId": "ade4dd11a0580e69"
+    }
+  ],
+  "note": "YouTube -> SYNTHETIC01; canonicalized non-YouTube -> SHA-1 first 16."
+}

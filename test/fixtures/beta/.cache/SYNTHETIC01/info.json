@@ -1,0 +1,8 @@
+{
+  "id": "SYNTHETIC01",
+  "title": "Fixture A — ekran",
+  "channel": "Fixture Channel",
+  "uploader": "Fallback A",
+  "duration": 16,
+  "extractor_key": "Youtube"
+}
