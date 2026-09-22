@@ -1,0 +1,44 @@
+{
+  "protocol": "omniwatch.eval.v1",
+  "generatedAt": "2026-09-22T18:00:06.891Z",
+  "mode": "offline",
+  "apiKeyPresent": false,
+  "node": "v22.22.3",
+  "results": [
+    {
+      "case": "E05.search",
+      "status": "PASS",
+      "detail": "2 hits"
+    },
+    {
+      "case": "E05.absence",
+      "status": "PASS",
+      "detail": "nie znalazłem tego w analizach"
+    },
+    {
+      "case": "E05.references",
+      "status": "PASS",
+      "detail": "2 refs"
+    },
+    {
+      "case": "E01",
+      "status": "NOT_EXECUTED",
+      "detail": "live model quality check requires --live and an API key; no result is invented"
+    },
+    {
+      "case": "E02",
+      "status": "NOT_EXECUTED",
+      "detail": "live model quality check requires --live and an API key; no result is invented"
+    },
+    {
+      "case": "E03",
+      "status": "NOT_EXECUTED",
+      "detail": "live model quality check requires --live and an API key; no result is invented"
+    },
+    {
+      "case": "E04",
+      "status": "NOT_EXECUTED",
+      "detail": "live model quality check requires --live and an API key; no result is invented"
+    }
+  ]
+}
