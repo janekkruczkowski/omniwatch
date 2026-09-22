@@ -1,0 +1,28 @@
+{
+  "name": "omniwatch",
+  "private": true,
+  "version": "0.2.0",
+  "type": "module",
+  "description": "OmniWatch: shared video-analysis core, Agent OS integration and standalone runtime",
+  "workspaces": [
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=22.22.3"
+  },
+  "scripts": {
+    "build": "node scripts/release/build-core.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test --test-concurrency=1 packages/omniwatch/test/ apps/standalone/test/",
+    "test:contract": "node --test packages/omniwatch/test/contract-smoke.test.mjs",
+    "test:integration": "node --test test/integration/",
+    "test:e2e": "node --test test/e2e/",
+    "test:install": "node --test test/install/",
+    "eval:omniwatch": "node test/eval/omniwatch/run-evals.mjs",
+    "poc": "node scripts/poc/demo.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.4",
+    "typescript": "^5.9.2"
+  }
+}
