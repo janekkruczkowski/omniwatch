@@ -22,6 +22,17 @@ interface Video {
 interface Listing {
   platform: string; handle: string; account: string; fans: number;
   scanned: number; videos: Video[]; note?: string;
+  /** honest scope, straight from the source adapter (D8) */
+  scope?: "full" | "limited" | "none";
+  scopeNote?: string | null;
+  listingCost?: "free" | "paid" | "unknown";
+  /** true when a billed listing needs an explicit start before any lister call */
+  needsConfirmation?: boolean;
+  batchSize?: number;
+  hasMore?: boolean;
+  nextCursor?: string | null;
+  completeness?: string | null;
+  unpriced?: number;
 }
 interface Result {
   url: string; title: string; duration?: number; text: string; cost?: number; error?: string;
@@ -36,6 +47,20 @@ interface Poll {
 interface ScanSummary {
   id: string; at: string; account: string; videos: number; failed: number;
   cost: number; topic?: string;
+}
+
+/** One metadata row of a durable run — never the analysis text (D11). */
+interface RunItemView {
+  ordinal: number; url: string; sourceId: string; platform: string;
+  title: string | null; state: string; operationId: string;
+}
+interface RunView {
+  runId: string; collectionId: string; state: string; trigger: string;
+  total: number; offset: number; limit: number; hasMore: boolean; items: RunItemView[];
+}
+/** The analysis text of one row, fetched only when that row is opened. */
+interface OpenedItem {
+  ordinal: number; title: string | null; url: string; state: string; text: string | null; error?: string;
 }
 
 // Ordered by what it costs to LOOK, not alphabetically. The first two read the account
@@ -89,11 +114,16 @@ export default function ChannelScan({ lang }: { lang: string }) {
 
   const [finding, setFinding] = useState(false);
   const [listing, setListing] = useState<Listing | null>(null);
+  /** A billed listing that has not been confirmed yet: shown, never started. */
+  const [needsConfirm, setNeedsConfirm] = useState<Listing | null>(null);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [error, setError] = useState("");
 
   const [running, setRunning] = useState(false);
   const [poll, setPoll] = useState<Poll | null>(null);
+  /** The durable run: metadata rows first, one answer at a time (D11). */
+  const [run, setRun] = useState<RunView | null>(null);
+  const [opened, setOpened] = useState<Record<number, OpenedItem>>({});
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const [history, setHistory] = useState<ScanSummary[]>([]);
@@ -122,18 +152,23 @@ export default function ChannelScan({ lang }: { lang: string }) {
     }
   }, [running]);
 
-  const find = useCallback(async () => {
+  // Two presses on purpose: looking at a billed source is itself charged, so the first
+  // press only asks what it would cost and the second one starts it.
+  const find = useCallback(async (confirmPaid = false) => {
     // Not while a scan is running. Without this, the new listing renders and then the
     // still-live poll fires a tick later, hides it again (the listing only shows when
     // `poll` is null) and leaves `running` true — a tab that looks alive and does
     // nothing. The scan itself is unaffected; it is the screen that would get lost.
     if (!account.trim() || finding || running) return;
-    setFinding(true); setError(""); setListing(null); setPicked(new Set()); setPoll(null); setArmed(false);
+    setFinding(true); setError(""); setListing(null); setNeedsConfirm(null);
+    setPicked(new Set()); setPoll(null); setRun(null); setOpened({}); setArmed(false);
     try {
       const q = new URLSearchParams({ url: account.trim(), platform, order, limit: String(limit) });
+      if (confirmPaid) q.set("confirm", "1");
       const r = await fetch(`/api/omniwatch/channel?${q}`, { cache: "no-store" });
       const d = await r.json();
       if (!r.ok) { setError(d.error || `Could not read that account (HTTP ${r.status})`); return; }
+      if (d.needsConfirmation) { setNeedsConfirm(d); return; }
       setListing(d);
       // Pre-ticking every row is a kindness at ten videos and a trap at seven thousand:
       // the screen would open with hundreds of dollars already selected. Past a handful
@@ -147,48 +182,85 @@ export default function ChannelScan({ lang }: { lang: string }) {
     }
   }, [account, platform, order, limit, finding, running]);
 
+  /** Poll one durable run: metadata rows only, one answer at a time (D11). */
+  const watchRun = useCallback((runId: string) => {
+    if (pollRef.current) clearInterval(pollRef.current);
+    pollRef.current = setInterval(async () => {
+      let view: RunView;
+      try {
+        const r = await fetch(`/api/omniwatch/channel?run=${encodeURIComponent(runId)}&offset=0&limit=50`, { cache: "no-store" });
+        if (r.status === 404) {
+          clearInterval(pollRef.current!); pollRef.current = null; setRunning(false);
+          setError("The dashboard lost that run. It is on disk — reopen it from the history below.");
+          return;
+        }
+        view = await r.json();
+      } catch { return; } // a dropped poll is not a failed scan; the next tick retries
+      setRun(view);
+      if (view.state !== "running" && view.state !== "pending") {
+        clearInterval(pollRef.current!); pollRef.current = null;
+        setRunning(false);
+        loadHistory(); // it is on disk now, so the list of past scans has one more
+      }
+    }, 1200);
+  }, [loadHistory]);
+
   const start = useCallback(async () => {
     if (!listing || running || !picked.size) return;
-    setRunning(true); setError("");
+    setRunning(true); setError(""); setOpened({});
     const urls = listing.videos.filter((v) => picked.has(v.url)).map((v) => v.url);
 
-    let id = "";
     try {
       const r = await fetch("/api/omniwatch/channel", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ urls, account: listing.account, topic: topic.trim(), lang, preset, custom: custom.trim() }),
+        body: JSON.stringify({
+          urls, account: listing.account, topic: topic.trim(), lang, preset, custom: custom.trim(),
+          // This press is the confirmation: the person saw the price on the screen above.
+          confirmPaidListing: true,
+        }),
       });
       const d = await r.json();
-      if (!r.ok || !d.id) { setError(d.error || `Could not start (HTTP ${r.status})`); setRunning(false); return; }
-      id = d.id;
+      const runId = d.runId || d.id;
+      if (!r.ok || !runId) { setError(d.error || `Could not start (HTTP ${r.status})`); setRunning(false); return; }
+      setRun({ runId, collectionId: d.collectionId, state: "running", trigger: "manual", total: urls.length, offset: 0, limit: 50, hasMore: false, items: [] });
+      watchRun(runId);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not reach the server");
       setRunning(false);
-      return;
     }
+  }, [listing, picked, topic, lang, running, preset, custom, watchRun]);
 
-    setPoll({ state: "running", total: urls.length, done: 0, results: [] });
-    pollRef.current = setInterval(async () => {
-      let d: Poll;
-      try {
-        const r = await fetch(`/api/omniwatch/channel?job=${id}`, { cache: "no-store" });
-        if (r.status === 404) {
-          clearInterval(pollRef.current!); pollRef.current = null; setRunning(false);
-          setError("The dashboard restarted while this was running. The videos already watched are in your vault.");
-          return;
-        }
-        d = await r.json();
-      } catch { return; } // a dropped poll is not a failed scan; the next tick retries
-      setPoll(d);
-      if (d.state === "done" || d.state === "error") {
-        clearInterval(pollRef.current!); pollRef.current = null;
-        setRunning(false);
-        loadHistory(); // it is on disk now, so the list of past scans has one more
-        if (d.state === "error") setError(d.error || "The scan failed");
-      }
-    }, 1200);
-  }, [listing, picked, topic, lang, running, loadHistory, preset, custom]);
+  /** The analysis text of one row, fetched only when that row is opened. */
+  const openItem = useCallback(async (runId: string, ordinal: number) => {
+    try {
+      const r = await fetch(`/api/omniwatch/channel?run=${encodeURIComponent(runId)}&open=${ordinal}`, { cache: "no-store" });
+      const d = await r.json();
+      if (!r.ok) { setError(d.error || "Could not open that item"); return; }
+      setOpened((current) => ({ ...current, [ordinal]: d }));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not reach the server");
+    }
+  }, []);
+
+  /** Resume the same run by id: the saved listing checkpoint continues, it does not restart. */
+  const resume = useCallback(async (runId: string) => {
+    if (running) return;
+    setRunning(true); setError("");
+    try {
+      const r = await fetch("/api/omniwatch/channel", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ resume: runId, confirmPaidListing: true }),
+      });
+      const d = await r.json();
+      if (!r.ok) { setError(d.error || "Could not resume that run"); setRunning(false); return; }
+      watchRun(runId);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not reach the server");
+      setRunning(false);
+    }
+  }, [running, watchRun]);
 
   // Changing the selection disarms the confirmation: the figure you agreed to is no
   // longer the figure on the button.
@@ -266,7 +338,7 @@ export default function ChannelScan({ lang }: { lang: string }) {
           ))}
 
           <button
-            onClick={find}
+            onClick={() => find()}
             disabled={finding || running || !account.trim()}
             title={running ? "A scan is running — let it finish first" : undefined}
             className="pill pill-warn flex items-center gap-1.5 disabled:opacity-40 ml-auto"
@@ -307,8 +379,36 @@ export default function ChannelScan({ lang }: { lang: string }) {
         </div>
       )}
 
+      {/* A billed listing is a purchase, so it is asked for in words before it happens.
+          The server has already made zero lister calls at this point. */}
+      {needsConfirm && !poll && !run && (
+        <div className="panel p-4 md:p-5">
+          <div className="flex items-start gap-3">
+            <AlertTriangle size={16} className="flex-none mt-0.5" style={{ color: "var(--gold)" }} />
+            <div className="text-sm" style={{ color: "var(--cream-soft)" }}>
+              <div className="mb-1" style={{ color: "var(--cream)" }}>
+                Listing {needsConfirm.platform} is billed before anything is picked.
+              </div>
+              <div style={{ color: "var(--cream-mute)" }}>{needsConfirm.note}</div>
+              <div className="text-xs mt-2" style={{ color: "var(--cream-mute)" }}>
+                Scope: {needsConfirm.scope === "full" ? "the whole archive" : needsConfirm.scopeNote || "limited by the source"}
+                {" · "}{needsConfirm.batchSize || 50} metadata rows per batch.
+              </div>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2 mt-4">
+            <button className="pill pill-warn" style={{ cursor: "pointer" }} onClick={() => find(true)}>
+              Yes — list it and show me the price
+            </button>
+            <button className="pill" style={{ cursor: "pointer" }} onClick={() => setNeedsConfirm(null)}>
+              Not now
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* ── what is on it, and what it costs ─────────────────────────────────── */}
-      {listing && !poll && (
+      {listing && !poll && !run && (
         <div className="panel p-4 md:p-5">
           <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 mb-1">
             <h2 className="text-base font-semibold" style={{ color: "var(--cream)" }}>{listing.account}</h2>
@@ -442,7 +542,7 @@ export default function ChannelScan({ lang }: { lang: string }) {
       )}
 
       {/* ── what you have already run ────────────────────────────────────────── */}
-      {history.length > 0 && !listing && !poll && (
+      {history.length > 0 && !listing && !poll && !run && (
         <div className="panel p-4 md:p-5">
           <div className="sidebar-section-label mb-3">Scans you have run</div>
           <div className="ow-rows">
@@ -469,6 +569,22 @@ export default function ChannelScan({ lang }: { lang: string }) {
       )}
 
       {/* ── the scan itself ──────────────────────────────────────────────────── */}
+      {run && (
+        <>
+          <RunProgress
+            run={run}
+            opened={opened}
+            running={running}
+            onOpen={(ordinal) => openItem(run.runId, ordinal)}
+            onResume={() => resume(run.runId)}
+          />
+          <button className="pill" style={{ cursor: "pointer" }}
+            onClick={() => { setRun(null); setOpened({}); setListing(null); loadHistory(); }}>
+            ← back
+          </button>
+        </>
+      )}
+
       {poll && (
         <>
           <ScanProgress poll={poll} />
@@ -480,6 +596,82 @@ export default function ChannelScan({ lang }: { lang: string }) {
           )}
         </>
       )}
+    </div>
+  );
+}
+
+/**
+ * One durable run: the metadata rows as they are enumerated, and the answer of a row
+ * only when that row is opened. A 7000-video scan must not ship 7000 answers to the tab.
+ */
+function RunProgress({ run, opened, running, onOpen, onResume }: {
+  run: RunView;
+  opened: Record<number, OpenedItem>;
+  running: boolean;
+  onOpen: (ordinal: number) => void;
+  onResume: () => void;
+}) {
+  const finished = !running && run.state !== "running" && run.state !== "pending";
+  const done = run.items.filter((item) => item.state === "done").length;
+  const failed = run.items.filter((item) => item.state === "failed").length;
+  const paused = run.state === "paused" || run.state === "partial";
+
+  return (
+    <div className="space-y-4">
+      <div className="panel p-4">
+        <div className="flex items-center justify-between mb-3">
+          <span className="sidebar-section-label" style={{ margin: 0 }}>
+            {finished ? `Scan ${run.state}` : "Watching"}
+          </span>
+          <span className="metric" style={{ color: "var(--gold-soft)" }}>
+            {done}/{run.total}{failed ? ` · ${failed} failed` : ""}
+          </span>
+        </div>
+        <div className="ow-parts">
+          {Array.from({ length: Math.max(run.total, 1) }, (_, i) => (
+            <i key={i} className={i < done ? "ok" : i === done && !finished ? "on" : ""} />
+          ))}
+        </div>
+        {run.hasMore && (
+          <div className="text-xs mt-3" style={{ color: "var(--cream-mute)" }}>
+            showing the first {run.items.length} of {run.total} — open one to read it; the rest stay on disk.
+          </div>
+        )}
+        {paused && (
+          <button className="pill mt-3" style={{ cursor: "pointer" }} onClick={onResume} disabled={running}>
+            Resume this run — it continues from where it stopped
+          </button>
+        )}
+      </div>
+
+      <div className="ow-rows">
+        {run.items.map((item) => (
+          <button key={item.ordinal} className="ow-row ow-row-past" style={{ cursor: "pointer" }}
+            onClick={() => onOpen(item.ordinal)}>
+            <span className={`status-dot ${item.state === "done" ? "ok" : item.state === "failed" ? "err" : ""}`} />
+            <span className="ow-row-title">{item.title || item.url}</span>
+            <span className="metric ow-row-dur">{item.state}</span>
+          </button>
+        ))}
+      </div>
+
+      {Object.values(opened).sort((a, b) => a.ordinal - b.ordinal).map((item) => (
+        <div key={item.ordinal} className="panel p-4 md:p-5">
+          <div className="flex gap-3 items-start pb-3 mb-4" style={{ borderBottom: "1px solid var(--line-soft)" }}>
+            <h3 className="text-base font-semibold leading-snug flex-1 min-w-0" style={{ color: "var(--cream)" }}>
+              {item.title || item.url}
+            </h3>
+            <a href={item.url} target="_blank" rel="noreferrer" className="pill flex-none flex items-center gap-1.5">
+              <ExternalLink size={11} /> open
+            </a>
+          </div>
+          {item.text
+            ? <OmniMarkdown text={item.text} />
+            : <div className="text-sm" style={{ color: "var(--cream-mute)" }}>
+                {item.state === "failed" ? "This one failed; the rest of the run is unaffected." : "No answer stored for this one yet."}
+              </div>}
+        </div>
+      ))}
     </div>
   );
 }

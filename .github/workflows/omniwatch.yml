@@ -1,0 +1,61 @@
+name: OmniWatch
+
+# Offline CI: build, typecheck, unit/contract tests and installer tests on both
+# supported Node lines. No paid model call, no provider key and no secret is used -
+# every test runs against stubs, fixtures and synthetic hosts in a temp directory.
+on:
+  push:
+    paths:
+      - "packages/omniwatch/**"
+      - "apps/standalone/**"
+      - "agent-os-module/**"
+      - "scripts/release/**"
+      - "test/install/**"
+      - "docs/omniwatch/**"
+      - "package.json"
+      - "package-lock.json"
+      - "tsconfig.json"
+      - ".github/workflows/omniwatch.yml"
+  pull_request:
+    paths:
+      - "packages/omniwatch/**"
+      - "apps/standalone/**"
+      - "agent-os-module/**"
+      - "scripts/release/**"
+      - "test/install/**"
+      - "docs/omniwatch/**"
+      - "package.json"
+      - "package-lock.json"
+      - "tsconfig.json"
+      - ".github/workflows/omniwatch.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  omniwatch:
+    name: Node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["22.22.3", "24"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Build release artifact and manifest
+        run: node scripts/release/build-core.mjs
+      - name: Unit and contract tests (core)
+        run: node --test packages/omniwatch/test/
+      - name: Installer tests (synthetic hosts, same tarball)
+        run: node --test test/install/release.test.mjs
+        env:
+          OMNIWATCH_SKIP_BUILD: "1"

@@ -1,15 +1,14 @@
-// A tiny job store, kept inside the module so it drops into a stock Agent OS with
-// no other files needed.
+// The panel's job store. Two kinds of job live behind one id:
 //
-// Watching a video takes minutes: download, upload, then the model writing. Holding
-// an HTTP request open for that is the thing to avoid — anything behind a proxy gets
-// cut at around two minutes, and a tab reload kills the run. So a route starts a job,
-// answers 202 with an id, and the caller polls. The same job is what the Scout agent
-// waits on from outside the browser.
+//   * in-RAM jobs — the film-production modes (both/blueprint/screentext) that still
+//     run inside the Next process, exactly as before;
+//   * durable operations — a core analysis admitted into the shared SQLite store and
+//     executed by the on-demand worker process (D5). Closing the tab, or the whole
+//     panel, only stops the polling: the operation and its progress stay readable.
 //
-// In memory on purpose: a dashboard restart drops jobs, which is fine because every
-// finished answer is also written to summaries/ and a re-run reuses the cached video
-// and the cached upload, so it costs little to ask again.
+// `getJob` therefore answers from RAM first and then from a registered durable reader,
+// so every existing caller (the legacy routes, ScoutView, OmniWatchView) keeps working
+// with the same three exported functions.
 
 export type JobState = "running" | "done" | "error";
 
@@ -21,6 +20,9 @@ export interface Job<P = unknown, R = unknown> {
   error?: string;
   startedAt: number;
   finishedAt?: number;
+  /** Set when this job is backed by a durable operation (core analysis). */
+  operationId?: string;
+  kind?: "analysis" | "legacy-film" | "channel" | "scout";
 }
 
 const JOBS = new Map<string, Job>();
@@ -34,6 +36,19 @@ const TTL_MS = 60 * 60_000; // an hour after finishing, then it is swept
 // they finish, with a far outer bound so a wedged one cannot leak forever.
 const RUNNING_MAX_MS = 24 * 3600_000;
 
+/**
+ * Durable read side, registered by the OmniWatch panel wiring. It turns a core
+ * operation id into the same `Job` shape the routes already poll, so a re-opened
+ * card shows the progress of work that outlived the tab.
+ */
+export type DurableJobReader = (id: string) => Job | null;
+
+let durableReader: DurableJobReader | null = null;
+
+export function registerDurableJobReader(reader: DurableJobReader | null): void {
+  durableReader = reader;
+}
+
 function sweep() {
   const now = Date.now();
   for (const [id, j] of JOBS) {
@@ -46,17 +61,24 @@ function sweep() {
 
 export function getJob<P, R>(id: string): Job<P, R> | null {
   sweep();
-  return (JOBS.get(id) as Job<P, R>) ?? null;
+  const local = JOBS.get(id) as Job<P, R> | undefined;
+  if (local) return local;
+  if (durableReader && id) return durableReader(id) as Job<P, R> | null;
+  return null;
 }
 
 /** Start `work` in the background and hand back the job immediately. `work` receives
  *  the job so it can publish progress as it goes. */
-export function startJob<P, R>(work: (job: Job<P, R>) => Promise<R>): Job<P, R> {
+export function startJob<P, R>(
+  work: (job: Job<P, R>) => Promise<R>,
+  options: { kind?: Job["kind"] } = {},
+): Job<P, R> {
   sweep();
   const job: Job<P, R> = {
     id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
     state: "running",
     startedAt: Date.now(),
+    ...(options.kind ? { kind: options.kind } : {}),
   };
   JOBS.set(job.id, job as Job);
   void work(job).then(
@@ -67,6 +89,12 @@ export function startJob<P, R>(work: (job: Job<P, R>) => Promise<R>): Job<P, R> 
       job.finishedAt = Date.now();
     },
   );
+  return job;
+}
+
+/** Record a RAM job under a caller-chosen id (used by tests and by resumed panels). */
+export function trackJob<P, R>(job: Job<P, R>): Job<P, R> {
+  JOBS.set(job.id, job as Job);
   return job;
 }
 

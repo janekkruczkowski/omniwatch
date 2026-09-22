@@ -1,22 +1,23 @@
-import { NextResponse } from "next/server";
-import { startJob, getJob } from "@/lib/omniwatchJobs";
-import {
-  apiKey, fetchVideo, cachedVideo, watch, save, fmt,
-  DEFAULT_LANG, PRICE_IN, PRICE_OUT, STRIP, type Mode,
-} from "@/lib/omniwatch";
+import { DEFAULT_LANG } from "@/lib/omniwatch";
 import I18N from "@/lib/omniwatchI18n";
+import { createLegacyFilmPortFromOmniWatch } from "@/lib/omniwatchLegacyAdapter";
+import type { LegacyFilmMode } from "@/lib/omniwatchLegacyAdapter";
+import { getPanelRuntime } from "@/lib/omniwatchPanelRuntime";
+import { enqueueAnalysis } from "../../../../../../packages/omniwatch/src/runtime/queue.ts";
+import { createJobsHandler } from "./handler.ts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// Watching a video is minutes of work: download, upload, then the model. So this
-// never holds a request open — POST starts the job and answers 202 with an id, and
-// the tab polls GET for the stage and the answer as it is written. Closing or
-// reloading the tab no longer kills the run, and the same job is what the Scout
-// agent will wait on.
+// Watching a video is minutes of work: download, upload, then the model. So this never
+// holds a request open — POST admits the work and answers 202 with an id, and the tab
+// polls GET for the stage and the answer as it is written. The id is a *durable*
+// operation id, so closing the card (or the whole panel) stops the polling and nothing
+// else. The behaviour lives in `./handler.ts`, which the offline tests drive directly.
 
+/** What one poll returns while the job is still running (kept for existing callers). */
 export interface Progress {
-  stage: "download" | "upload" | "watch" | "merge" | "answer";
+  stage?: "download" | "upload" | "watch" | "merge" | "answer";
   meta?: { id: string; title: string; channel: string; duration: string; seconds: number; strip: number[] };
   parts?: number;
   partsDone?: number;
@@ -24,6 +25,7 @@ export interface Progress {
   reused?: boolean;
   text?: string;
 }
+
 export interface Result extends Progress {
   text: string;
   seconds: number;
@@ -33,94 +35,47 @@ export interface Result extends Progress {
   cost: number;
 }
 
-export async function POST(req: Request) {
-  const body = await req.json().catch(() => ({}));
-  const url = String(body.url || "").trim();
-  const question = String(body.q || "");
-  const MODES: Mode[] = ["ask", "teardown", "both", "blueprint", "screentext"];
-  const mode: Mode = MODES.includes(body.mode as Mode) ? (body.mode as Mode) : "ask";
-  const l = I18N[String(body.lang || "")] ? String(body.lang) : DEFAULT_LANG;
-  // Either a link to fetch, or a video already in the cache. The second is what makes a
-  // capture repeatable: the same file, analysed again, so a difference in the answer is a
-  // difference in the pipeline and not in the download.
-  const sourceId = String(body.sourceId || "").trim();
-  if (!sourceId && !/^https?:\/\//i.test(url)) {
-    return NextResponse.json({ error: "a http(s) link or a sourceId is required" }, { status: 400 });
+type JobsHandler = ReturnType<typeof createJobsHandler>;
+
+let handlerPromise: Promise<JobsHandler> | null = null;
+
+function handler(): Promise<JobsHandler> {
+  if (!handlerPromise) {
+    handlerPromise = (async () => {
+      const panel = getPanelRuntime();
+      const film = createLegacyFilmPortFromOmniWatch();
+      return createJobsHandler({
+        store: panel.store,
+        memory: panel.memory,
+        resolveSource: (input) => panel.resolveSource(input),
+        isCached: (id) => panel.isCached(id),
+        enqueue: (request) => enqueueAnalysis({ store: panel.store, request }),
+        ensureWorker: (id) => panel.ensureWorker(id),
+        lookupMedia: (ref) => panel.lookupMedia(ref),
+        // The film modes keep their own implementation; only the id resolution is shared.
+        legacyFilm: {
+          async dispatch({ url, sourceId, mode, q, lang }) {
+            const ref = await panel.resolveSource({ url, sourceId });
+            return film.watch({
+              sourceId: ref.legacyId ?? ref.sourceId,
+              mode: mode as LegacyFilmMode,
+              question: q,
+              lang,
+            });
+          },
+        },
+        defaultLanguage: DEFAULT_LANG,
+        languages: Object.keys(I18N),
+      });
+    })();
   }
-  if (sourceId && !await cachedVideo(sourceId)) {
-    return NextResponse.json({ error: "that video is not in the cache" }, { status: 404 });
-  }
-
-  const key = await apiKey();
-  if (!key) {
-    return NextResponse.json({
-      error: "No Qwen key yet. Add DASHSCOPE_API_KEY to ~/.hermes/.env or ~/.agentic-os/config.json.",
-    }, { status: 503 });
-  }
-
-  const job = startJob<Progress, Result>(async (j) => {
-    const t0 = Date.now();
-    const p: Progress = { stage: "download" };
-    // publish a copy: the poll must never observe a half-written object
-    const push = () => { j.progress = { ...p }; };
-    push();
-
-    const { info, src } = sourceId ? (await cachedVideo(sourceId))! : await fetchVideo(url);
-    const seconds = info.duration || 0;
-    p.meta = {
-      id: info.id, title: info.title, channel: info.channel,
-      duration: fmt(seconds), seconds,
-      strip: Array.from({ length: STRIP }, (_, i) => Math.round((seconds * (i + 0.5)) / STRIP)),
-    };
-    p.stage = "upload";
-    push();
-
-    let last = 0;
-    const { answer, stats } = await watch(key, info, src, question, l, mode, {
-      onEvent: (name, d) => {
-        if (name === "watch") { p.stage = "watch"; p.parts = d.n as number; p.fps = d.fps as number; p.partsDone = 0; }
-        else if (name === "uploaded") p.reused = d.reused as boolean;
-        else if (name === "part_done") p.partsDone = (p.partsDone || 0) + 1;
-        else if (name === "merge") p.stage = "merge";
-        push();
-      },
-      onToken: (text) => {
-        p.text = text;
-        // the model writes faster than anyone polls; no point re-serialising every token
-        if (Date.now() - last > 250) { last = Date.now(); p.stage = "answer"; push(); }
-      },
-    });
-
-    p.text = answer;
-    p.stage = "answer";
-    push();
-    await save(info, url || `cache:${sourceId}`, question, answer, l, mode).catch(() => {});
-
-    const result: Result = {
-      ...p, text: answer,
-      seconds: Math.round((Date.now() - t0) / 1000),
-      tokens: stats.in + stats.out,
-      parts: stats.parts,
-      reused: stats.reused,
-      cost: Number((stats.in * PRICE_IN + stats.out * PRICE_OUT).toFixed(4)),
-    };
-    return result;
-  });
-
-  return NextResponse.json({ id: job.id }, { status: 202 });
+  return handlerPromise;
 }
 
-// GET /api/omniwatch/jobs?id=… — one poll. Unknown id means the dashboard restarted
-// (the store is in memory, like the rest of Agent OS), so the tab shows that plainly
-// instead of spinning forever.
-export async function GET(req: Request) {
-  const id = new URL(req.url).searchParams.get("id") || "";
-  const job = getJob<Progress, Result>(id);
-  if (!job) return NextResponse.json({ state: "gone" }, { status: 404 });
-  return NextResponse.json({
-    state: job.state,
-    ...(job.progress || {}),
-    ...(job.result || {}),
-    error: job.error,
-  });
+export async function POST(req: Request): Promise<Response> {
+  return (await handler()).POST(req);
+}
+
+export async function GET(req: Request): Promise<Response> {
+  return (await handler()).GET(req);
 }

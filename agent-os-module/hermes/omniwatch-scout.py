@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Nightly competitor scan for OmniWatch Scout.
+"""Hermes launcher for the OmniWatch scan.
 
 Schedule it with Hermes' own scheduler:
 
@@ -7,118 +7,201 @@ Schedule it with Hermes' own scheduler:
       --script omniwatch-scout.py --no-agent --deliver telegram
 
 `--no-agent` means no model runs the schedule itself: this script *is* the job and
-whatever it prints is what gets delivered. The thinking happens inside the scan —
-Hermes scrapes through Apify, and OmniWatch watches the winners.
+whatever it prints is what gets delivered.
 
-Python rather than bash because Hermes runs any non-.sh script with its own
-interpreter, and Hermes is a Python program — so this behaves the same on macOS,
-Linux and Windows, where bash may not exist.
+This file is a thin launcher and nothing else. It runs the shared CLI — the same
+`runScan` the panel's manual button uses — so there is no second engine and no HTTP
+dependency on the panel being open:
 
-Set OMNIWATCH_URL if the dashboard is not on the default port.
+    omniwatch scan --collection <id> --trigger schedule --json
+    omniwatch report --run <runId> --json          (manual re-read)
+
+The collection id comes from Hermes (`--collection`, or OMNIWATCH_COLLECTION), never
+from a prompt typed into a chat. Zero new material prints nothing: a cron that cries
+wolf every morning gets muted, and then it is useless on the day it matters.
+
+Set OMNIWATCH_CLI if the runtime is not in the default place, and OMNIWATCH_DATA_DIR /
+OMNIWATCH_CONFIG for a non-default data directory.
 """
+import argparse
 import json
 import os
+import subprocess
 import sys
-import time
-import urllib.error
-import urllib.request
+from pathlib import Path
 
-BASE = os.environ.get("OMNIWATCH_URL", "http://127.0.0.1:3000").rstrip("/")
-POLL_SECONDS = 15
-GIVE_UP_AFTER = 60 * 60  # a scan is a scrape plus a teardown per winner: minutes, not seconds
+HERE = Path(__file__).resolve().parent
+STATE_FILE = Path(
+    os.environ.get("OMNIWATCH_STATE", Path.home() / ".agentic-os" / "omniwatch" / "scout-last-run")
+)
 
 
-def call(path, payload=None, timeout=60):
-    url = f"{BASE}{path}"
-    data = json.dumps(payload).encode() if payload is not None else None
-    req = urllib.request.Request(
-        url, data=data,
-        headers={"content-type": "application/json"} if data else {},
+def cli_entry():
+    """Locate the shared CLI: explicit, then the release layout, then this checkout."""
+    explicit = os.environ.get("OMNIWATCH_CLI")
+    if explicit:
+        return explicit
+    for candidate in (
+        HERE / ".." / ".." / "packages" / "omniwatch" / "dist" / "runtime" / "cli.js",
+        HERE / ".." / ".." / "packages" / "omniwatch" / "src" / "runtime" / "cli.ts",
+    ):
+        if candidate.exists():
+            return str(candidate.resolve())
+    return None
+
+
+def runtime_args():
+    args = []
+    data_dir = os.environ.get("OMNIWATCH_DATA_DIR")
+    if data_dir:
+        args += ["--data-dir", data_dir]
+    config = os.environ.get("OMNIWATCH_CONFIG")
+    if config:
+        args += ["--config", config]
+    return args
+
+
+def run_cli(argv):
+    """One CLI call. Arguments go as a list — never through a shell, never with secrets."""
+    entry = cli_entry()
+    if not entry:
+        print(
+            "OmniWatch: cannot find the shared CLI. Set OMNIWATCH_CLI to packages/omniwatch/dist/runtime/cli.js.",
+            file=sys.stderr,
+        )
+        return None
+    command = [os.environ.get("OMNIWATCH_NODE", "node"), entry, *argv, *runtime_args(), "--json"]
+    try:
+        completed = subprocess.run(command, capture_output=True, text=True, timeout=3600)
+    except OSError as error:
+        print(f"OmniWatch: could not run the shared CLI: {error}", file=sys.stderr)
+        return None
+    except subprocess.TimeoutExpired:
+        print("OmniWatch: the scan is still running after an hour; the report will be read next time.")
+        return None
+    if completed.returncode != 0:
+        message = (completed.stderr or completed.stdout or "").strip().splitlines()
+        last = message[-1] if message else "unknown error"
+        print(f"OmniWatch: the shared CLI failed ({completed.returncode}): {last}", file=sys.stderr)
+        return None
+    for line in reversed(completed.stdout.splitlines()):
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            return json.loads(line)
+        except ValueError:
+            continue
+    return None
+
+
+def last_run_id():
+    try:
+        return STATE_FILE.read_text(encoding="utf-8").strip() or None
+    except OSError:
+        return None
+
+
+def remember_run(run_id):
+    if not run_id:
+        return
+    try:
+        STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        STATE_FILE.write_text(run_id, encoding="utf-8")
+    except OSError:
+        pass  # losing the marker only repeats a message, never an analysis
+
+
+def describe(report):
+    if not report:
+        return ""
+    return (
+        f"{report.get('newAnalyses', 0)} nowych analiz, "
+        f"{report.get('failedItems', 0)} bledow, {report.get('pendingItems', 0)} oczekuje\n"
+        f"{report.get('summary', '')}"
     )
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read().decode())
 
 
-def quiet_exit(msg=""):
-    """A cron that cries wolf every morning gets muted, and then it is useless on the
-    day it matters. Nothing new to say means say nothing."""
-    if msg:
-        print(msg)
-    sys.exit(0)
+def deliver_previous():
+    """D8: read what a previous run produced before requesting new work.
+
+    A report finished after the launcher gave up still arrives here — at the latest on
+    the next active cron run. Repeating a message is allowed; repeating an analysis is
+    not, which is why this path never scans.
+    """
+    run_id = last_run_id()
+    if not run_id:
+        return
+    payload = run_cli(["report", "--run", run_id])
+    if not payload:
+        return
+    for report in payload.get("reports") or []:
+        if report.get("state") == "confirmed":
+            continue
+        text = describe(report)
+        if text:
+            print(f"OmniWatch Scout — raport z poprzedniego przebiegu {run_id}\n{text}\n")
+
+
+def scan(collection_id):
+    payload = run_cli(["scan", "--collection", collection_id, "--trigger", "schedule"])
+    if payload is None:
+        return 1
+    remember_run(payload.get("runId"))
+    if payload.get("state") == "failed":
+        reason = payload.get("errorMessage") or "nieznany blad"
+        print(f"OmniWatch Scout — skan nie doszedl do skutku: {reason}")
+        return 1
+    report = payload.get("report")
+    if not report:
+        # Zero new material, nothing failed, nothing waiting: silence (D8).
+        return 0
+    # The scan payload carries the counts; the report carries the durable summary.
+    text = (
+        f"{payload.get('analysed', 0)} nowych analiz, "
+        f"{payload.get('failedItems', 0)} bledow, {payload.get('pendingItems', 0)} oczekuje"
+    )
+    summary = report.get("summary") if isinstance(report, dict) else None
+    print(f"OmniWatch Scout — {text}" + (f"\n{summary}" if summary else ""))
+    return 0
 
 
 def main():
-    try:
-        started = call("/api/omniwatch/scout", {"action": "scan"}, timeout=30)
-    except urllib.error.HTTPError as e:
-        body = e.read().decode(errors="replace")
-        err = ""
-        try:
-            err = json.loads(body).get("error", "")
-        except ValueError:
-            err = body[:200]
-        # "nothing configured" is not a failure worth waking anyone for
-        if "Add at least one" in err:
-            quiet_exit()
-        print(f"OmniWatch Scout could not start: {err}")
-        sys.exit(1)
-    except OSError as e:
-        print(f"OmniWatch Scout could not reach the dashboard at {BASE}: {e}")
-        sys.exit(1)
+    parser = argparse.ArgumentParser(description="Thin Hermes launcher for the shared OmniWatch scan")
+    parser.add_argument(
+        "--collection",
+        default=os.environ.get("OMNIWATCH_COLLECTION"),
+        help="Collection id (Hermes passes this; never a prompt)",
+    )
+    parser.add_argument(
+        "--report",
+        metavar="RUN_ID",
+        help="Read or re-send one run's stored report; runs no analysis",
+    )
+    args = parser.parse_args()
 
-    job = started.get("id")
-    if not job:
-        quiet_exit()
+    if args.report:
+        payload = run_cli(["report", "--run", args.report])
+        if not payload:
+            return 1
+        reports = payload.get("reports") or []
+        if not reports:
+            print(f"OmniWatch Scout — brak raportu dla przebiegu {args.report}")
+            return 0
+        for report in reports:
+            print(describe(report))
+        return 0
 
-    deadline = time.time() + GIVE_UP_AFTER
-    while time.time() < deadline:
-        time.sleep(POLL_SECONDS)
-        try:
-            poll = call(f"/api/omniwatch/scout?job={job}", timeout=30)
-        except OSError:
-            continue  # a dropped poll is not a failed scan
-        state = poll.get("state")
-        if state == "done":
-            return report(poll.get("run") or {})
-        if state == "error":
-            print(f"OmniWatch Scout failed: {poll.get('error') or 'unknown error'}")
-            sys.exit(1)
-        if state == "gone":
-            print("OmniWatch Scout: the dashboard restarted mid-scan.")
-            sys.exit(1)
+    if not args.collection:
+        print(
+            "OmniWatch Scout: no collection id. Pass --collection <id> or set OMNIWATCH_COLLECTION.",
+            file=sys.stderr,
+        )
+        return 2
 
-    print("OmniWatch Scout is still running after an hour — check the Scout tab.")
-    sys.exit(1)
-
-
-def first_section(text, heading):
-    """Pull one '## <heading>' section out of a teardown."""
-    for block in (text or "").split("## "):
-        if block.lower().startswith(heading.lower()):
-            return " ".join(block.split("\n")[1:]).strip()
-    return ""
-
-
-def report(run):
-    teardowns = run.get("teardowns") or []
-    if not teardowns:
-        quiet_exit()  # nothing beat its baseline; a silent morning is the right answer
-
-    by_url = {c.get("url"): c for c in (run.get("candidates") or [])}
-    lines = [f"OmniWatch Scout — {len(teardowns)} new winner(s) out of {run.get('scanned', 0)} videos", ""]
-    for t in teardowns:
-        c = by_url.get(t.get("url"), {})
-        lines.append(f"• {t.get('title') or t.get('url')}")
-        if c:
-            lines.append(f"  {c.get('why', '')} · @{c.get('author', '')}")
-        hook = first_section(t.get("text"), "the hook")
-        if hook:
-            lines.append(f"  Hook: {hook[:220]}")
-        lines.append(f"  {t.get('url')}")
-        lines.append("")
-    lines.append("Full teardowns and the adapted scripts: the Scout tab in Agent OS.")
-    print("\n".join(lines))
+    deliver_previous()
+    return scan(args.collection)
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

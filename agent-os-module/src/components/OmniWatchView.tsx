@@ -46,6 +46,9 @@ interface Card {
   /** the job that owns this card said it was finished. The text arrives streaming, so
    *  "there is text" is not the same question as "this answer is complete". */
   done?: boolean;
+  /** the conversation this answer belongs to, and the turn a follow-up replies to.
+   *  Kept per card so a question about video A can never be answered against B. */
+  turn?: { conversationId: string | null; turnId: string | null };
 }
 /** What the tab is doing. The first two are jobs the engine understands; "channel" is
  *  this tab pointed at an account, and never reaches the single-video job. */
@@ -112,8 +115,10 @@ export default function OmniWatchView() {
   const [status, setStatus] = useState<Status | null>(null);
   const [i18n, setI18n] = useState<Record<string, Locale> | null>(null);
   const [lang, setLang] = useState("en");
-  const [mode, setMode] = useState<UiMode>("teardown");
+  // Summary is the default (A0): a bare link is enough. Teardown is the switch.
+  const [mode, setMode] = useState<UiMode>("ask");
   const [url, setUrl] = useState("");
+  const [focus, setFocus] = useState("");
   const [question, setQuestion] = useState("");
   const [followUp, setFollowUp] = useState("");
 
@@ -140,6 +145,8 @@ export default function OmniWatchView() {
   // now rather than whatever the last render captured.
   const playIdRef = useRef<string | null>(null);
   const metaIdRef = useRef<string | null>(null);
+  /** Which answer the next follow-up replies to, and which video it belongs to. */
+  const askContextRef = useRef<{ url: string; conversationId: string | null; turnId: string | null } | null>(null);
 
   const T = useMemo(() => (i18n ? (i18n[lang] || i18n.en) : null), [i18n, lang]);
 
@@ -200,7 +207,11 @@ export default function OmniWatchView() {
   // Start the job, then poll it. Nothing holds an HTTP request open for the minutes
   // this takes, so reloading the tab mid-run does not kill the work.
   const ask = useCallback(async (q: string, target?: string, force?: "ask" | "teardown") => {
-    const link = (target ?? url).trim();
+    // A follow-up carries the answer it replies to. The context is per card, so a
+    // question asked while the tab has moved on still lands on the video it was about.
+    const context = askContextRef.current;
+    askContextRef.current = null;
+    const link = (target ?? context?.url ?? url).trim();
     if (!link || pollRef.current) return;
     // Every caller says which of the two it means: the form passes the mode you clicked,
     // a follow-up is always a question, and the deep link from Astros is always a
@@ -234,7 +245,18 @@ export default function OmniWatchView() {
       const res = await fetch("/api/omniwatch/jobs", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ url: link, q: q.trim(), lang, mode: runMode }),
+        body: JSON.stringify({
+          url: link,
+          q: q.trim(),
+          // The new API takes focus and question separately; the legacy `q` stays for
+          // compatibility. A follow-up is a question bound to its parent turn (D9).
+          question: q.trim() || undefined,
+          focus: runMode === "ask" && !context ? focus.trim() || undefined : undefined,
+          conversationId: context?.conversationId ?? undefined,
+          parent: context?.turnId ?? undefined,
+          lang,
+          mode: runMode,
+        }),
       });
       const body = await res.json();
       if (!res.ok || !body.id) return fail(body.error || `Could not start (HTTP ${res.status})`);
@@ -278,12 +300,20 @@ export default function OmniWatchView() {
       if (d.state === "done") {
         finish(); setStep("end");
         setHits([...(d.text || "").matchAll(TS_RE)].map((m) => toSec(m[1])));
-        patch((c) => ({ ...c, stats: d as Stats, done: true }));
+        patch((c) => ({
+          ...c,
+          stats: d as Stats,
+          done: true,
+          turn: {
+            conversationId: (d as { conversationId?: string | null }).conversationId ?? null,
+            turnId: (d as { turnId?: string | null }).turnId ?? null,
+          },
+        }));
       } else if (d.state === "error") {
         fail(d.error || "The run failed");
       }
     }, 700);
-  }, [url, mode, lang, setPlayer]);
+  }, [url, mode, lang, focus, setPlayer]);
 
   // ── handed a video by another tab ────────────────────────────────────────────
   // Astros finds what competitors published but works from titles, so its row of
@@ -312,6 +342,17 @@ export default function OmniWatchView() {
   // What the form submits is what the mode row is set to. A new link is not a follow-up
   // just because answers are already on screen.
   const submit = () => ask(question, undefined, mode === "teardown" ? "teardown" : "ask");
+
+  // A follow-up is always a question, and it belongs to the newest finished answer — the
+  // card whose own turn we know. It is never answered against whatever video the tab
+  // happens to have open (F16/A15).
+  const submitFollowUp = () => {
+    const card = cards.find((c) => c.turn?.turnId && c.src?.url);
+    askContextRef.current = card?.src?.url
+      ? { url: card.src.url, conversationId: card.turn?.conversationId ?? null, turnId: card.turn?.turnId ?? null }
+      : null;
+    return ask(followUp, undefined, "ask");
+  };
 
   const started = cards.length > 0 || running;
   const ui = T?.ui as Record<string, string> | undefined;
@@ -386,6 +427,19 @@ export default function OmniWatchView() {
           className="w-full bg-transparent outline-none resize-none text-base font-medium"
           style={{ color: "var(--cream)" }}
         />
+
+        {mode === "ask" && (
+          <div className="flex items-center gap-2 pt-3 mt-1" style={{ borderTop: "1px solid var(--line-soft)" }}>
+            <input
+              value={focus}
+              onChange={(e) => setFocus(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submit(); } }}
+              placeholder={ui?.focusPlaceholder || "Focus (optional) — the thread the summary should concentrate on"}
+              className="flex-1 bg-transparent outline-none text-sm min-w-0"
+              style={{ color: "var(--cream)" }}
+            />
+          </div>
+        )}
 
         <div className="flex items-center justify-between gap-3 mt-2">
           <span className="text-xs" style={{ color: "var(--cream-mute)" }}>
@@ -498,13 +552,13 @@ export default function OmniWatchView() {
                   <textarea
                     value={followUp}
                     onChange={(e) => setFollowUp(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(followUp, undefined, "ask"); } }}
+                    onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submitFollowUp(); } }}
                     rows={1}
                     placeholder={ui?.followPlaceholder || "Next question…"}
                     className="flex-1 bg-transparent outline-none resize-none text-sm"
                     style={{ color: "var(--cream)" }}
                   />
-                  <button onClick={() => ask(followUp, undefined, "ask")} className="pill pill-warn" style={{ cursor: "pointer" }}>
+                  <button onClick={submitFollowUp} className="pill pill-warn" style={{ cursor: "pointer" }}>
                     {ui?.followSubmit || "Ask →"}
                   </button>
                 </div>
