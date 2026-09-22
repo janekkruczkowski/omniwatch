@@ -112,6 +112,8 @@ before(() => {
 /** A synthetic Agent OS checkout with the anchors the registrar expects. */
 function makeAgentOsHost() {
   const root = join(tempDir("omniwatch-agentos-"), "agent-os");
+  mkdirSync(join(root, "source"), { recursive: true });
+  writeFileSync(join(root, "source", "tsconfig.json"), '{"compilerOptions":{"noEmit":true}}\n');
   mkdirSync(join(root, "source", "src", "components"), { recursive: true });
   mkdirSync(join(root, "source", "src", "app", "hermes"), { recursive: true });
   mkdirSync(join(root, "source", "src", "app", "api", "video", "auto", "assemble"), { recursive: true });
@@ -343,6 +345,21 @@ test("T16: the same tarball installs into a fresh Agent OS copy and a fresh stan
     readFileSync(join(agentOs, "source", "src", "components", "Sidebar.tsx"), "utf8").includes('"/omniwatch"'),
     "the Agent OS sidebar got the OmniWatch entry",
   );
+  assert.ok(
+    existsSync(join(agentOs, "packages", "omniwatch", "src", "contracts", "types.ts")),
+    "relative core imports in the Agent OS integration resolve after a package-only install",
+  );
+  assert.equal(
+    JSON.parse(readFileSync(join(agentOs, "source", "tsconfig.json"), "utf8")).compilerOptions.allowImportingTsExtensions,
+    true,
+    "the host can typecheck the installed core's explicit TypeScript imports",
+  );
+  const installedManifest = JSON.parse(readFileSync(join(agentOs, "omniwatch", "install-manifest.json"), "utf8"));
+  assert.equal(
+    installedManifest.managedFiles["omniwatch/current"],
+    sha256File(join(agentOs, "omniwatch", "current")),
+    "the manifest records the pointer after the atomic switch",
+  );
 
   const standalone = makeStandaloneHost();
   const standaloneResult = runInstaller(["--target", "standalone", "--root", standalone]);
@@ -352,6 +369,15 @@ test("T16: the same tarball installs into a fresh Agent OS copy and a fresh stan
     existsSync(join(installedReleaseDir(standalone, "vendor/omniwatch"), "dist", "contracts", "index.js")),
   );
   assert.deepEqual(standaloneResult.json.navFiles, [], "standalone has no Agent OS navigation to register");
+});
+
+test("T16: a repeat install recognizes its own current pointer", () => {
+  const agentOs = makeAgentOsHost();
+  const first = runInstaller(["--target", "agent-os", "--root", agentOs]);
+  assert.equal(first.status, 0, first.stderr);
+  const check = runInstaller(["--target", "agent-os", "--root", agentOs, "--check"]);
+  assert.equal(check.status, 0, check.stderr);
+  assert.deepEqual(check.json.conflicts, []);
 });
 
 test("T16: a wrong checksum stops before any change", () => {

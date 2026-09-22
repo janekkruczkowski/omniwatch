@@ -47,6 +47,14 @@ body.running .hero{display:none}
 
 main{display:none;max-width:1320px;margin:6px auto 60px;padding:0 20px;grid-template-columns:420px 1fr;gap:22px;align-items:start}
 body.running main{display:grid}
+/* A terminal state still has something to say. `fail()` used to drop `running` and
+   leave `main` hidden, so the error card and its Retry button were in the DOM with
+   zero client rects: the person saw the empty form again and no reason why. `failed`
+   and `done` keep the work area on screen so the message and the next action are
+   visible; only the very first, untouched page hides `main`. */
+body.failed main,body.done main{display:grid}
+body.failed .steps,body.done .steps{display:none}
+body.failed .hero{display:none}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:18px}
 .left{position:sticky;top:16px;display:flex;flex-direction:column;gap:16px}
 .player{aspect-ratio:16/9;width:100%;border-radius:12px;border:0;background:#000}
@@ -210,6 +218,9 @@ function applyLang() {
   chips($('#heroChips'), '#q'); chips($('#followChips'), '#q2', () => ask($('#q2').value));
 }
 let vid = null, url = null, strip = [], seconds = 0, t0 = 0, timerId = null, es = null, card = null, question = '', partsDone = 0, lastAnswer = '';
+/** True once this run reached a terminal state, so a late transport error cannot
+ *  rewrite the message the server already sent (or a delivered answer). */
+let ended = false;
 // A conversation is identified by its own id, never by the URL alone; `parent` points
 // at the previous answer so a follow-up continues the right thread (D9).
 let conversationId = null, parentTurnId = null;
@@ -331,11 +342,25 @@ function stopRun() {
   clearInterval(timerId);
   $('#strip').classList.remove('scanning');
   $('#go').disabled = $('#go2').disabled = false;
+  // The progress card is part of the run, not of the result. Freezing it at "0.1s"
+  // with a live-looking timer is what made a finished error look like work in
+  // progress; a terminal state hides it instead of leaving a stopped clock on screen.
+  $('#progressLabel').textContent = '';
+  $('#timer').textContent = '';
 }
 
 function fail(message) {
+  // The stream closes right after it reports a terminal error, and the EventSource's
+  // own `onerror` fires for that close. Without this latch the generic transport text
+  // ("fetch failed") replaced the real reason the server had just sent.
+  if (ended) return;
+  ended = true;
   stopRun();
-  document.body.classList.remove('running'); document.body.classList.add('idle');
+  // `failed` keeps `main` on screen (see the CSS above) so the error and Retry are
+  // actually visible; `idle` still opens the follow-up box. Dropping `running` alone
+  // hid the whole work area, which is what made an error look like a reset to the form.
+  document.body.classList.remove('running');
+  document.body.classList.add('idle', 'failed');
   setStep('end');
   $('#strip').classList.remove('scanning');
   $('#parts').style.display = 'none';
@@ -360,7 +385,8 @@ function ask(q) {
   if (es) return;
   q = (q || '').trim(); question = q;
   if (document.querySelector('.qa') && mode === 'teardown') setMode('ask');  // follow-ups are questions
-  document.body.classList.add('running'); document.body.classList.remove('idle');
+  document.body.classList.add('running'); document.body.classList.remove('idle', 'failed', 'done');
+  ended = false;
   $('#go').disabled = $('#go2').disabled = true; $('#q2').value = '';
   $('#legend').style.display = 'none'; $('#parts').style.display = 'none'; $('#wcount').textContent = ''; $('#upinfo').textContent = '';
   partsDone = 0; lastAnswer = ''; newCard(q); window.scrollTo({top: 0, behavior: 'smooth'});
@@ -401,7 +427,8 @@ function ask(q) {
   on('answer.text', showAnswer);
   on('turn', d => { if (d.conversationId) conversationId = d.conversationId; if (d.turnId) parentTurnId = d.turnId; });
   on('done', d => {
-    finish(); setStep('end'); document.body.classList.add('idle');
+    ended = true;
+    finish(); setStep('end'); document.body.classList.remove('running'); document.body.classList.add('idle', 'done');
     if (typeof d.text === 'string' && d.text) showAnswer(d);
     highlight(lastAnswer);
     const usage = d.usage || null;

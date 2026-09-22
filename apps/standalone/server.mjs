@@ -31,7 +31,7 @@ import { ANALYSIS_VERSION } from "../../packages/omniwatch/src/contracts/types.t
 import { createRuntimeWiring } from "../../packages/omniwatch/src/runtime/poc.ts";
 import { enqueueAnalysis } from "../../packages/omniwatch/src/runtime/queue.ts";
 import { OperationJournal } from "../../packages/omniwatch/src/storage/operations.ts";
-import { runOperation } from "../../packages/omniwatch/src/runtime/worker.ts";
+import { recoverPendingWork, runOperation } from "../../packages/omniwatch/src/runtime/worker.ts";
 import { createSourceRegistry } from "../../packages/omniwatch/src/sources/registry.ts";
 import { fpsFor, formatDuration, strip } from "../../packages/omniwatch/src/sources/media.ts";
 import { parseSourceUrl } from "../../packages/omniwatch/src/sources/url.ts";
@@ -54,6 +54,21 @@ export const DEFAULT_HOST = "127.0.0.1";
 /** Beta pricing for qwen3.8-omni-flash; the standalone is the host that owns pricing. */
 export const PRICE_PER_INPUT_TOKEN = 0.15 / 1e6;
 export const PRICE_PER_OUTPUT_TOKEN = 0.47 / 1e6;
+
+/**
+ * How often a long-running standalone request refreshes its ownership heartbeat.
+ *
+ * The shared worker already beats every `DEFAULT_HEARTBEAT_MS`; this adapter did not.
+ * One Qwen analysis runs far longer than the takeover window (30 s), so without a
+ * heartbeat a request that is still very much alive looked abandoned: a second
+ * concurrent request on the same data directory called `acquireOwner`, saw a heartbeat
+ * frozen at acquire time, took ownership, and the first request then died inside
+ * `assertOwnership` mid-analysis - with its paid answer already on disk.
+ *
+ * The beat is well under the 30 s stale window on purpose: several missed ticks must
+ * still look live, while a process that really died goes stale on schedule.
+ */
+export const OWNER_HEARTBEAT_MS = 1_000;
 
 /* ------------------------------------------------------------------- SSE ---- */
 
@@ -461,35 +476,65 @@ export async function runWatchPipeline(options) {
     parentTurnId: request.parentTurnId,
     force: false,
   };
-  const enqueued = enqueueAnalysis({ store: wiring.store, request: analysisRequest });
-
-  // A repeat of already-finished work shows the existing answer instead of paying for
-  // a second analysis (the same rule the shared CLI applies).
-  if (!enqueued.created && ["delivered", "result_ready"].includes(enqueued.operation.state)) {
-    const existing = wiring.store.getBuffer(enqueued.operation.id)?.result ?? null;
-    if (existing) {
-      emit("answer.text", { text: existing.content });
-      emit("turn", {
-        conversationId: existing.conversationId,
-        turnId: existing.turnId,
-        parentTurnId: existing.parentTurnId ?? null,
-        analysisId: existing.analysisId,
-        reused: true,
-      });
-      emit("done", { text: existing.content, usage: usagePayload(existing.usage, existing.parts, true) });
-      return { analysisId: existing.analysisId, operationId: enqueued.operation.id, reused: true };
-    }
-  }
-
+  // Claim the data directory BEFORE admitting work. The order matters: admission is
+  // what writes a `pending` operation, and if ownership is refused afterwards the
+  // queue would hold work no consumer can ever pick up. A request that cannot own the
+  // directory must fail before it leaves anything behind.
   const token = `standalone_${process.pid}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
   if (!wiring.store.acquireOwner(token, process.pid, new Date().toISOString())) {
     throw new OmniWatchError("runtime_unavailable", "Inny proces OmniWatch jest wlascicielem tego katalogu danych.", {
       action: { label: "poczekaj na proces roboczy", kind: "check_operation" },
     });
   }
+
+  // This request is alive for as long as it is working, and it has to say so. The
+  // shared worker beats; the adapter used to stay silent, which made every analysis
+  // longer than the takeover window look abandoned to the next concurrent request.
+  let beat = null;
+  const startHeartbeat = () => {
+    beat = setInterval(() => {
+      try {
+        wiring.store.heartbeat(token, new Date().toISOString());
+      } catch {
+        // A failed beat is not fatal by itself: `assertOwnership` still guards every
+        // write, so a genuinely lost directory is reported where it matters.
+      }
+    }, OWNER_HEARTBEAT_MS);
+    if (typeof beat.unref === "function") beat.unref();
+  };
+
   let summary;
+  let enqueued;
   try {
+    startHeartbeat();
     const journal = new OperationJournal({ store: wiring.store, ownerToken: token });
+    // Resolve interrupted work before admission. A previously started paid call is
+    // marked outcome_unknown here, so claiming the same key cannot execute it again.
+    await recoverPendingWork(wiring.deps, journal);
+    enqueued = enqueueAnalysis({ store: wiring.store, request: analysisRequest });
+
+    if (enqueued.operation.state === "outcome_unknown") {
+      throw new OmniWatchError("outcome_unknown", "Wynik poprzedniego wywolania modelu jest nieznany; sprawdz operacje przed ponowieniem.");
+    }
+
+    // A repeat of already-finished work shows the existing answer instead of paying for
+    // a second analysis (the same rule the shared CLI applies).
+    if (!enqueued.created && ["delivered", "result_ready"].includes(enqueued.operation.state)) {
+      const existing = wiring.store.getBuffer(enqueued.operation.id)?.result ?? null;
+      if (existing) {
+        emit("answer.text", { text: existing.content });
+        emit("turn", {
+          conversationId: existing.conversationId,
+          turnId: existing.turnId,
+          parentTurnId: existing.parentTurnId ?? null,
+          analysisId: existing.analysisId,
+          reused: true,
+        });
+        emit("done", { text: existing.content, usage: usagePayload(existing.usage, existing.parts, true) });
+        return { analysisId: existing.analysisId, operationId: enqueued.operation.id, reused: true };
+      }
+    }
+
     summary = await runOperation(wiring.deps, journal, enqueued.operation.id, {
       onProgress: (event) => {
         const mapped = progressToEvent(event);
@@ -497,6 +542,7 @@ export async function runWatchPipeline(options) {
       },
     });
   } finally {
+    if (beat) clearInterval(beat);
     wiring.store.releaseOwner(token);
   }
 
@@ -867,12 +913,22 @@ export function createStandaloneServer(options = {}) {
     return wiring;
   }
 
+  // One HTTP process has one writer for this data directory. Requests wait in arrival
+  // order; each claims ownership and admits work only when its turn begins. This keeps
+  // two tabs independent while retaining the store's cross-process fencing.
+  let watchTail = Promise.resolve();
   context.defaultWatch = async ({ emit, request }) => {
-    const wiring = buildWiring();
+    const previous = watchTail;
+    let release;
+    watchTail = new Promise((resolve) => { release = resolve; });
+    await previous;
+    let wiring;
     try {
+      wiring = buildWiring();
       await runWatchPipeline({ wiring, emit, request, config });
     } finally {
-      wiring.close();
+      wiring?.close();
+      release();
     }
   };
 

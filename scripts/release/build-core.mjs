@@ -216,7 +216,7 @@ async function main() {
 
   // 3. Exactly one artifact in the output directory.
   for (const entry of readdirSync(outDir)) {
-    if (/^omniwatch-core-.*\.tgz$/.test(entry)) {
+    if (/^omniwatch-core-.*\.(?:tgz|manifest\.json)$/.test(entry)) {
       rmSync(join(outDir, entry));
       log(`· usunieto poprzedni artefakt ${entry}`);
     }

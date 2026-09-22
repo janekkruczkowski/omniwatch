@@ -24,7 +24,7 @@ import {
   uploadPolicyUrl,
 } from "../../packages/omniwatch/src/contracts/endpoints.ts";
 import { loadStandaloneConfig, runtimeConfigDocument } from "../../apps/standalone/config.mjs";
-import { createRuntimeWiring } from "../../packages/omniwatch/src/runtime/poc.ts";
+import { createFixtureSource, createRuntimeWiring } from "../../packages/omniwatch/src/runtime/poc.ts";
 import { createStandaloneServer } from "../../apps/standalone/server.mjs";
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -337,8 +337,12 @@ function runPage() {
   const documentStub = {
     body: {
       classList: {
-        add: (name) => bodyClasses.add(name),
-        remove: (name) => bodyClasses.delete(name),
+        // `classList.add`/`remove` are variadic in the DOM, and the page uses that:
+        // `fail()` adds "idle" AND "failed", `ask()` removes "idle", "failed" and
+        // "done". A single-argument stub silently dropped every name after the first,
+        // so the page looked like it never recorded the terminal state it did record.
+        add: (...names) => names.forEach((name) => bodyClasses.add(name)),
+        remove: (...names) => names.forEach((name) => bodyClasses.delete(name)),
         contains: (name) => bodyClasses.has(name),
       },
     },
@@ -450,6 +454,473 @@ test("ISSUE-003 live: the server's own error frame reports missing_config", asyn
     assert.equal(payload.error, "missing_config", "the reason must name the missing model configuration");
     assert.ok(payload.message && payload.message.length > 0, "a human-readable reason must be present");
   } finally {
+    await app.close();
+  }
+});
+
+/* --------------------------------------------------------- ISSUE-003 (visible) -- */
+
+/**
+ * The live browser test that found ISSUE-003 measured `getClientRects().length === 0`:
+ * the error text and the Retry button were in the DOM but the person could not see
+ * them, because the only rule that displayed `main` was `body.running main{display:grid}`
+ * and `fail()` dropped `running`. Asserting on element state alone cannot catch that.
+ *
+ * `mainVisible()` answers the question the browser answered: given the body classes the
+ * page ends up with, is `main` displayed? It reads the shipped stylesheet instead of a
+ * copy of the rules, so it fails if someone removes the terminal-state rule again.
+ *
+ * The selector is split so the `body` tag itself is never treated as a class. The
+ * first version kept the whole matched prefix (`body.running `) and then asked whether
+ * the class set contains "body" - which no class set ever does, so every guarded rule
+ * was reported as not applying and the helper answered "hidden" for the two states
+ * this very test exists to check.
+ */
+function mainVisible(bodyClasses) {
+  // Strip CSS comments first: a comment immediately before a rule otherwise becomes
+  // part of the selector text, so `body.failed` would never match and this helper
+  // would report "hidden" for a rule that is actually there.
+  const css = pageHtml.replace(/\/\*[\s\S]*?\*\//g, "");
+  const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)];
+  let display = null;
+  for (const [, selectorList, declarations] of rules) {
+    const value = /display\s*:\s*([a-z-]+)/i.exec(declarations)?.[1];
+    if (!value) continue;
+    for (const raw of selectorList.split(",")) {
+      const selector = raw.trim();
+      // `body.running main` / `body.idle.failed main` / bare `main`. The tag name is
+      // matched literally and discarded; only the dot-separated classes are captured.
+      const match = /^(?:body((?:\.[a-zA-Z-]+)*)\s+)?main$/.exec(selector);
+      if (!match) continue;
+      const required = (match[1] ?? "")
+        .split(".")
+        .filter(Boolean);
+      if (required.every((name) => bodyClasses.has(name))) display = value;
+    }
+  }
+  return { display, visible: display !== null && display !== "none" };
+}
+
+test("ISSUE-003 visible: a terminal error leaves the message and Retry on screen", async () => {
+  const { dom, bodyClasses, sources, submit } = runPage();
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  submit();
+  const es = sources[sources.length - 1];
+  assert.ok(es, "submitting a URL must open the analysis stream");
+
+  // Before the error the page is mid-run: `main` is on screen via body.running.
+  assert.equal(mainVisible(bodyClasses).visible, true, "a running page shows the work area");
+
+  es.emit("error", { error: "missing_config", message: "Brak klucza modelu: ustaw DASHSCOPE_API_KEY." });
+
+  const layout = mainVisible(bodyClasses);
+  assert.equal(
+    layout.visible,
+    true,
+    `the terminal error must keep the work area displayed (display was "${layout.display}"); ` +
+      "otherwise the message and Retry are in the DOM with no client rects",
+  );
+  assert.equal(bodyClasses.has("failed"), true, "the page must record the terminal failed state");
+  assert.equal(bodyClasses.has("running"), false, "the running state must be cleared");
+
+  // The card the error is written into is inside `main`, so a hidden `main` hides it.
+  const card = dom.elements.get("#stripCard") ?? dom.elements.get("#newvid");
+  assert.ok(pageHtml.includes('role="alert"'), "index.html must render the error as role=alert");
+  assert.ok(card !== undefined, "the error card must exist in the shipped markup");
+
+  // The progress clock is part of the run, not of the result: it must not stay frozen.
+  assert.equal(dom.elements.get("#timer").textContent, "", "a terminal state must clear the timer");
+  assert.equal(dom.elements.get("#progressLabel").textContent, "", "a terminal state must clear the progress label");
+});
+
+test("ISSUE-003 visible: a new run clears the failed state again", async () => {
+  const { dom, bodyClasses, sources, submit } = runPage();
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  submit();
+  sources[sources.length - 1].emit("error", { error: "missing_config", message: "brak klucza" });
+  assert.equal(bodyClasses.has("failed"), true, "the error marked the page");
+
+  // Pressing Retry re-issues the same request and must return to the running state.
+  dom.elements.get("#retryBtn").dispatch("click");
+  assert.equal(bodyClasses.has("failed"), false, "a retry must clear the failed state");
+  assert.equal(bodyClasses.has("running"), true, "a retry must run again");
+  assert.equal(mainVisible(bodyClasses).visible, true, "the retried run shows the work area");
+});
+
+/* ------------------------------------------------------------------ ISSUE-007 -- */
+
+/**
+ * The live QA test ran ONE standalone process and hit it from two browser tabs: a
+ * summary and a follow-up, plus a teardown of the same film. The follow-up died with
+ * "Ten proces nie jest juz wlascicielem katalogu danych OmniWatch" while no server was
+ * restarted and the host used its own data dir.
+ *
+ * Cause: every `/api/watch` request built its own runtime wiring and called
+ * `acquireOwner`, but nothing refreshed that owner. A real Qwen analysis runs far
+ * longer than the takeover window (30 s), so the request's heartbeat stayed frozen at
+ * acquire time; the second concurrent request saw a stale heartbeat, took the data
+ * directory over, and the first request then failed inside `assertOwnership` - with
+ * its paid answer already on disk and the operation left in `running`.
+ *
+ * These tests drive the REAL handler over the real store with controlled timing. The
+ * model blocks on a gate, so "a request that is still working" is deterministic
+ * instead of a flaky sleep.
+ */
+function gatedModel() {
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const calls = [];
+  return {
+    modelName: "stub-gated",
+    calls,
+    release: () => release(),
+    async call(request) {
+      calls.push(request.operationId);
+      await gate;
+      return {
+        text: "## Summary\n- [0:05] punkt",
+        usage: { inputTokens: 10, outputTokens: 5, costUsd: 0.001, costKnown: true },
+        completed: true,
+      };
+    },
+  };
+}
+
+function watchShell() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "omni-own-"));
+  const appRoot = path.join(dir, "app");
+  const dataDir = path.join(dir, "data");
+  const cacheDir = path.join(dir, "cache");
+  for (const d of [appRoot, dataDir, cacheDir]) fs.mkdirSync(d, { recursive: true });
+  fs.mkdirSync(path.join(appRoot, "static"), { recursive: true });
+  for (const name of ["index.html", "i18n.json"]) {
+    fs.copyFileSync(path.join(repo, "apps/standalone/static", name), path.join(appRoot, "static", name));
+  }
+  fs.writeFileSync(path.join(appRoot, ".env"), "DASHSCOPE_API_KEY=fixture-not-a-secret\nOMNI_MODEL=fixture\n");
+  // A real cached film, so `prepare` resolves offline instead of shelling out to
+  // yt-dlp. Without it the request fails at the download stage and never reaches the
+  // model, which would make the ownership assertions test nothing. Same fixture the
+  // frame tests use.
+  plantCachedVideo(cacheDir, "SYNTHETIC01");
+  return { dir, appRoot, dataDir, cacheDir };
+}
+
+/** Copy one fixture film (source.mp4 + info.json) into a fresh cache directory. */
+function plantCachedVideo(cacheDir, id) {
+  const target = path.join(cacheDir, id);
+  fs.mkdirSync(target, { recursive: true });
+  for (const name of ["source.mp4", "info.json"]) {
+    fs.copyFileSync(path.join(fixtures, "legacy/.cache", id, name), path.join(target, name));
+  }
+  return target;
+}
+
+/**
+ * Drive `/api/watch` through the app's own handler with no socket.
+ *
+ * `createStandaloneServer` exposes `handle(req, res)` for exactly this: the same code
+ * path that sits behind `http.createServer`, minus the bind. That keeps the queue and
+ * ownership assertions runnable even where binding loopback is not permitted, and it
+ * is the last resort only because a real socket is a stronger test - the socket-based
+ * tests above still cover the transport.
+ */
+async function driveWatch(app, { url, q = "", lang = "pl", mode = "summary" }) {
+  const query = new URLSearchParams({ url, q, lang, mode });
+  const req = {
+    method: "GET",
+    url: `/api/watch?${query.toString()}`,
+    headers: { host: `127.0.0.1:${app.port}` },
+  };
+  let body = "";
+  const res = {
+    headersSent: false,
+    writeHead() {
+      res.headersSent = true;
+      return res;
+    },
+    write(chunk) {
+      body += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
+      res.headersSent = true;
+      return true;
+    },
+    end(chunk) {
+      if (typeof chunk === "string") body += chunk;
+      else if (chunk) body += Buffer.from(chunk).toString("utf8");
+      res.headersSent = true;
+      return res;
+    },
+  };
+  await app.handle(req, res);
+  return { body };
+}
+
+test("ISSUE-007: a live request keeps ownership, so a concurrent run is not a takeover", async (t) => {
+  const { appRoot, dataDir, cacheDir } = watchShell();
+  const model = gatedModel();
+  const app = createStandaloneServer({
+    appRoot,
+    dataDir,
+    cacheDir,
+    model,
+    source: createFixtureSource({ durationSeconds: 16 }),
+    // Port 0: the OS picks a free port. A fixed port makes two concurrent test
+    // processes collide with EADDRINUSE, which hides the behaviour under test behind
+    // an unrelated bind failure.
+    port: 0,
+    env: { OMNIWATCH_APP_ROOT: appRoot, OMNIWATCH_DATA_DIR: dataDir },
+  });
+  const address = await listenOrSkip(t, app);
+  if (!address) return;
+  const base = `http://127.0.0.1:${address.port}`;
+  try {
+    // First request: starts, blocks in the model, holds the data directory.
+    const first = fetch(`${base}/api/watch?url=${encodeURIComponent("https://youtu.be/SYNTHETIC01")}&lang=pl&mode=summary`);
+    // Wait until the paid call is actually in flight.
+    for (let i = 0; i < 200 && model.calls.length === 0; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.equal(model.calls.length, 1, "the first request must reach the model");
+
+    // The heartbeat must be refreshed while the request is still working. A frozen
+    // heartbeat is exactly what let a second request steal the directory.
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+
+    // Second request while the first is still running: same process, same data dir.
+    // It is a different question on the same film, so it is genuinely separate work -
+    // and it must never take the directory away from the live first request.
+    const second = fetch(
+      `${base}/api/watch?url=${encodeURIComponent("https://youtu.be/SYNTHETIC01")}` +
+        `&q=${encodeURIComponent("inny punkt")}&lang=pl&mode=summary`,
+    );
+    // A second tab waits its turn in the same process. Releasing the model lets both
+    // operations finish, so neither caller is stranded with a pending operation.
+    model.release();
+    const secondBody = await (await second).text();
+
+    assert.doesNotMatch(
+      secondBody,
+      /nie jest juz wlascicielem/,
+      "no request may lose ownership while the process is alive",
+    );
+
+    const firstBody = await (await first).text();
+    assert.doesNotMatch(
+      firstBody,
+      /nie jest juz wlascicielem/,
+      "the long-running request must keep its ownership and deliver its paid answer",
+    );
+    assert.match(firstBody, /event: done/, "the first request must still deliver a result");
+  } finally {
+    await app.close();
+  }
+});
+
+test("ISSUE-007: a genuinely stale owner is still replaceable, a fresh one is not", () => {
+  const { appRoot, dataDir } = watchShell();
+  const config = runtimeConfigDocument(loadStandaloneConfig({ appRoot, env: {} }));
+  // The takeover window is a property of the STORE, so the test configures the store
+  // the same way `runWorker` does instead of going through the HTTP app: the previous
+  // version built a zero-window server and then inspected an unrelated default-window
+  // wiring, so its "replaceable" expectation could never hold and the D5 guarantee it
+  // claimed to protect was never actually exercised.
+  const wiring = createRuntimeWiring({ dataDir, config, environment: {}, ownerStaleAfterMs: 0 });
+  try {
+    assert.equal(wiring.store.acquireOwner("live_owner", process.pid, "2026-09-22T10:00:00.000Z"), true);
+
+    // A fresh heartbeat belongs to a live process and must NOT be stolen, even though
+    // this store has a zero-length window: the age check compares timestamps, and a
+    // newer beat than the reference proves the owner is alive.
+    assert.equal(
+      wiring.store.acquireOwner("thief", process.pid, "2026-09-22T10:00:00.000Z"),
+      false,
+      "a live owner must keep the directory",
+    );
+    assert.equal(wiring.store.getOwner().token, "live_owner");
+
+    // An owner whose last beat is older than the window is abandoned and may be
+    // replaced. This is the D5 guarantee the fix must not remove.
+    assert.equal(
+      wiring.store.acquireOwner("new_owner", process.pid, "2026-09-22T10:00:05.000Z"),
+      true,
+      "an abandoned owner must still be replaceable",
+    );
+    assert.equal(wiring.store.getOwner().token, "new_owner");
+    assert.equal(
+      wiring.store.heartbeat("live_owner", "2026-09-22T10:00:05.000Z"),
+      false,
+      "the replaced owner is refused",
+    );
+  } finally {
+    wiring.close();
+  }
+});
+
+/* --------------------------------------------------------- ISSUE-007 (queue) -- */
+
+/**
+ * Root's second half of ISSUE-007: a heartbeat alone is not enough.
+ *
+ * The first version of the handler admitted work (`enqueueAnalysis`, which writes a
+ * `pending` operation) and only then asked for ownership. When a second request lost
+ * that race it was refused - correctly - but the queue kept a `pending` operation
+ * that no consumer would ever pick up: the caller saw an error while the disk said
+ * there was work waiting.
+ *
+ * These tests drive the real handler through the socket-free `handle()` path so the
+ * assertion is about store state, not transport. A competing owner is installed in a
+ * separate wiring over the SAME data directory, which is exactly the situation the
+ * live QA run hit (a worker or another request already holding the directory).
+ */
+test("ISSUE-007 queue: a request refused ownership leaves NO pending operation behind", async (t) => {
+  const { appRoot, dataDir, cacheDir } = watchShell();
+  const app = createStandaloneServer({
+    appRoot,
+    dataDir,
+    cacheDir,
+    model: gatedModel(),
+    source: createFixtureSource({ durationSeconds: 16 }),
+    port: 0,
+    env: { OMNIWATCH_APP_ROOT: appRoot, OMNIWATCH_DATA_DIR: dataDir },
+  });
+
+  // Another consumer already owns this data directory and is still beating.
+  const rival = createRuntimeWiring({
+    dataDir,
+    config: runtimeConfigDocument(loadStandaloneConfig({ appRoot, env: {} })),
+    environment: {},
+  });
+  try {
+    assert.equal(rival.store.acquireOwner("rival_owner", process.pid, new Date().toISOString()), true);
+
+    const result = await driveWatch(app, {
+      url: "https://youtu.be/SYNTHETIC02",
+      lang: "pl",
+      mode: "summary",
+    });
+
+    // The request must be refused visibly, with the actionable "another worker" reason.
+    assert.match(result.body, /event: error/, "the competing request must end in an SSE error frame");
+    assert.match(
+      result.body,
+      /runtime_unavailable/,
+      "the error must name the refused-ownership class",
+    );
+
+    // And the queue must not hold work nobody can run. This is the regression: the
+    // old order wrote a pending operation before the ownership check failed.
+    const pending = rival.store.listOperations({ state: "pending" });
+    assert.equal(
+      pending.length,
+      0,
+      `a refused request must not leave consumer-less work, found ${pending.length} pending operation(s)`,
+    );
+  } finally {
+    rival.close();
+    await app.close();
+  }
+});
+
+test("ISSUE-007 queue: the owner survives its own long request and the queue drains", async (t) => {
+  const { appRoot, dataDir, cacheDir } = watchShell();
+  const model = gatedModel();
+  const app = createStandaloneServer({
+    appRoot,
+    dataDir,
+    cacheDir,
+    model,
+    source: createFixtureSource({ durationSeconds: 16 }),
+    port: 0,
+    env: { OMNIWATCH_APP_ROOT: appRoot, OMNIWATCH_DATA_DIR: dataDir },
+  });
+  try {
+    // First request blocks inside the model, holding the directory.
+    const first = driveWatch(app, { url: "https://youtu.be/SYNTHETIC01", lang: "pl", mode: "summary" });
+    for (let i = 0; i < 200 && model.calls.length === 0; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.equal(model.calls.length, 1, "the first request must reach the model");
+
+    // Long enough for the heartbeat to tick at least once, well under the 30 s window.
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+
+    // The first run completes normally, with its answer, and leaves no pending work.
+    model.release();
+    const firstResult = await first;
+    assert.match(firstResult.body, /event: done/, "the owned request must deliver its result");
+    assert.doesNotMatch(
+      firstResult.body,
+      /nie jest juz wlascicielem/,
+      "a live request must never lose its own directory",
+    );
+
+    const wiring = createRuntimeWiring({
+      dataDir,
+      config: runtimeConfigDocument(loadStandaloneConfig({ appRoot, env: {} })),
+      environment: {},
+    });
+    try {
+      assert.equal(
+        wiring.store.listOperations({ state: "pending" }).length,
+        0,
+        "the queue must be drained once the request finishes",
+      );
+      assert.equal(wiring.store.getOwner(), null, "ownership must be released when the request ends");
+    } finally {
+      wiring.close();
+    }
+  } finally {
+    await app.close();
+  }
+});
+
+test("ISSUE-007 queue: two tabs complete distinct requests without orphaned work", async () => {
+  const { appRoot, dataDir } = watchShell();
+  const model = gatedModel();
+  const app = createStandaloneServer({
+    appRoot,
+    dataDir,
+    source: createFixtureSource({ durationSeconds: 16 }),
+    model,
+    port: 0,
+    env: { OMNIWATCH_APP_ROOT: appRoot, OMNIWATCH_DATA_DIR: dataDir },
+  });
+  try {
+    const first = driveWatch(app, { url: "https://youtu.be/SYNTHETIC01", mode: "summary" });
+    for (let i = 0; i < 200 && model.calls.length === 0; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.equal(model.calls.length, 1, "first request reaches the model");
+    const second = driveWatch(app, {
+      url: "https://youtu.be/SYNTHETIC01",
+      q: "Wyjasnij inny punkt",
+      mode: "summary",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(model.calls.length, 1, "second request waits without making a paid call");
+    model.release();
+    const [a, b] = await Promise.all([first, second]);
+    assert.match(a.body, /event: done/);
+    assert.match(b.body, /event: done/);
+    assert.equal(model.calls.length, 2, "each distinct request executes exactly once");
+    const wiring = createRuntimeWiring({
+      dataDir,
+      config: runtimeConfigDocument(loadStandaloneConfig({ appRoot, env: {} })),
+      environment: {},
+    });
+    try {
+      assert.equal(wiring.store.listOperations({ state: "pending" }).length, 0);
+      assert.equal(wiring.store.listOperations({ state: "running" }).length, 0);
+      assert.equal(wiring.store.listOperations({ state: "delivered" }).length, 2);
+      assert.equal(wiring.store.getOwner(), null);
+    } finally {
+      wiring.close();
+    }
+  } finally {
+    model.release();
     await app.close();
   }
 });

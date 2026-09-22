@@ -488,7 +488,7 @@ function shellFiles(target, root) {
  * the film project's own modules must survive (SPEC: analysis release must not
  * replace production code).
  */
-function planIntegration(options, manifest, previous, conflicts, warnings) {
+function planIntegration(options, manifest, previous, conflicts, warnings, entries) {
   const integration = manifest.shellIntegration;
   if (!integration || options.target !== "agent-os") return [];
   const files = integration.files ?? [];
@@ -548,6 +548,38 @@ function planIntegration(options, manifest, previous, conflicts, warnings) {
       continue;
     }
     planned.push(plannedItem);
+  }
+  // The host integration imports the shared source graph from the sibling
+  // packages/omniwatch directory. Materialize that graph from the VERIFIED tarball;
+  // otherwise a standalone Agent OS installation has unresolved relative imports.
+  for (const entry of entries.filter((item) => item.path.startsWith("src/"))) {
+    const rel = `packages/omniwatch/${entry.path}`;
+    const absolute = join(options.root, ...rel.split("/"));
+    const ownedBefore = managedBefore[rel] ?? null;
+    if (existsSync(absolute) && ownedBefore !== sha256File(absolute)) {
+      conflicts.push({ path: rel, reason: "plik wspolnego rdzenia zmieniony poza instalatorem" });
+      continue;
+    }
+    planned.push({ absolute, rel, kind: "integration", entry: { path: rel, data: entry.data, mode: entry.mode } });
+  }
+  // The shared TypeScript graph intentionally uses explicit .ts extensions. Next's
+  // host compiler needs this switch to typecheck those imports in a clean install.
+  const tsconfigRel = "source/tsconfig.json";
+  const tsconfigPath = join(options.root, tsconfigRel);
+  if (existsSync(tsconfigPath)) {
+    const ownedBefore = managedBefore[tsconfigRel] ?? null;
+    if (ownedBefore && ownedBefore !== sha256File(tsconfigPath)) {
+      conflicts.push({ path: tsconfigRel, reason: "tsconfig hosta zmieniony poza instalatorem" });
+    } else {
+      const hostConfig = readJson(tsconfigPath);
+      hostConfig.compilerOptions = { ...hostConfig.compilerOptions, allowImportingTsExtensions: true };
+      planned.push({
+        absolute: tsconfigPath,
+        rel: tsconfigRel,
+        kind: "integration",
+        entry: { path: tsconfigRel, data: Buffer.from(`${JSON.stringify(hostConfig, null, 2)}\n`), mode: 0o644 },
+      });
+    }
   }
   return planned;
 }
@@ -880,7 +912,18 @@ function planInstall(options, layout, manifest, entries, previous) {
     const absolute = join(options.root, rel);
     if (!existsSync(absolute)) continue;
     const unchangedPlanned = planned.some((item) => item.rel === rel && item.unchanged);
-    if (sha256File(absolute) !== digest && !unchangedPlanned) {
+    // Older installs recorded the old pointer hash before the final atomic switch.
+    // Accept that one known installer mistake only when the pointer still names the
+    // exact release and tarball recorded by the previous install manifest.
+    let validPreviousPointer = false;
+    if (absolute === layout.currentFile && previous) {
+      try {
+        const pointer = JSON.parse(readFileSync(absolute, "utf8"));
+        validPreviousPointer = pointer.release === previous.release &&
+          pointer.sha256 === previous.tarballSha256;
+      } catch { /* malformed pointer remains a conflict */ }
+    }
+    if (sha256File(absolute) !== digest && !unchangedPlanned && !validPreviousPointer) {
       conflicts.push({
         path: rel,
         reason: "plik OmniWatch zmieniony przez uzytkownika od ostatniej instalacji",
@@ -919,7 +962,7 @@ function planInstall(options, layout, manifest, entries, previous) {
   // shared engine. Refused for a file the host already has (never overwrite film code).
   const integration = options.skipIntegration
     ? []
-    : planIntegration(options, manifest, previous, conflicts, warnings);
+    : planIntegration(options, manifest, previous, conflicts, warnings, entries);
   if (options.target === "agent-os" && !options.skipIntegration && integration.length === 0) {
     warnings.push(
       "brak plikow integracji do instalacji - panel Agent OS nie zostanie zaktualizowany",
@@ -1100,7 +1143,8 @@ function applyInstall(options, layout, manifest, plan, previous, tools) {
   }
   const managedFiles = {};
   for (const item of plan.planned) {
-    if ((item.kind === "release" || item.kind === "current") && existsSync(item.absolute)) {
+    if (item.kind === "current") managedFiles[item.rel] = sha256(item.content);
+    else if (item.kind === "release" && existsSync(item.absolute)) {
       managedFiles[item.rel] = sha256File(item.absolute);
     }
   }

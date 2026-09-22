@@ -279,7 +279,7 @@ export default function ChannelScan({ lang }: { lang: string }) {
   const unpriced = chosen.length - priced.length;
   // An unknown price counts as needing confirmation too: not knowing what it costs is
   // not the same as knowing it is small.
-  const needsConfirm = total > CONFIRM_ABOVE || unpriced > 0;
+  const selectionNeedsConfirm = total > CONFIRM_ABOVE || unpriced > 0;
 
   return (
     <div className="space-y-5">
@@ -527,13 +527,13 @@ export default function ChannelScan({ lang }: { lang: string }) {
                 to be acknowledged — otherwise "ALL" on a large account is one stray
                 click away from real money. */}
             <button
-              onClick={() => (needsConfirm && !armed ? setArmed(true) : start())}
+              onClick={() => (selectionNeedsConfirm && !armed ? setArmed(true) : start())}
               disabled={running || !chosen.length}
               className="pill pill-warn flex items-center gap-1.5 disabled:opacity-40"
               style={{ cursor: running || !chosen.length ? "default" : "pointer" }}
             >
               {running ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} />}
-              {needsConfirm && armed
+              {selectionNeedsConfirm && armed
                 ? `Yes — spend ${unpriced > 0 ? "over " : ""}$${total.toFixed(2)} →`
                 : `Watch ${chosen.length} video${chosen.length === 1 ? "" : "s"} →`}
             </button>
