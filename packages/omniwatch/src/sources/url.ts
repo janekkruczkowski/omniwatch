@@ -147,7 +147,12 @@ function tiktokId(url: URL): string | null {
 function tiktokCanonical(id: string, url: URL): string {
   const handle = url.pathname.match(/^\/(@[\w.-]+)\//)?.[1] ?? "";
   const kind = url.pathname.includes("/photo/") ? "photo" : "video";
-  return `https://www.tiktok.com${handle}/${kind}/${id}`;
+  const path = handle ? `/${handle}/${kind}/${id}` : `/${kind}/${id}`;
+  // Built via new URL() rather than string concatenation so a missing/extra slash
+  // between the host and the path can never collapse the handle into the hostname
+  // (that bug sent yt-dlp `https://www.tiktok.com@handle/...`, which resolves the
+  // handle as a userinfo/host component and fails DNS resolution).
+  return new URL(path, "https://www.tiktok.com").toString();
 }
 
 function instagramId(url: URL): string | null {
