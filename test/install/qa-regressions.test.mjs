@@ -823,6 +823,55 @@ test("a confirmed retry reuses committed earlier parts and pays only for unfinis
   }
 });
 
+test("one explicitly approved legacy response can be reused without enabling length-only caching", async () => {
+  const { appRoot, dataDir, cacheDir } = watchShell();
+  const calls = [];
+  const model = {
+    modelName: "stub-legacy-checkpoint",
+    async call(request) {
+      calls.push(request.partIndex);
+      if (request.partIndex === 1 && calls.length === 2) throw new OmniWatchError("outcome_unknown", "Druga czesc niepewna.");
+      return {
+        text: `Odpowiedz ${request.partIndex}`,
+        usage: { inputTokens: 10, outputTokens: 5, costUsd: 0.001, costKnown: true },
+        completed: true,
+      };
+    },
+  };
+  const app = createStandaloneServer({
+    appRoot, dataDir, cacheDir, model,
+    source: createFixtureSource({ durationSeconds: 240 }),
+    env: { OMNIWATCH_APP_ROOT: appRoot, OMNIWATCH_DATA_DIR: dataDir, OMNI_MAX_FRAMES: "300" },
+  });
+  const url = "https://youtu.be/SYNTHETIC01";
+  const first = await driveWatch(app, { url });
+  const operationId = sseData(first.body, "operation")?.operationId;
+  assert.equal(sseData(first.body, "error")?.error, "outcome_unknown");
+  const wiring = createRuntimeWiring({
+    dataDir, config: runtimeConfigDocument(loadStandaloneConfig({ appRoot, env: {} })), environment: {},
+  });
+  let oldId;
+  try {
+    const response = wiring.store.listAttempts(operationId).find((attempt) => attempt.phase === "response");
+    assert.ok(response);
+    oldId = response.id;
+    const { schema, contentHash, ...legacySummary } = JSON.parse(response.requestSummary);
+    assert.equal(schema, 2);
+    assert.ok(contentHash);
+    wiring.store.recordAttempt({
+      id: response.id, operationId, phase: "response", partIndex: response.partIndex,
+      model: response.model, requestSummary: JSON.stringify(legacySummary),
+      responseSummary: response.responseSummary, usage: response.usage,
+    });
+  } finally {
+    wiring.close();
+  }
+  app.config.effectiveEnv.OMNIWATCH_LEGACY_CHECKPOINT_ATTEMPT = oldId;
+  const retry = await driveWatch(app, { url, retryOperation: operationId, confirmRetry: true });
+  assert.ok(sseData(retry.body, "done"), retry.body);
+  assert.deepEqual(calls, [0, 1, 1, 2], "only the approved legacy response is reused");
+});
+
 test("ISSUE-007: a live request keeps ownership, so a concurrent run is not a takeover", async (t) => {
   const { appRoot, dataDir, cacheDir } = watchShell();
   const model = gatedModel();
