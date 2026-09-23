@@ -18,14 +18,18 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+  chmodSync,
+  copyFileSync,
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readFileSync,
   readdirSync,
   rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { gunzipSync } from "node:zlib";
@@ -33,7 +37,10 @@ import { gunzipSync } from "node:zlib";
 import {
   AGENT_OS_PROTECTED_FILES,
   EXCLUDED_FILM_ROUTES,
+  SHELL_ARTIFACT_PREFIX,
   collectAgentOsIntegration,
+  collectStandaloneShell,
+  readIntegrationFile,
 } from "./shell-integration.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -59,8 +66,20 @@ const FORBIDDEN_PATH_PATTERNS = [
   /\.(pem|key|p12|pfx)$/i,
 ];
 
-/** Files may only come from the package's own published surface. */
-const ALLOWED_PATH_PATTERNS = [/^package\.json$/, /^README\.md$/, /^dist\//, /^src\//];
+/**
+ * Files may only come from the package's own published surface, plus the two shells
+ * the installer places (QA R2 H2/H3/M4): the Agent OS integration and the standalone
+ * launchers/adapters/frontend. Shipping them in the SAME verified artifact is what
+ * lets the installer refuse a file whose bytes differ from the manifest.
+ */
+const ALLOWED_PATH_PATTERNS = [
+  /^package\.json$/,
+  /^README\.md$/,
+  /^dist\//,
+  /^src\//,
+  /^shells\/agent-os\/source\//,
+  /^shells\/standalone\//,
+];
 
 /** An assignment of a real credential, not an identifier that merely names one. */
 const SECRET_VALUE_PATTERN =
@@ -221,14 +240,57 @@ async function main() {
       log(`· usunieto poprzedni artefakt ${entry}`);
     }
   }
-  log("→ npm pack ./packages/omniwatch");
-  // A project-local npm cache keeps the build reproducible and independent of a
-  // host's global cache permissions (a root-owned ~/.npm must not break a release).
-  const packOutput = run(
-    "npm",
-    ["pack", "./packages/omniwatch", "--json", "--ignore-scripts", "--pack-destination", outDir],
-    { npm_config_cache: join(outDir, ".npm-cache") },
+  // The Agent OS shell integration and the standalone shell travel with the release:
+  // the shared library is useless to either app if its shell is not installed from
+  // the same verified artifact. They are staged next to the core package and packed
+  // into ONE tarball; the core package itself is copied file-for-file from what
+  // `npm pack` would publish, so its own surface does not change.
+  const moduleRoot = join(ROOT, "agent-os-module");
+  const integrationEntries = existsSync(moduleRoot)
+    ? collectAgentOsIntegration(moduleRoot)
+    : { entries: [], missing: ["agent-os-module (brak katalogu)"] };
+  const standaloneRoot = join(ROOT, "apps", "standalone");
+  const standaloneEntries = existsSync(standaloneRoot)
+    ? collectStandaloneShell(standaloneRoot)
+    : { entries: [], missing: ["apps/standalone (brak katalogu)"] };
+
+  const npmCache = { npm_config_cache: join(outDir, ".npm-cache") };
+  const listing = JSON.parse(
+    run("npm", ["pack", "./packages/omniwatch", "--dry-run", "--json", "--ignore-scripts"], npmCache),
   );
+  const coreFiles = ((Array.isArray(listing) ? listing[0] : listing)?.files ?? []).map((file) => file.path);
+  if (coreFiles.length === 0) fail("npm pack --dry-run nie zwrocil listy plikow rdzenia");
+  const staging = mkdtempSync(join(tmpdir(), "omniwatch-release-stage-"));
+  let packOutput;
+  try {
+    const stageFile = (rel, bytesOrSource, mode = 0o644) => {
+      const target = join(staging, ...rel.split("/"));
+      mkdirSync(dirname(target), { recursive: true });
+      if (Buffer.isBuffer(bytesOrSource)) writeFileSync(target, bytesOrSource);
+      else copyFileSync(bytesOrSource, target);
+      chmodSync(target, mode);
+    };
+    for (const rel of coreFiles) {
+      const source = join(CORE, ...rel.split("/"));
+      stageFile(rel, source, statSync(source).mode & 0o777);
+    }
+    for (const entry of integrationEntries.entries) {
+      stageFile(`${SHELL_ARTIFACT_PREFIX["agent-os"]}/${entry.path}`, readIntegrationFile(moduleRoot, entry.path), 0o644);
+    }
+    for (const entry of standaloneEntries.entries) {
+      stageFile(`${SHELL_ARTIFACT_PREFIX.standalone}/${entry.path}`, entry.sourcePath, entry.mode);
+    }
+    log("→ npm pack (rdzen + powloki Agent OS i standalone)");
+    // A project-local npm cache keeps the build reproducible and independent of a
+    // host's global cache permissions (a root-owned ~/.npm must not break a release).
+    packOutput = run(
+      "npm",
+      ["pack", staging, "--json", "--ignore-scripts", "--pack-destination", outDir],
+      npmCache,
+    );
+  } finally {
+    rmSync(staging, { recursive: true, force: true });
+  }
   let packed;
   try {
     packed = JSON.parse(packOutput);
@@ -303,19 +365,26 @@ async function main() {
         "(brak zrodla wejsciowego w packages/omniwatch/src) - konsument nie moze zaimportowac korzenia pakietu",
     );
 
-  // The Agent OS shell integration travels with the release: the shared library is
-  // useless to the panel if its new routes/UI/libs are not installed. QA found the
-  // panel still starting at teardown because only the core was shipped.
-  const moduleRoot = join(ROOT, "agent-os-module");
-  const integrationEntries = existsSync(moduleRoot)
-    ? collectAgentOsIntegration(moduleRoot)
-    : { entries: [], missing: ["agent-os-module (brak katalogu)"] };
   if (integrationEntries.missing.length) {
     warnings.push(
       `integracja Agent OS niekompletna - brak ${integrationEntries.missing.join(", ")}; ` +
         "instalator nie zainstaluje panelu i zglosi to jako blad preflight",
     );
   }
+  if (standaloneEntries.missing.length) {
+    fail(`powloka standalone niekompletna - brak ${standaloneEntries.missing.join(", ")}`);
+  }
+  // Every shell file must be in the tarball with exactly the bytes the manifest names.
+  const byPath = new Map(files.map((file) => [file.path, file]));
+  const shellRecord = (prefix, entry) => {
+    const packedFile = byPath.get(`${prefix}/${entry.path}`);
+    if (!packedFile || packedFile.sha256 !== entry.sha256 || packedFile.bytes !== entry.bytes) {
+      fail(`plik powloki ${prefix}/${entry.path} w paczce nie zgadza sie ze zrodlem`);
+    }
+    return { path: entry.path, bytes: entry.bytes, sha256: entry.sha256, mode: entry.mode };
+  };
+  const agentOsShell = integrationEntries.entries.map((entry) => shellRecord(SHELL_ARTIFACT_PREFIX["agent-os"], entry));
+  const standaloneShell = standaloneEntries.entries.map((entry) => shellRecord(SHELL_ARTIFACT_PREFIX.standalone, entry));
 
   const manifest = {
     schema: 1,
@@ -358,15 +427,28 @@ async function main() {
     totalBytes: files.reduce((sum, file) => sum + file.bytes, 0),
     /**
      * Files the installer places INSIDE the Agent OS shell (paths relative to the
-     * Agent OS root, i.e. starting with `source/`). Content is not embedded: the
-     * installer reads the bytes from the checkout/module tree next to the manifest.
+     * Agent OS root, i.e. starting with `source/`). The bytes live in the tarball under
+     * `artifactPrefix`; the installer reads them from the verified artifact and
+     * refuses any file whose sha256 differs from this list (QA R2 M4).
      */
     shellIntegration: {
       target: "agent-os",
       rootPrefix: "source",
-      files: integrationEntries.entries,
+      artifactPrefix: SHELL_ARTIFACT_PREFIX["agent-os"],
+      files: agentOsShell,
       protectedHostFiles: AGENT_OS_PROTECTED_FILES,
       excludedFilmRoutes: EXCLUDED_FILM_ROUTES,
+    },
+    /**
+     * The standalone shell (QA R2 H2/H3): thin `app.py`/`omniwatch.py` launchers of
+     * the Node runtime, the HTTP/CLI adapters and the frontend. Installed at the app
+     * root; on a released beta directory they replace the Python shell (backed up,
+     * restorable byte for byte) while `.env`, `.cache/` and `summaries/` stay put.
+     */
+    standaloneShell: {
+      target: "standalone",
+      artifactPrefix: SHELL_ARTIFACT_PREFIX.standalone,
+      files: standaloneShell,
     },
     warnings,
   };

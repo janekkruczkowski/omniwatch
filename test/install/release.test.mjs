@@ -13,7 +13,7 @@
  */
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   existsSync,
@@ -21,10 +21,12 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import { createRequire } from "node:module";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -236,6 +238,17 @@ function makeStandaloneHost() {
   return root;
 }
 
+/**
+ * The installer's D5 gate reads the Agent OS panel's default data directory under
+ * HOME (QA R2 M3). Tests never read the developer's real ~/.agentic-os: every run
+ * gets its own empty HOME unless a test passes one.
+ */
+let isolatedHome = null;
+function testHome() {
+  if (!isolatedHome) isolatedHome = tempDir("omniwatch-home-");
+  return isolatedHome;
+}
+
 function runInstaller(args, options = {}) {
   // Always install from the artifact this run built (or the CI-built one), never from
   // a shared directory another test process may be repacking.
@@ -246,7 +259,7 @@ function runInstaller(args, options = {}) {
   const result = spawnSync(process.execPath, [INSTALL, ...args, ...pinned, "--json"], {
     cwd: ROOT,
     encoding: "utf8",
-    env: { ...process.env, ...(options.env ?? {}) },
+    env: { ...process.env, HOME: testHome(), OMNIWATCH_DATA_DIR: "", ...(options.env ?? {}) },
   });
   let payload = null;
   try {
@@ -321,7 +334,9 @@ test("T16: build emits one tarball with a manifest and no secrets", () => {
   }
   assert.deepEqual(manifest.runtimeDependencies, {}, "the core has no npm runtime dependencies");
   const text = gunzipSync(readFileSync(tarballPath)).toString("utf8");
-  assert.ok(!/DASHSCOPE_API_KEY\s*=\s*[A-Za-z0-9]/.test(text), "no provider key assignment");
+  // A credential-shaped value (16+ key characters), not the UI's `DASHSCOPE_API_KEY=sk-…`
+  // placeholder that the Agent OS integration now ships inside the same artifact.
+  assert.ok(!/DASHSCOPE_API_KEY\s*=\s*[A-Za-z0-9_-]{16,}/.test(text), "no provider key assignment");
   assert.ok(!/sk-[A-Za-z0-9]{20,}/.test(text), "no API key literal");
   assert.ok(Array.isArray(manifest.library.declaredEntryPoints));
   for (const entry of manifest.library.declaredEntryPoints) {
@@ -715,7 +730,7 @@ test("T16: the Agent OS shell wrapper is a thin call into the same installer", (
     spawnSync("bash", [wrapper, ...args], {
       cwd: ROOT,
       encoding: "utf8",
-      env: { ...process.env },
+      env: { ...process.env, HOME: testHome() },
     });
 
   const install = run([agentOs, "--json", "--release-dir", release.dir]);
@@ -732,4 +747,356 @@ test("T16: the Agent OS shell wrapper is a thin call into the same installer", (
   assert.ok(
     !readFileSync(join(agentOs, "source", "src", "components", "Sidebar.tsx"), "utf8").includes("/omniwatch"),
   );
+});
+
+/* ------------------------------------------------ QA R2 (install/migration) ---- */
+
+/** sha256 of every file under `root`, minus the installer's own and runtime dirs. */
+function treeDigest(root, skip = ["vendor", "data"]) {
+  const out = {};
+  const walk = (dir, rel) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const next = rel ? `${rel}/${entry.name}` : entry.name;
+      if (!rel && skip.includes(entry.name)) continue;
+      if (entry.isDirectory()) walk(join(dir, entry.name), next);
+      else out[next] = sha256File(join(dir, entry.name));
+    }
+  };
+  walk(root, "");
+  return out;
+}
+
+/** A copy of the released Python beta layout, with user data next to the scripts. */
+function makeBetaDir() {
+  const root = join(tempDir("omniwatch-beta-"), "video-watch");
+  mkdirSync(join(root, "static"), { recursive: true });
+  mkdirSync(join(root, "summaries"), { recursive: true });
+  mkdirSync(join(root, ".cache", "SYNTHETIC01"), { recursive: true });
+  mkdirSync(join(root, ".cache", "outer-loop"), { recursive: true });
+  writeFileSync(
+    join(root, "app.py"),
+    [
+      "#!/usr/bin/env -S uv run --script",
+      '# dependencies = ["openai>=1.52", "fastapi>=0.110", "uvicorn>=0.29"]',
+      '"""OmniWatch web UI - paste a link, ask a question."""',
+      "import omniwatch as ow",
+      "uvicorn.run(app, host='127.0.0.1', port=8765)",
+      "",
+    ].join("\n"),
+  );
+  writeFileSync(join(root, "omniwatch.py"), "OSS_TTL = 47 * 3600\nprint('beta engine')\n", { mode: 0o755 });
+  writeFileSync(join(root, "static", "index.html"), "<!doctype html><title>OmniWatch beta</title>\n");
+  writeFileSync(join(root, "static", "i18n.json"), '{"en":{"name":"English"}}\n');
+  writeFileSync(join(root, "summaries", "SYNTHETIC01.md"), "# Beta summary\n\nzapisana analiza\n");
+  writeFileSync(join(root, ".cache", "SYNTHETIC01", "info.json"), '{"title":"Fixture","duration":16}\n');
+  writeFileSync(join(root, ".cache", "outer-loop", "b1-report.md"), "not a film\n");
+  writeFileSync(join(root, ".env"), "OMNI_LANG=pl\nOMNIWATCH_PORT=8765\n");
+  writeFileSync(join(root, "README.md"), "beta readme\n");
+  return root;
+}
+
+function standaloneShellEntry(path) {
+  return release.manifest.standaloneShell.files.find((file) => file.path === path);
+}
+
+function freePort() {
+  return new Promise((resolvePort, reject) => {
+    const server = createServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const { port } = server.address();
+      server.close(() => resolvePort(port));
+    });
+  });
+}
+
+test("QA R2 H1: the handoff's exact --host <agent-os>/source commands work on a clean host", () => {
+  const agentOs = makeAgentOsHost();
+  const dataDir = join(tempDir("omniwatch-h1-data-"), "data");
+  // Exactly the two documented forms: `--check --host <.../source>` and the install.
+  const check = runInstaller(["--check", "--host", join(agentOs, "source")]);
+  assert.equal(check.status, 0, `${check.stderr}\n${check.stdout}`);
+  assert.equal(check.json.target, "agent-os", "--host defaults to the Agent OS target");
+  assert.equal(check.json.root, agentOs, "a path to the Next app is normalised to the Agent OS root");
+  assert.equal(check.json.rootNormalizedFrom, join(agentOs, "source"));
+  assert.ok(!existsSync(join(agentOs, "omniwatch")), "--check wrote nothing");
+
+  const install = runInstaller(["--host", join(agentOs, "source"), "--data-dir", dataDir]);
+  assert.equal(install.status, 0, install.stderr);
+  assert.ok(existsSync(join(agentOs, "omniwatch", "current")), "installed next to source/, not inside it");
+  assert.ok(!existsSync(join(agentOs, "source", "omniwatch")), "no nested install under source/");
+  assert.ok(!existsSync(join(agentOs, "source", "source")), "no source/source lookups left behind");
+  assert.ok(
+    readFileSync(join(agentOs, "source", "src", "components", "Sidebar.tsx"), "utf8").includes('"/omniwatch"'),
+  );
+
+  // --root <.../source> is normalised the same way.
+  const agentOs2 = makeAgentOsHost();
+  const viaRoot = runInstaller(["--target", "agent-os", "--root", join(agentOs2, "source"), "--check"]);
+  assert.equal(viaRoot.status, 0, viaRoot.stderr);
+  assert.equal(viaRoot.json.root, agentOs2);
+});
+
+test("QA R2 H1: every install.mjs command in the QA handoff and the install README runs as written", () => {
+  const docs = [
+    join(ROOT, "docs", "omniwatch", "QA-HANDOFF-OMNIWATCH.md"),
+    join(ROOT, "docs", "omniwatch", "install", "README.md"),
+  ];
+  const commands = [];
+  for (const doc of docs) {
+    const text = readFileSync(doc, "utf8").replace(/\\\n\s*/g, " ");
+    for (const line of text.split("\n")) {
+      const match = /node scripts\/release\/install\.mjs ([^#`]*)/.exec(line);
+      if (match) commands.push({ doc, args: match[1].trim() });
+    }
+  }
+  assert.ok(commands.length >= 3, `documented installer commands found: ${commands.length}`);
+  for (const { doc, args } of commands) {
+    if (/--rollback/.test(args)) continue; // needs a prior install; covered elsewhere
+    const agentOs = makeAgentOsHost();
+    const app = join(tempDir("omniwatch-doc-app-"), "omniwatch-app");
+    const data = join(tempDir("omniwatch-doc-data-"), "data");
+    const argv = args
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((token) =>
+        token
+          .replace(/^\/tmp\/agent-os-qa\/source$/, join(agentOs, "source"))
+          .replace(/^\/tmp\/agent-os-qa$/, agentOs)
+          .replace(/^~\/Documents\/agent-os$/, agentOs)
+          .replace(/^<agent-os>\/source$/, join(agentOs, "source"))
+          .replace(/^<agent-os>$/, agentOs)
+          .replace(/^~\/omniwatch-app$/, app)
+          .replace(/^<katalog-bety>$/, makeBetaDir())
+          .replace(/^\/tmp\/omniwatch-qa-data$/, data)
+          .replace(/^dist\/release$/, release.dir),
+      )
+      .filter((token) => !/^[<~]/.test(token) || assert.fail(`unresolved placeholder ${token} in ${doc}`));
+    const result = runInstaller(argv);
+    assert.equal(result.status, 0, `${doc}: install.mjs ${args}\n${result.stderr}`);
+  }
+});
+
+test("QA R2 H2: standalone install over the Python beta replaces the shell, keeps data, rolls back byte for byte", () => {
+  const beta = makeBetaDir();
+  const before = treeDigest(beta);
+
+  const check = runInstaller(["--target", "standalone", "--root", beta, "--check"]);
+  assert.equal(check.status, 0, check.stderr);
+  assert.equal(check.json.shell.betaMigration, true, "--check announces the beta migration");
+  assert.deepEqual(treeDigest(beta), before, "--check wrote nothing");
+
+  const install = runInstaller(["--target", "standalone", "--root", beta]);
+  assert.equal(install.status, 0, install.stderr);
+  assert.equal(install.json.shell.betaMigration, true);
+  assert.deepEqual(
+    [...install.json.shell.replacedBetaFiles].sort(),
+    ["app.py", "omniwatch.py", "static/i18n.json", "static/index.html"],
+  );
+  for (const rel of ["app.py", "omniwatch.py", "server.mjs", "cli.mjs", "core.mjs", "static/index.html"]) {
+    assert.equal(sha256File(join(beta, rel)), standaloneShellEntry(rel).sha256, `${rel} comes from the artifact`);
+  }
+  const launcher = readFileSync(join(beta, "app.py"), "utf8");
+  assert.match(launcher, /thin wrapper around the shared Node runtime/);
+  assert.doesNotMatch(launcher, /import omniwatch as ow/, "the Python engine is gone from the launcher");
+  // Data, configuration and every non-shell file are byte-identical.
+  const after = treeDigest(beta);
+  for (const rel of ["summaries/SYNTHETIC01.md", ".cache/SYNTHETIC01/info.json", ".env", "README.md",
+    ".cache/outer-loop/b1-report.md"]) {
+    assert.equal(after[rel], before[rel], `${rel} untouched`);
+  }
+  const installed = readJson(join(beta, "vendor", "omniwatch", "install-manifest.json"));
+  assert.deepEqual(installed.betaMigration.sort(), ["app.py", "omniwatch.py", "static/i18n.json", "static/index.html"]);
+  assert.equal(installed.shellFiles["app.py"], sha256File(join(beta, "app.py")));
+
+  // A repeat install recognises its own shell: idempotent, no conflicts.
+  const again = runInstaller(["--target", "standalone", "--root", beta]);
+  assert.equal(again.status, 0, again.stderr);
+  assert.equal(again.json.shell.betaMigration, false);
+
+  // Rollback: the newest backup is the repeat install; rolling back twice reaches the beta.
+  const back1 = runInstaller(["--target", "standalone", "--root", beta, "--rollback"]);
+  assert.equal(back1.status, 0, back1.stderr);
+  const back2 = runInstaller(["--target", "standalone", "--root", beta, "--rollback", "--backup", installed.backupId]);
+  assert.equal(back2.status, 0, back2.stderr);
+  assert.deepEqual(treeDigest(beta), before, "the beta is restored byte for byte");
+  assert.ok(!existsSync(join(beta, "server.mjs")), "files the install created are removed");
+  assert.ok(!existsSync(join(beta, "vendor", "omniwatch", "install-manifest.json")), "no stale install manifest (L2)");
+});
+
+test("QA R2 H2: a user edit of an installed launcher and a foreign file are conflicts, never overwritten", () => {
+  const beta = makeBetaDir();
+  assert.equal(runInstaller(["--target", "standalone", "--root", beta]).status, 0);
+  writeFileSync(join(beta, "app.py"), "# my own launcher\n");
+  const edited = runInstaller(["--target", "standalone", "--root", beta]);
+  assert.equal(edited.status, 3, edited.stderr);
+  assert.ok(edited.json.conflicts.some((item) => item.path === "app.py"));
+  assert.equal(readFileSync(join(beta, "app.py"), "utf8"), "# my own launcher\n");
+  assert.doesNotMatch(edited.stderr, /--skip-nav, aby/, "no misleading --skip-nav advice for a shell conflict (L3)");
+  assert.match(edited.stderr, /--skip-nav ich nie omija/);
+
+  // A directory that is not the beta layout: an existing server.mjs belongs to someone else.
+  const foreign = join(tempDir("omniwatch-foreign-"), "app");
+  mkdirSync(foreign, { recursive: true });
+  writeFileSync(join(foreign, "server.mjs"), "// another project\n");
+  const refused = runInstaller(["--target", "standalone", "--root", foreign]);
+  assert.equal(refused.status, 3, refused.stderr);
+  assert.equal(readFileSync(join(foreign, "server.mjs"), "utf8"), "// another project\n");
+  assert.ok(!existsSync(join(foreign, "vendor")), "a conflict writes nothing");
+});
+
+test("QA R2 H3: an installed standalone starts from the package: `app.py` serves, `omniwatch.py` reaches the core", async () => {
+  // A clean, not-yet-existing directory OUTSIDE the checkout: no ../../packages to lean on.
+  const app = join(tempDir("omniwatch-clean-"), "omniwatch-app");
+  const install = runInstaller(["--target", "standalone", "--root", app]);
+  assert.equal(install.status, 0, install.stderr);
+  assert.equal(install.json.shell.files.length, release.manifest.standaloneShell.files.length);
+
+  const probe = spawnSync(
+    process.execPath,
+    ["--input-type=module", "-e", `const m = await import(${JSON.stringify(pathToFileURL(join(app, "server.mjs")).href)});
+      process.stdout.write(JSON.stringify({ kind: m.CORE.kind, flavor: m.CORE.flavor, root: m.CORE.root }));`],
+    { cwd: app, encoding: "utf8", env: { ...process.env, OMNIWATCH_CORE_ROOT: "" } },
+  );
+  assert.equal(probe.status, 0, probe.stderr);
+  const core = JSON.parse(probe.stdout);
+  assert.equal(core.kind, "release");
+  assert.equal(core.flavor, "dist", "the installed app runs the built artifact, no TypeScript compile");
+  assert.equal(realpathSync(core.root), realpathSync(installedReleaseDir(app, "vendor/omniwatch")));
+
+  // `omniwatch.py <url>`: the launcher -> cli.mjs -> the release's runtime CLI.
+  const env = { ...process.env, OMNIWATCH_CORE_ROOT: "", OMNIWATCH_APP_ROOT: "", DASHSCOPE_API_KEY: "" };
+  const noKey = spawnSync("python3", [join(app, "omniwatch.py"), "https://youtu.be/SYNTHETIC01"], {
+    cwd: app, encoding: "utf8", env,
+  });
+  assert.equal(noKey.status, 3, `${noKey.stdout}\n${noKey.stderr}`);
+  assert.ok(noKey.stderr.includes(join(app, ".env")), "the key is looked up in the app's own .env");
+  const reachesCore = spawnSync("python3", [join(app, "omniwatch.py"), "ftp://not-a-video"], {
+    cwd: app,
+    encoding: "utf8",
+    env: { ...env, DASHSCOPE_API_KEY: "fixture-not-a-secret", DASHSCOPE_API: "http://127.0.0.1:9" },
+  });
+  assert.equal(reachesCore.status, 2, `${reachesCore.stdout}\n${reachesCore.stderr}`);
+  assert.match(reachesCore.stderr, /invalid_input/, "the error comes from the installed runtime CLI");
+  assert.doesNotMatch(reachesCore.stderr, /ERR_MODULE_NOT_FOUND|packages\/omniwatch/);
+
+  // `app.py`: the launcher execs the Node server from the package; it serves the UI.
+  const port = await freePort();
+  const server = spawn("python3", [join(app, "app.py")], {
+    cwd: app,
+    env: { ...env, OMNIWATCH_PORT: String(port) },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let output = "";
+  server.stdout.on("data", (chunk) => { output += chunk; });
+  server.stderr.on("data", (chunk) => { output += chunk; });
+  try {
+    for (let i = 0; i < 100 && !output.includes("OmniWatch standalone:"); i += 1) {
+      if (server.exitCode !== null) break;
+      await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+    }
+    assert.match(output, /OmniWatch standalone: http:\/\/127\.0\.0\.1:/, output);
+    const page = await fetch(`http://127.0.0.1:${port}/`);
+    assert.equal(page.status, 200);
+    const i18n = await fetch(`http://127.0.0.1:${port}/i18n.json`);
+    assert.equal(i18n.status, 200);
+    assert.ok(existsSync(join(app, "data", "legacy-index.json")), "data goes to <appRoot>/data");
+  } finally {
+    server.kill("SIGTERM");
+  }
+});
+
+test("QA R2 M3: the D5 gate reads the data directories the shells really use", () => {
+  // Standalone writes to <appRoot>/data by default.
+  const app = makeBetaDir();
+  const standaloneData = join(app, "data");
+  seedOperation(standaloneData, { analysisVersion: "analysis-v0", state: "budget_paused" });
+  const standalone = runInstaller(["--target", "standalone", "--root", app]);
+  assert.equal(standalone.status, 4, `${standalone.stderr}\n${standalone.stdout}`);
+  assert.equal(standalone.json.code, "compatibility");
+  assert.match(standalone.json.message, /analysis-v0/);
+  assert.equal(readFileSync(join(app, "app.py"), "utf8").includes("import omniwatch as ow"), true, "nothing written");
+
+  // ... or where the app's .env points.
+  const app2 = makeBetaDir();
+  const custom = join(tempDir("omniwatch-custom-data-"), "d");
+  seedOperation(custom, { analysisVersion: "analysis-v0", state: "running" });
+  writeFileSync(join(app2, ".env"), `OMNIWATCH_DATA_DIR=${custom}\n`);
+  assert.equal(runInstaller(["--target", "standalone", "--root", app2]).status, 4);
+
+  // The Agent OS panel keeps its state in ~/.agentic-os/omniwatch/data.
+  const home = tempDir("omniwatch-home-m3-");
+  seedOperation(join(home, ".agentic-os", "omniwatch", "data"), { analysisVersion: "analysis-v0", state: "running" });
+  const agentOs = makeAgentOsHost();
+  const panel = runInstaller(["--target", "agent-os", "--root", agentOs], { env: { HOME: home } });
+  assert.equal(panel.status, 4, `${panel.stderr}\n${panel.stdout}`);
+  assert.ok(!existsSync(join(agentOs, "omniwatch")), "refused before any write");
+
+  // A compatible snapshot in the default directory is reported, not ignored.
+  const home2 = tempDir("omniwatch-home-m3b-");
+  seedOperation(join(home2, ".agentic-os", "omniwatch", "data"), { analysisVersion: ANALYSIS_VERSION, state: "budget_paused" });
+  const ok = runInstaller(["--target", "agent-os", "--root", makeAgentOsHost(), "--check"], { env: { HOME: home2 } });
+  assert.equal(ok.status, 0, ok.stderr);
+  assert.equal(ok.json.inFlight.decision, "compatible");
+  assert.equal(ok.json.inFlight.paused, 1);
+  assert.equal(ok.json.inFlight.dataDir, join(home2, ".agentic-os", "omniwatch", "data"));
+});
+
+test("QA R2 M4: Agent OS integration files come from the artifact and are verified against the manifest", () => {
+  const { manifest } = release;
+  assert.equal(manifest.shellIntegration.artifactPrefix, "shells/agent-os");
+  const packed = new Map(manifest.files.map((file) => [file.path, file]));
+  for (const file of manifest.shellIntegration.files) {
+    const entry = packed.get(`shells/agent-os/${file.path}`);
+    assert.ok(entry, `${file.path} is inside the tarball`);
+    assert.equal(entry.sha256, file.sha256, `${file.path} sha256 matches`);
+  }
+  for (const file of manifest.standaloneShell.files) {
+    assert.equal(packed.get(`shells/standalone/${file.path}`)?.sha256, file.sha256, `standalone ${file.path}`);
+  }
+
+  // Installed bytes are the artifact's bytes.
+  const agentOs = makeAgentOsHost();
+  assert.equal(runInstaller(["--target", "agent-os", "--root", agentOs]).status, 0);
+  const view = manifest.shellIntegration.files.find((file) => file.path.endsWith("OmniWatchView.tsx"));
+  assert.equal(sha256File(join(agentOs, ...view.path.split("/"))), view.sha256);
+
+  // A manifest whose integration hash does not match the packed file is refused
+  // before any write (the QA case: OmniWatchView.tsx changed after the build).
+  const tamperedDir = tempDir("omniwatch-m4-");
+  const tampered = JSON.parse(JSON.stringify(manifest));
+  tampered.shellIntegration.files.find((file) => file.path === view.path).sha256 = "0".repeat(64);
+  const manifestPath = join(tamperedDir, "manifest.json");
+  writeFileSync(manifestPath, `${JSON.stringify(tampered, null, 2)}\n`);
+  const host = makeAgentOsHost();
+  const refused = runInstaller(["--target", "agent-os", "--root", host, "--manifest", manifestPath, "--tarball", release.tarballPath]);
+  assert.equal(refused.status, 2, refused.stderr);
+  assert.match(refused.json.message, /OmniWatchView\.tsx/);
+  assert.match(refused.json.message, /niezgodne z manifestem/);
+  assert.ok(!existsSync(join(host, "omniwatch")), "nothing written");
+  assert.ok(!existsSync(join(host, "source", "src", "components", "OmniWatchView.tsx")));
+
+  // A manifest from the old builder (no artifactPrefix) never falls back to the checkout.
+  const legacy = JSON.parse(JSON.stringify(manifest));
+  delete legacy.shellIntegration.artifactPrefix;
+  const legacyPath = join(tamperedDir, "legacy.json");
+  writeFileSync(legacyPath, `${JSON.stringify(legacy, null, 2)}\n`);
+  const noPrefix = runInstaller(["--target", "agent-os", "--root", makeAgentOsHost(), "--manifest", legacyPath, "--tarball", release.tarballPath]);
+  assert.equal(noPrefix.status, 2, noPrefix.stderr);
+  assert.match(noPrefix.json.message, /nie czyta plikow powloki z checkoutu/);
+});
+
+test("QA R2 L2: rolling back a first install leaves no stale install manifest and reports what it removed", () => {
+  const agentOs = makeAgentOsHost();
+  assert.equal(runInstaller(["--target", "agent-os", "--root", agentOs]).status, 0);
+  const rollback = runInstaller(["--target", "agent-os", "--root", agentOs, "--rollback"]);
+  assert.equal(rollback.status, 0, rollback.stderr);
+  assert.ok(!existsSync(join(agentOs, "omniwatch", "install-manifest.json")), "install manifest removed");
+  assert.ok(rollback.json.removedPaths.includes("omniwatch/install-manifest.json"));
+  assert.ok(rollback.json.removedPaths.length > 1);
+  assert.match(rollback.stderr, /usunieto \d+ plikow utworzonych przez instalacje/);
+  assert.doesNotMatch(rollback.stderr, /\(0 plikow\)/);
+  // The host is clean again: a fresh install is a first install, not a conflict.
+  const reinstall = runInstaller(["--target", "agent-os", "--root", agentOs]);
+  assert.equal(reinstall.status, 0, reinstall.stderr);
 });

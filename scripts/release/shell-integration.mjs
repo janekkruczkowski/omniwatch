@@ -104,6 +104,52 @@ export function collectAgentOsIntegration(moduleRoot) {
   return { entries, missing };
 }
 
+/**
+ * The standalone shell the installer places in `<appRoot>` (QA R2 H2/H3). These are
+ * the thin launchers (`app.py`/`omniwatch.py`, the beta's commands), the Node HTTP/CLI
+ * adapters and the frontend. They travel INSIDE the release tarball under
+ * `shells/standalone/`, so an installed app never reads from a source checkout.
+ */
+export const STANDALONE_SHELL_FILES = [
+  "app.py",
+  "omniwatch.py",
+  "server.mjs",
+  "cli.mjs",
+  "config.mjs",
+  "legacy.mjs",
+  "core.mjs",
+  "static/index.html",
+  "static/i18n.json",
+];
+
+/** Where each shell lives inside the release tarball (below `package/`). */
+export const SHELL_ARTIFACT_PREFIX = {
+  "agent-os": "shells/agent-os",
+  standalone: "shells/standalone",
+};
+
+/** Collect the standalone shell from `apps/standalone`. */
+export function collectStandaloneShell(appRoot) {
+  const entries = [];
+  const missing = [];
+  for (const rel of STANDALONE_SHELL_FILES) {
+    const sourcePath = path.join(appRoot, ...rel.split("/"));
+    if (!existsSync(sourcePath) || statSync(sourcePath).isDirectory()) {
+      missing.push(rel);
+      continue;
+    }
+    const executable = (statSync(sourcePath).mode & 0o111) !== 0;
+    entries.push({
+      path: rel,
+      bytes: readFileSync(sourcePath).length,
+      sha256: sha256File(sourcePath),
+      mode: executable ? 0o755 : 0o644,
+      sourcePath,
+    });
+  }
+  return { entries, missing };
+}
+
 /** Reads the bundle bytes for one entry (installer convenience). */
 export function readIntegrationFile(moduleRoot, hostRel) {
   const withoutSource = hostRel.replace(/^source\//, "");

@@ -19,23 +19,20 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
-import {
-  BETA_OSS_TTL_HOURS,
-  evaluateUploadFreshness,
-  normalizeLegacyInfo,
-  parseLegacyInfoJson,
-  resolveLegacyId,
-  tryNormalizeLegacyInfo,
-} from "../../packages/omniwatch/src/sources/legacy.ts";
+import { importCore } from "./core.mjs";
 
-export {
+// The identity/metadata/TTL rules come from the installed core release (or the
+// checkout's sources during development) - never from a path outside the app.
+const legacyCore = await importCore("sources/legacy");
+
+export const {
   BETA_OSS_TTL_HOURS,
   evaluateUploadFreshness,
   normalizeLegacyInfo,
   parseLegacyInfoJson,
   resolveLegacyId,
   tryNormalizeLegacyInfo,
-};
+} = legacyCore;
 
 export const LEGACY_INDEX_PROTOCOL = "omniwatch.legacy-index.v1";
 
@@ -169,9 +166,10 @@ export function readLegacyCacheEntry(appRoot, id) {
 }
 
 /**
- * `oss.json` verdicts. `at` is in SECONDS in the beta; the TTL defaults to the beta's
- * 47 h and a configured `OMNI_CACHE_HOURS` (48) overrides it. Expired, future and
- * malformed entries are never reusable and are never rewritten.
+ * `oss.json` verdicts. `at` is in SECONDS in the beta and the TTL is the beta's fixed
+ * 47 h (`OSS_TTL`): it describes the provider's copy, so `OMNI_CACHE_HOURS` (the
+ * local cache window) never extends it (QA R2 M2). Expired, future and malformed
+ * entries are never reusable and are never rewritten.
  */
 export function readLegacyUploads(appRoot, id, options = {}) {
   const safeId = assertSafeLegacyId(id);
@@ -180,7 +178,7 @@ export function readLegacyUploads(appRoot, id, options = {}) {
   const file = path.join(dir, "oss.json");
   if (!existsSync(file)) return { id: safeId, path: null, entries: [], malformed: false };
   const nowSeconds = Number.isFinite(options.nowSeconds) ? options.nowSeconds : Math.floor(Date.now() / 1000);
-  const cacheHours = options.cacheHours ?? BETA_OSS_TTL_HOURS;
+  const ttlHours = BETA_OSS_TTL_HOURS;
   let raw;
   try {
     raw = readJson(file);
@@ -193,16 +191,38 @@ export function readLegacyUploads(appRoot, id, options = {}) {
   const entries = Object.entries(raw).map(([name, entry]) => ({
     name,
     entry,
-    freshness: evaluateUploadFreshness(entry, cacheHours, nowSeconds),
+    freshness: evaluateUploadFreshness(entry, ttlHours, nowSeconds),
   }));
   return { id: safeId, path: file, entries, malformed: false };
 }
 
+/** Files that make a `.cache/<id>` directory a beta media entry. */
+const BETA_CACHE_MARKERS = ["source.mp4", "info.json", "oss.json", "frames"];
+
+function isBetaCacheEntry(dir, name) {
+  try {
+    assertSafeLegacyId(name);
+  } catch {
+    return false;
+  }
+  if (BETA_CACHE_MARKERS.some((marker) => existsSync(path.join(dir, marker)))) return true;
+  try {
+    return readdirSync(dir).some((file) => /^part_\d+_\d+\.mp4$/.test(file));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Directories under `.cache/` that really are beta media entries. The beta tree also
+ * holds unrelated work directories (e.g. `.cache/outer-loop` with render reports);
+ * counting those as cached films inflated the migration report (QA R2 L6).
+ */
 function listCacheIds(root) {
   const cacheDir = path.join(root, ".cache");
   if (!existsSync(cacheDir)) return [];
   return readdirSync(cacheDir, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
+    .filter((entry) => entry.isDirectory() && isBetaCacheEntry(path.join(cacheDir, entry.name), entry.name))
     .map((entry) => entry.name)
     .sort();
 }
@@ -281,13 +301,15 @@ function uploadFingerprint(uploads) {
 }
 
 /**
- * Build the migration document. Deterministic: the same input tree always produces
- * the same bytes, so a second run cannot duplicate an entry or shuffle the mapping.
+ * Build the migration document. Deterministic for a given input tree AND clock: the
+ * same files at the same `nowSeconds` always produce the same bytes, so a second run
+ * cannot duplicate an entry or shuffle the mapping. The document records the clock
+ * and each upload's age-based freshness, so a run at a later time legitimately
+ * differs in exactly those fields (QA R2 L5).
  */
 export function buildLegacyIndex(appRoot, options = {}) {
   const nowSeconds = Number.isFinite(options.nowSeconds) ? options.nowSeconds : Math.floor(Date.now() / 1000);
-  const cacheHours = options.cacheHours ?? BETA_OSS_TTL_HOURS;
-  const entries = readLegacyInstall(appRoot, { nowSeconds, cacheHours }).map((entry) => ({
+  const entries = readLegacyInstall(appRoot, { nowSeconds }).map((entry) => ({
     legacyId: entry.legacyId,
     summary: summaryFingerprint(entry.summary),
     cache: cacheFingerprint(entry.cache),
@@ -297,7 +319,7 @@ export function buildLegacyIndex(appRoot, options = {}) {
     protocol: LEGACY_INDEX_PROTOCOL,
     source: { appRoot: path.resolve(appRoot), roots: legacyRoots(appRoot).filter((root) => existsSync(root)) },
     clock: { nowSeconds },
-    cacheHours,
+    uploadTtlHours: BETA_OSS_TTL_HOURS,
     betaOssTtlHours: BETA_OSS_TTL_HOURS,
     counts: {
       entries: entries.length,
@@ -331,14 +353,15 @@ export function readLegacyIndex(dataDir) {
 /**
  * The migration step of D2: index the beta data under the new data directory. It
  * never downloads, never calls a model and never touches the beta's own files, so it
- * is safe to run before every start. Running it twice produces identical bytes.
+ * is safe to run before every start. Two runs over unchanged beta files at the same
+ * clock produce identical bytes (`changed: false`); a later clock only updates the
+ * recorded time and the upload freshness verdicts, never the id mapping.
  */
 export function migrateLegacyData(options) {
   const appRoot = path.resolve(options.appRoot);
   const dataDir = path.resolve(options.dataDir);
   const document = buildLegacyIndex(appRoot, {
     nowSeconds: options.nowSeconds,
-    cacheHours: options.cacheHours,
   });
   const body = `${JSON.stringify(document, null, 2)}\n`;
   const target = legacyIndexPath(dataDir);

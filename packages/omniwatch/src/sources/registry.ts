@@ -20,7 +20,7 @@ import type {
   SourceRef,
 } from "../contracts/types.ts";
 import type { SourcePort } from "../contracts/ports.ts";
-import { evaluateUploadFreshness } from "./legacy.ts";
+import { BETA_OSS_TTL_HOURS, evaluateUploadFreshness } from "./legacy.ts";
 import type { LegacyUploadEntry } from "./legacy.ts";
 import { splitParts } from "./media.ts";
 import { parseSourceUrl } from "./url.ts";
@@ -75,7 +75,11 @@ export interface ListerPort {
 export interface SourceAdapterBundle {
   media: MediaToolPort;
   listers?: Partial<Record<Platform, ListerPort>>;
-  /** Media cache TTL in hours; drives beta `oss.json` freshness. */
+  /**
+   * Local media cache window in hours (`OMNI_CACHE_HOURS`). It does NOT drive the
+   * `oss://` upload TTL: the provider keeps an upload for 48 h and the beta refreshed
+   * it an hour early, so upload freshness is the fixed `BETA_OSS_TTL_HOURS` (QA R2 M2).
+   */
   cacheHours?: () => number;
   /** Seconds since epoch; injectable so freshness tests are deterministic. */
   now?: () => number;
@@ -163,8 +167,6 @@ function baseName(filePath: string): string {
   return parts[parts.length - 1] || filePath;
 }
 
-const DEFAULT_CACHE_HOURS = 48;
-
 export function createSourceRegistry(adapters: SourceAdapterBundle): SourcePort {
   // Tracks the local path a `prepare()` is currently reading/writing, so a quota
   // sweep triggered by another call in the same process never evicts it (T18).
@@ -183,22 +185,21 @@ export function createSourceRegistry(adapters: SourceAdapterBundle): SourcePort 
     }
   }
 
-  const cacheHours = (): number => {
-    const value = adapters.cacheHours?.();
-    if (typeof value === "number" && Number.isFinite(value) && value > 0) return value;
-    return adapters.defaultCacheHours ?? DEFAULT_CACHE_HOURS;
-  };
   const nowSeconds = (): number => {
     const value = adapters.now?.();
     return typeof value === "number" && Number.isFinite(value) ? value : Math.floor(Date.now() / 1000);
   };
 
-  /** Reuse a beta upload only when it is inside the configured cache window. */
+  /**
+   * Reuse an upload only inside the provider's own lifetime: the fixed 47 h beta TTL.
+   * A longer `OMNI_CACHE_HOURS` keeps the local file longer, but must never send an
+   * `oss://` URL the provider has already expired (QA R2 M2).
+   */
   async function applyUploadState(source: SourceRef, info: MediaInfo): Promise<MediaInfo> {
     if (!adapters.media.readUploads || !info.localPath) return info;
     const uploads = await adapters.media.readUploads(source);
     const entry = uploads?.[baseName(info.localPath)];
-    const verdict = evaluateUploadFreshness(entry ?? null, cacheHours(), nowSeconds());
+    const verdict = evaluateUploadFreshness(entry ?? null, BETA_OSS_TTL_HOURS, nowSeconds());
     const url = entry && typeof entry.url === "string" ? entry.url : null;
     if (verdict.valid && url) {
       return { ...info, uploadedUrl: url, reusedUpload: true };
