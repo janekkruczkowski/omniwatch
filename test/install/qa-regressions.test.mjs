@@ -855,9 +855,11 @@ test("one explicitly approved legacy response can be reused without enabling len
     const response = wiring.store.listAttempts(operationId).find((attempt) => attempt.phase === "response");
     assert.ok(response);
     oldId = response.id;
-    const { schema, contentHash, ...legacySummary } = JSON.parse(response.requestSummary);
+    // A pre-v2 summary had neither the digest nor the recorded prompt date.
+    const { schema, contentHash, promptDate, ...legacySummary } = JSON.parse(response.requestSummary);
     assert.equal(schema, 2);
     assert.ok(contentHash);
+    assert.match(promptDate, /^\d{4}-\d{2}-\d{2}$/);
     wiring.store.recordAttempt({
       id: response.id, operationId, phase: "response", partIndex: response.partIndex,
       model: response.model, requestSummary: JSON.stringify(legacySummary),
@@ -1297,6 +1299,72 @@ test("an explicit follow-up (conversation + parent) still uses history and is it
     assert.match(body, /event: done/, body);
     assert.equal(sseData(body, "turn")?.parentTurnId, turn.turnId);
     assert.equal(model.calls.length, 2);
+  } finally {
+    await app.close();
+  }
+});
+
+/*
+ * Integration 2026-09-23 (G + L + M together). Before L, other questions about the
+ * same film changed the key of an identical form request, so resubmitting it after an
+ * outcome_unknown admitted a NEW operation and paid again past the unknown gate. With
+ * L the identical request keeps its key (no declared conversation -> no history), so
+ * it lands on the same unknown operation; the confirmed retry (M/ISSUE-010) is the only
+ * way to pay again, the worker's key check still agrees after the other turns, and the
+ * retry on the next day keeps the first attempt's prompt date (G).
+ */
+test("integration: unknown stays gated after other questions; a confirmed next-day retry pays once with the first date", async () => {
+  const { appRoot, dataDir, cacheDir } = watchShell();
+  let nowIso = "2026-09-22T10:00:00.000Z";
+  const clock = {
+    now: () => new Date(nowIso),
+    setTimeout: (fn, ms) => setTimeout(fn, ms),
+    clearTimeout: (handle) => clearTimeout(handle),
+  };
+  const calls = [];
+  const model = {
+    modelName: "stub-integration",
+    async call(request) {
+      const date = JSON.stringify(request.messages).match(/TODAY'S DATE IS (\d{4}-\d{2}-\d{2})/)?.[1] ?? null;
+      calls.push({ operationId: request.operationId, date });
+      if (calls.length === 1) throw new OmniWatchError("outcome_unknown", "Polaczenie przerwane po wyslaniu.");
+      return {
+        text: `## Odpowiedz\n- [0:05] odpowiedz ${calls.length}`,
+        usage: { inputTokens: 10, outputTokens: 5, costUsd: 0.001, costKnown: true },
+        completed: true,
+      };
+    },
+  };
+  const app = createStandaloneServer({
+    appRoot, dataDir, cacheDir, model, clock,
+    source: createFixtureSource({ durationSeconds: 16 }),
+    env: { OMNIWATCH_APP_ROOT: appRoot, OMNIWATCH_DATA_DIR: dataDir },
+  });
+  try {
+    const url = "https://youtu.be/SYNTHETIC01";
+    const first = await driveWatch(app, { url, q: "rozstaw dloni", mode: "summary" });
+    const operationId = sseData(first.body, "operation")?.operationId;
+    assert.equal(sseData(first.body, "error")?.error, "outcome_unknown");
+    assert.deepEqual(calls, [{ operationId, date: "2026-09-22" }]);
+
+    // Another question about the same film is answered and writes a turn.
+    const other = await driveWatch(app, { url, q: "dieta", mode: "summary" });
+    assert.ok(sseData(other.body, "done"), other.body);
+    assert.equal(calls.length, 2);
+
+    // The identical request is still the same, uncertain operation: no new paid call.
+    const again = await driveWatch(app, { url, q: "rozstaw dloni", mode: "summary" });
+    assert.equal(sseData(again.body, "operation")?.operationId, operationId);
+    assert.equal(sseData(again.body, "error")?.error, "outcome_unknown");
+    assert.equal(calls.length, 2, "resubmitting the form never bypasses the unknown gate");
+
+    // The next day the user confirms the retry: one paid call, same operation, first date.
+    nowIso = "2026-09-23T09:00:00.000Z";
+    const retry = await driveWatch(app, { url, retryOperation: operationId, confirmRetry: true });
+    assert.ok(sseData(retry.body, "done"), retry.body);
+    assert.equal(calls.length, 3);
+    assert.deepEqual(calls[2], { operationId, date: "2026-09-22" });
+    assert.equal(calls[1].date, "2026-09-22", "every path carries the date");
   } finally {
     await app.close();
   }

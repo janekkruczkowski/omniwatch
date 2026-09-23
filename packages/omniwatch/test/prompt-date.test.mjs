@@ -273,3 +273,18 @@ test("the analysis key does not depend on the prompt template version, so saved 
   assert.doesNotMatch(key, /prompt-v\d/);
   assert.doesNotMatch(key, new RegExp(PROMPT_TEMPLATE_VERSION));
 });
+
+test("the prompt date recorded on the attempt wins over a journal stamped by another clock", () => {
+  // The host journal stamps createdAt with wall time (2026-09-23) while the engine's
+  // clock built the prompt on 2026-09-22 (a test clock, or a call started at 23:59:59).
+  const records = [
+    { id: "a", operationId: "op_mine", phase: "unknown", partIndex: 0, createdAt: "2026-09-23T00:00:01.000Z",
+      requestSummary: JSON.stringify({ schema: 2, promptVersion: "prompt-v2/summary", promptDate: "2026-09-22", contentHash: "x" }) },
+    { id: "b", operationId: "op_other", phase: "intent", partIndex: 0, createdAt: "2026-09-01T00:00:00.000Z",
+      requestSummary: JSON.stringify({ schema: 2, promptDate: "2026-09-01" }) },
+  ];
+  assert.equal(promptDateFor(records, "op_mine", "2026-09-24T08:00:00.000Z"), "2026-09-22");
+  // Older attempts without a recorded date (or with a legacy text summary) fall back to createdAt.
+  const legacy = [{ id: "c", operationId: "op_mine", phase: "unknown", partIndex: 0, createdAt: "2026-09-21T12:00:00.000Z", requestSummary: "system: ..." }];
+  assert.equal(promptDateFor(legacy, "op_mine", "2026-09-24T08:00:00.000Z"), "2026-09-21");
+});

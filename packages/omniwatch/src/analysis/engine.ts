@@ -126,20 +126,39 @@ function aggregateUsage(responses: ModelCallResponse[]): Usage {
   };
 }
 
+/** The prompt date a v2 attempt recorded in its request summary, if any. */
+function recordedPromptDate(attempt: AttemptRecord): string | null {
+  if (typeof attempt.requestSummary !== "string" || !attempt.requestSummary.startsWith("{")) return null;
+  try {
+    const value = (JSON.parse(attempt.requestSummary) as { promptDate?: unknown }).promptDate;
+    return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * The date written into every prompt. A confirmed retry of the same operation keeps the
  * date of its first recorded attempt: the prompt is part of the checkpoint fingerprint,
  * so a retry on the next day must not change it and re-pay for parts already answered.
+ *
+ * The date the prompt was actually built with is recorded on the attempt and wins over
+ * the attempt's `createdAt`: a host may stamp its journal with a different clock than the
+ * engine's injected one (the standalone server and CLI use wall time), and a call that
+ * starts just before midnight is journalled just after it. `createdAt` is only the
+ * fallback for attempts written before the date was recorded.
  */
 export function promptDateFor(
   completedAttempts: AttemptRecord[] | undefined,
   operationId: string,
   now: string,
 ): string {
-  const earliest = (completedAttempts ?? [])
-    .filter((attempt) => attempt.operationId === operationId && typeof attempt.createdAt === "string")
+  const own = (completedAttempts ?? []).filter((attempt) => attempt.operationId === operationId);
+  const recorded = own.map(recordedPromptDate).filter((value): value is string => value !== null).sort()[0];
+  if (recorded) return recorded;
+  const earliest = own
     .map((attempt) => attempt.createdAt)
-    .filter((value) => /^\d{4}-\d{2}-\d{2}/.test(value))
+    .filter((value) => typeof value === "string" && /^\d{4}-\d{2}-\d{2}/.test(value))
     .sort()[0];
   return promptDate(earliest ?? now);
 }
@@ -261,6 +280,9 @@ export async function analyze(request: AnalysisRequest, deps: AnalysisDeps): Pro
     const requestSummary = JSON.stringify({
       schema: 2,
       ...summaryBase,
+      // The date in the prompt; read back by promptDateFor so a confirmed retry rebuilds
+      // the identical prompt. Kept out of summaryBase, which legacy summaries must match.
+      promptDate: today,
       contentHash: sha256Hex(JSON.stringify({
         sourceRef,
         messages,
