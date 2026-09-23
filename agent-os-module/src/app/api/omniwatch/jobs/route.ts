@@ -17,7 +17,7 @@ export const dynamic = "force-dynamic";
 
 /** What one poll returns while the job is still running (kept for existing callers). */
 export interface Progress {
-  stage?: "download" | "upload" | "watch" | "merge" | "answer";
+  stage?: "queued" | "download" | "upload" | "watch" | "merge" | "answer" | "failed";
   meta?: { id: string; title: string; channel: string; duration: string; seconds: number; strip: number[] };
   parts?: number;
   partsDone?: number;
@@ -55,6 +55,8 @@ function handler(): Promise<JobsHandler> {
         // process (on start and on the first request that meets one).
         recover: () => panel.recover(),
         hasConsumer: (id) => panel.hasConsumer(id),
+        // R5: the card's stage comes from the real progress events of this process.
+        progress: (id) => panel.progress(id),
         retryUnknown: (id) => panel.retryUnknown(id),
         lookupMedia: (ref) => panel.lookupMedia(ref),
         // The film modes keep their own implementation; only the id resolution is shared.

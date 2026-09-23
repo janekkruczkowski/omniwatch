@@ -370,7 +370,16 @@ export async function analyze(request: AnalysisRequest, deps: AnalysisDeps): Pro
   emit("running", "prepare", {
     message: `przygotowuje material (${sourceRef.platform})`,
   });
-  const info = await deps.source.prepare(sourceRef, { force: request.force });
+  const info = await deps.source.prepare(sourceRef, {
+    force: request.force,
+    // R5: a rate-limited download waits once before retrying. The shells show that wait
+    // ("retrying in N s") from this real event instead of a guessed stage.
+    onWait: (wait) => emit("running", "source_wait", {
+      message: `zrodlo ogranicza pobieranie (${wait.reason}); ponawiam za ${wait.seconds} s`,
+      waitSeconds: wait.seconds,
+      reason: wait.reason,
+    }),
+  });
 
   // One bound for every shell: a host's larger setting must not produce parts the
   // provider closes before answering. The film's length selects the long-film bound.

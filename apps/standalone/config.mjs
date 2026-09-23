@@ -44,7 +44,17 @@ export const BETA_ENV_NAMES = [
 ];
 
 /** Standalone-only names (not part of the beta `.env` contract). */
-export const STANDALONE_ENV_NAMES = ["OMNIWATCH_DATA_DIR", "OMNIWATCH_CONFIG", "OMNIWATCH_PORT", "OMNIWATCH_APP_ROOT"];
+export const STANDALONE_ENV_NAMES = [
+  "OMNIWATCH_DATA_DIR",
+  "OMNIWATCH_CONFIG",
+  "OMNIWATCH_PORT",
+  "OMNIWATCH_APP_ROOT",
+  // R5: opt-in yt-dlp settings, read by the media tool from `.env` + environment.
+  // Cookies are OFF unless one of the two cookie names is set by the user.
+  "OMNIWATCH_YTDLP_COOKIES_FROM_BROWSER",
+  "OMNIWATCH_YTDLP_COOKIES",
+  "OMNIWATCH_YTDLP_RETRY_SECONDS",
+];
 
 /**
  * The beta parser: `k, _, v = line.partition("=")`, skip blank/comment lines, keep the

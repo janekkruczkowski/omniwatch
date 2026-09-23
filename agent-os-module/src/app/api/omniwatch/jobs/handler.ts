@@ -33,6 +33,10 @@ import { OperationJournal, UNKNOWN_RETRY_WARNING } from "../../../../../../packa
 // does not resolve the host's `@/` alias. Next resolves relative paths just as well.
 import { getJob, startJob } from "../../../../lib/omniwatchJobs.ts";
 import type { Job } from "../../../../lib/omniwatchJobs.ts";
+import { cardProgress } from "../../../../lib/omniwatchProgress.ts";
+import type { LiveProgress } from "../../../../lib/omniwatchProgress.ts";
+import { describeSourceFailure } from "../../../../../../packages/omniwatch/src/sources/ytdlp.ts";
+import type { SourceFailureView } from "../../../../../../packages/omniwatch/src/sources/ytdlp.ts";
 
 /** Modes the released endpoint accepted. */
 export const LEGACY_MODES = ["ask", "summary", "teardown", "both", "blueprint", "screentext"] as const;
@@ -115,6 +119,12 @@ export interface JobsHandlerDeps {
   hasConsumer?(operationId: string): boolean;
   /** Free, cache-only metadata for the card; null when the video is not local yet. */
   lookupMedia(sourceRef: SourceRef): Promise<JobMeta | null>;
+  /**
+   * R5: the last real progress event of an operation this process is executing, or
+   * null. The card's stage comes from it (or from the durable journal), never from a
+   * guess based on the operation state alone.
+   */
+  progress?(operationId: string): LiveProgress | null;
   /** The film modes keep their own path (no second analysis engine here). */
   legacyFilm: LegacyFilmDispatcher;
   defaultLanguage: string;
@@ -191,19 +201,12 @@ export interface DurableJobView extends Job {
   retryable?: boolean;
   /** True for queued work without a consumer: re-sending the request runs it. */
   resubmit?: boolean;
-}
-
-function stageFor(operation: Operation): string {
-  switch (operation.state) {
-    case "pending":
-      return "download";
-    case "running":
-      return "watch";
-    case "result_ready":
-      return "answer";
-    default:
-      return "answer";
-  }
+  /** R5: a classified download failure (reason + raw yt-dlp output for "details"). */
+  sourceFailure?: SourceFailureView | null;
+  /** R5: true when no model call was ever started for this operation (nothing billed). */
+  noModelCalls?: boolean;
+  /** R5: a rate-limited download waiting before its single retry. */
+  wait?: { reason: string; seconds: number; remainingSeconds: number };
 }
 
 function stateFor(operation: Operation): Job["state"] {
@@ -239,13 +242,18 @@ function stalledView(deps: JobsHandlerDeps, operation: Operation): DurableJobVie
 function runningView(deps: JobsHandlerDeps, operation: Operation): DurableJobView {
   const attempts = deps.store.listAttempts(operation.id);
   const started = attempts.filter((attempt) => attempt.phase === "started" || attempt.phase === "response").length;
+  // R5: the stage is what really happened (live event, else the journal), never a
+  // guess from `running` - that guess drew "watching the film" over a failing download.
+  const live = deps.progress?.(operation.id) ?? null;
+  const shown = cardProgress({ state: operation.state, startedAttempts: started, live, now: (deps.now ?? Date.now)() });
   return {
     id: operation.id,
     operationId: operation.id,
     kind: "analysis",
     state: "running",
     startedAt: Date.parse(operation.createdAt) || Date.now(),
-    progress: { stage: stageFor(operation), parts: started, partsDone: Math.max(0, started - 1) },
+    progress: { stage: shown.stage, parts: started, partsDone: Math.max(0, started - 1) },
+    ...(shown.wait ? { wait: shown.wait } : {}),
   };
 }
 
@@ -282,6 +290,9 @@ export async function readDurableJob(
 
   const meta = await deps.lookupMedia(operation.request.sourceRef);
   const seconds = meta?.seconds ?? 0;
+  // R5: a failed download has no film. Handing the card a made-up meta made it point
+  // the player at /media/video/<id>, which 404s, next to the error.
+  const includeMeta = state === "done" || meta !== null;
   const media: JobMeta = meta ?? {
     id: operation.request.sourceRef.legacyId ?? operation.request.sourceRef.sourceId,
     title: buffer?.title ?? "",
@@ -293,6 +304,7 @@ export async function readDurableJob(
 
   const attempts = deps.store.listAttempts(operation.id);
   const parts = buffer?.parts ?? attempts.filter((attempt) => attempt.phase === "started").length;
+  const sourceFailure = state === "error" ? describeSourceFailure(operation.errorClass, operation.errorMessage) : null;
 
   return {
     id: operation.id,
@@ -301,9 +313,12 @@ export async function readDurableJob(
     state,
     startedAt: Date.parse(operation.createdAt) || Date.now(),
     finishedAt: Date.parse(operation.updatedAt) || undefined,
-    error: operation.errorMessage ?? undefined,
+    // The friendly sentence, not the raw tool output; the raw text is `sourceFailure.detail`.
+    error: sourceFailure ? sourceFailure.message : (operation.errorMessage ?? undefined),
     errorClass: operation.errorClass ?? null,
     retryable: operation.state === "outcome_unknown",
+    ...(sourceFailure ? { sourceFailure } : {}),
+    ...(state === "error" ? { noModelCalls: attempts.length === 0 } : {}),
     analysisId,
     conversationId: buffer?.conversationId ?? null,
     turnId: buffer?.turnId ?? null,
@@ -315,8 +330,9 @@ export async function readDurableJob(
       ? { unknownCostCalls: buffer.usage.unknownCostCalls }
       : {}),
     progress: {
-      stage: "answer",
-      meta: { ...media, seconds, strip: media.strip.length > 0 ? media.strip : stripFor(seconds) },
+      // A failure lights no step: "writing the answer" over an error was the R5 bug.
+      stage: state === "done" ? "answer" : "failed",
+      ...(includeMeta ? { meta: { ...media, seconds, strip: media.strip.length > 0 ? media.strip : stripFor(seconds) } } : {}),
       parts,
       partsDone: parts,
       text: content ?? undefined,
@@ -603,6 +619,9 @@ export function createJobsHandler(deps: JobsHandlerDeps): JobsHandler {
       ...(durable.unknownCostCalls ? { unknownCostCalls: durable.unknownCostCalls } : {}),
       ...(durable.retryable ? { retryable: true, retryWarning: UNKNOWN_RETRY_WARNING } : {}),
       ...(durable.resubmit ? { resubmit: true } : {}),
+      ...(durable.sourceFailure ? { sourceFailure: durable.sourceFailure } : {}),
+      ...(typeof durable.noModelCalls === "boolean" ? { noModelCalls: durable.noModelCalls } : {}),
+      ...(durable.wait ? { wait: durable.wait } : {}),
     });
   }
 

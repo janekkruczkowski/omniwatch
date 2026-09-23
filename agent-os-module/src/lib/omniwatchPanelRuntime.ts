@@ -13,8 +13,9 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
+import { mkdir, readFile, utimes, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 
 import { createOpenAiModelPort } from "../../../packages/omniwatch/src/analysis/index.ts";
 import { chatCompletionsUrl, DEFAULT_DASHSCOPE_HOST } from "../../../packages/omniwatch/src/contracts/endpoints.ts";
@@ -53,12 +54,21 @@ import {
 import type { WorkerOperationSummary } from "../../../packages/omniwatch/src/runtime/worker.ts";
 import { OperationJournal } from "../../../packages/omniwatch/src/storage/operations.ts";
 import { createSourceRegistry, keyframeAlignedStart } from "../../../packages/omniwatch/src/sources/index.ts";
+import {
+  createYtDlpRetryBudget,
+  runYtDlpResilient,
+  ytDlpCookieArgs,
+  ytDlpRetrySeconds,
+} from "../../../packages/omniwatch/src/sources/ytdlp.ts";
+import type { SourceWait } from "../../../packages/omniwatch/src/sources/ytdlp.ts";
 import { openSqliteStore } from "../../../packages/omniwatch/src/storage/index.ts";
 import { createOmniWatchHost, type OmniWatchHost } from "./omniwatchHost.ts";
 import { uploadThroughHost } from "./omniwatchHostWorker.ts";
 import type { HostModelPort } from "./omniwatchMemory.ts";
 import { registerDurableJobReader } from "./omniwatchJobs.ts";
 import type { Job } from "./omniwatchJobs.ts";
+import { cardProgress } from "./omniwatchProgress.ts";
+import type { LiveProgress } from "./omniwatchProgress.ts";
 
 /** Where the panel keeps durable state. Outside the Vault, as D3 requires. */
 export function panelDataDir(env: NodeJS.ProcessEnv = process.env): string {
@@ -238,6 +248,8 @@ export interface PanelRuntime {
   recover(): Promise<void>;
   /** True when a live process (this one or the current owner) can still finish the operation. */
   hasConsumer(operationId: string): boolean;
+  /** R5: the last real progress event of an operation this process executes, or null. */
+  progress(operationId: string): LiveProgress | null;
   /** The user's confirmed retry of an `outcome_unknown` operation, resolved under ownership. */
   retryUnknown(operationId: string): Promise<Operation>;
   runScan(input: {
@@ -331,7 +343,7 @@ export function createPanelRuntime(options: { env?: NodeJS.ProcessEnv } = {}): P
   );
 
   // Other `getJob` callers (the film routes, the Scout tab) see durable operations too.
-  registerDurableJobReader((id) => durableJobView(store, id));
+  registerDurableJobReader((id) => durableJobView(store, id, consumer.progress(id)));
 
   async function resolveSource(input: { url?: string | null; sourceId?: string | null }): Promise<SourceRef> {
     const sourceId = String(input.sourceId ?? "").trim();
@@ -421,6 +433,7 @@ export function createPanelRuntime(options: { env?: NodeJS.ProcessEnv } = {}): P
       await consumer.recover();
     },
     hasConsumer: (operationId) => consumer.hasConsumer(operationId),
+    progress: (operationId) => consumer.progress(operationId),
     retryUnknown: (operationId) => consumer.retry(operationId),
     // A scan executes its analyses in this process, so it runs as the owner too: an
     // unowned scan would be "recovered" as orphaned by the next request.
@@ -495,6 +508,8 @@ export interface PanelConsumer {
    * it, or another process holds the data directory with a fresh heartbeat.
    */
   hasConsumer(operationId: string): boolean;
+  /** R5: the last real progress event of an operation this process executes, or null. */
+  progress(operationId: string): LiveProgress | null;
   /**
    * Take the data directory if nobody alive holds it, recover what a dead process
    * left behind and let go again when idle. Never calls the model. Resolves to the
@@ -526,6 +541,8 @@ export function createPanelConsumer(options: PanelConsumerOptions): PanelConsume
 
   /** Work this process is doing as the owner: operations by id, scans by a hold key. */
   const active = new Map<string, Promise<unknown>>();
+  /** R5: the latest real progress event per executing operation (what the card shows). */
+  const live = new Map<string, LiveProgress>();
   let owned = false;
   let closed = false;
   let heartbeatHandle: unknown = null;
@@ -649,7 +666,18 @@ export function createPanelConsumer(options: PanelConsumerOptions): PanelConsume
   function launch(operationId: string): void {
     const work = (async () => {
       try {
-        const summary = await runOperation(deps, journal, operationId);
+        const summary = await runOperation(deps, journal, operationId, {
+          onProgress: (event) => {
+            live.set(operationId, {
+              stage: event.stage,
+              at: deps.clock.now().getTime(),
+              itemIndex: event.itemIndex ?? null,
+              itemCount: event.itemCount ?? null,
+              waitSeconds: event.waitSeconds ?? null,
+              reason: event.reason ?? null,
+            });
+          },
+        });
         deps.logger.info("omniwatch.panel.operation", {
           operationId,
           state: summary.state,
@@ -662,6 +690,7 @@ export function createPanelConsumer(options: PanelConsumerOptions): PanelConsume
         deps.logger.warn("omniwatch.panel.operation_failed", { operationId, message: String(error) });
       } finally {
         active.delete(operationId);
+        live.delete(operationId);
         releaseIfIdle();
       }
     })();
@@ -673,6 +702,7 @@ export function createPanelConsumer(options: PanelConsumerOptions): PanelConsume
     owns: () => owned,
     isActive: (operationId) => active.has(operationId),
     hasConsumer: (operationId) => active.has(operationId) || otherOwnerAlive(),
+    progress: (operationId) => live.get(operationId) ?? null,
     async recover() {
       try {
         return await adopt();
@@ -760,9 +790,12 @@ function buildHostSource(hostModules: () => Promise<HostModules>): SourcePort {
         publishedAt: null,
       };
     },
-    async fetch(source: SourceRef) {
+    async fetch(source: SourceRef, options?: { onWait?: (wait: SourceWait) => void }) {
       const legacy = (await hostModules()).omniwatch;
-      const { info, src } = await legacy.fetchVideo(source.canonicalUrl);
+      // R5: the panel's own download (classified errors, one visible 429 retry, opt-in
+      // cookies) over the host library's cache layout. The film library's fetchVideo
+      // is a protected host file and keeps its own behaviour for the film modes.
+      const { info, src } = await downloadForPanel(legacy, source.canonicalUrl, { onWait: options?.onWait });
       return {
         localPath: src,
         title: info.title,
@@ -835,13 +868,104 @@ function buildHostSource(hostModules: () => Promise<HostModules>): SourcePort {
   });
 }
 
+/** The pieces of the host film library (`@/lib/omniwatch`) the panel's download reuses. */
+export interface HostDownloadTools {
+  run(cmd: string, args: string[], timeoutMs?: number): Promise<string>;
+  cleanup(): Promise<string[]>;
+  cacheKey(url: string): string;
+  videoDir(id: string): string;
+  probeDuration(file: string): Promise<number>;
+}
+
+export interface PanelVideoInfo {
+  id: string;
+  title: string;
+  channel: string;
+  duration: number;
+  extractor: string;
+}
+
+/**
+ * R5: download one film for the analysis card, into the host library's cache layout
+ * (`<cache>/<id>/info.json` + `source.mp4`, so frames, the player and follow-ups keep
+ * working), with every yt-dlp call going through the shared `runYtDlpResilient`:
+ *
+ *   - a failure is a classified `source_unavailable` (rate limit, bot check, private,
+ *     unavailable, geo, network) whose raw yt-dlp output is kept for "details";
+ *   - a plain HTTP 429 waits once (reported through `onWait`, which the card shows as
+ *     "retrying in N s") and tries again - one retry for the whole fetch; a bot check
+ *     is never retried;
+ *   - browser cookies are passed ONLY when the user set
+ *     OMNIWATCH_YTDLP_COOKIES_FROM_BROWSER or OMNIWATCH_YTDLP_COOKIES.
+ *
+ * Same steps as the host's `fetchVideo` otherwise (480p sort, mp4 merge, ffprobe only
+ * when the extractor reported no duration). `--no-warnings` is dropped on purpose: the
+ * warnings (429, PO token) are part of why a download failed.
+ */
+export async function downloadForPanel(
+  tools: HostDownloadTools,
+  url: string,
+  options: { onWait?: (wait: SourceWait) => void; env?: NodeJS.ProcessEnv } = {},
+): Promise<{ info: PanelVideoInfo; src: string }> {
+  const env = options.env ?? process.env;
+  const cookies = ytDlpCookieArgs(env);
+  const budget = createYtDlpRetryBudget(1);
+  const ytDlp = (args: string[], timeoutMs?: number) => runYtDlpResilient([...cookies, ...args], {
+    run: (all) => tools.run("yt-dlp", all, timeoutMs),
+    url,
+    budget,
+    retrySeconds: ytDlpRetrySeconds(env),
+    onWait: options.onWait,
+  });
+
+  await tools.cleanup();
+  const dir = tools.videoDir(tools.cacheKey(url));
+  const infoFile = join(dir, "info.json");
+  const src = join(dir, "source.mp4");
+  let info: PanelVideoInfo;
+
+  if (existsSync(infoFile) && existsSync(src)) {
+    info = JSON.parse(await readFile(infoFile, "utf8")) as PanelVideoInfo;
+    const now = new Date();
+    await utimes(infoFile, now, now); // keep a video that is still being asked about alive
+  } else {
+    const raw = JSON.parse(await ytDlp(["-J", "--no-playlist", url], 180_000)) as Record<string, unknown>;
+    info = {
+      id: basename(dir),
+      title: String(raw.title || "?"),
+      channel: String(raw.channel || raw.uploader || "?"),
+      duration: Math.round(Number(raw.duration) || 0),
+      extractor: String(raw.extractor_key || ""),
+    };
+    await mkdir(dir, { recursive: true });
+    await writeFile(infoFile, JSON.stringify(info));
+  }
+  if (!existsSync(src)) {
+    await ytDlp(["--no-playlist", "-q", "-N", "8",
+      "-S", "res:480", "-f", "bv*+ba/b",
+      "--merge-output-format", "mp4", "-o", src, url]);
+  }
+  if (!info.duration) {
+    const probed = await tools.probeDuration(src);
+    if (probed) {
+      info = { ...info, duration: probed };
+      await writeFile(infoFile, JSON.stringify(info));
+    }
+  }
+  return { info, src };
+}
+
 /** Sync durable view used by `getJob`; the richer async view lives in the jobs handler. */
-function durableJobView(store: StorePort, id: string): Job | null {
+function durableJobView(store: StorePort, id: string, live: LiveProgress | null = null): Job | null {
   const operation = store.getOperation(id);
   if (!operation) return null;
   const buffer = store.getBuffer(id)?.result ?? null;
   const running = operation.state === "pending" || operation.state === "running";
   const done = operation.state === "delivered" || operation.state === "result_ready";
+  // R5: the same honest stage as the card (live event, else the journal); never
+  // "watch" for a download and never "answer" for a failure.
+  const startedAttempts = store.listAttempts(id).filter((a) => a.phase === "started" || a.phase === "response").length;
+  const stage = cardProgress({ state: operation.state, startedAttempts, live }).stage;
   return {
     id,
     operationId: id,
@@ -849,7 +973,7 @@ function durableJobView(store: StorePort, id: string): Job | null {
     state: done ? "done" : running ? "running" : "error",
     startedAt: Date.parse(operation.createdAt) || Date.now(),
     ...(done ? {} : { error: operation.errorMessage ?? undefined }),
-    progress: { stage: running ? "watch" : "answer", ...(buffer ? { text: buffer.content } : {}) },
+    progress: { stage, ...(buffer ? { text: buffer.content } : {}) },
     ...(done && buffer
       ? {
           result: {

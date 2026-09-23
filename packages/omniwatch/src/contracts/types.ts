@@ -317,6 +317,10 @@ export interface ProgressEvent {
   errorClass?: ErrorClass | null;
   partialText?: string | null;
   usage?: Usage | null;
+  /** R5 `source_wait`: seconds until the single retry of a rate-limited download. */
+  waitSeconds?: number | null;
+  /** R5 `source_wait`: the classified reason of the wait (e.g. `rate_limited_by_youtube`). */
+  reason?: string | null;
 }
 
 export interface ClockPort {

@@ -98,7 +98,14 @@ export interface SourcePort {
   /** Resolve one pasted URL/local ref into a stable SourceRef. */
   resolve(input: { url: string }): Promise<SourceRef>;
   /** Prepare local media; never triggers a paid model call. */
-  prepare(source: SourceRef, options?: { force?: boolean }): Promise<MediaInfo>;
+  prepare(
+    source: SourceRef,
+    options?: {
+      force?: boolean;
+      /** R5: a download is waiting before its single retry (e.g. HTTP 429). Real event, not a guess. */
+      onWait?: (wait: { reason: string; seconds: number; attempt: number }) => void;
+    },
+  ): Promise<MediaInfo>;
   /** Split prepared media into analysable parts. */
   split(info: MediaInfo, options: { maxFramesPerPart: number }): Promise<MediaPart[]>;
   /** List an archive page. Undefined when the adapter has no listing capability. */

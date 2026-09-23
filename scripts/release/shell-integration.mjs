@@ -49,6 +49,8 @@ export const AGENT_OS_INTEGRATION_FILES = [
   "src/lib/omniwatchPanelRuntime.ts",
   "src/lib/omniwatchLegacyAdapter.ts",
   "src/lib/omniwatchJobs.ts",
+  // R5: the card's progress comes from real events (live progress + journal)
+  "src/lib/omniwatchProgress.ts",
   "src/lib/omniwatchI18n.ts",
   "src/lib/omniwatchPresets.ts",
   // panel-independent worker (D5) - sits next to the module root, not inside src/

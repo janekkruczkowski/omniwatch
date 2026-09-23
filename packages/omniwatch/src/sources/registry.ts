@@ -34,6 +34,7 @@ import {
   toDiskSpacePausedError,
 } from "./mediaCache.ts";
 import type { DiskSpacePort, MediaCachePort } from "./mediaCache.ts";
+import type { SourceWait } from "./ytdlp.ts";
 
 export interface PreparedMedia {
   localPath: string;
@@ -59,8 +60,11 @@ export interface MediaSliceInput {
 export interface MediaToolPort {
   /** Cached media without touching the network; null when nothing is cached. */
   cached(source: SourceRef): Promise<PreparedMedia | null>;
-  /** Download + probe. Must not call a paid model provider. */
-  fetch(source: SourceRef): Promise<PreparedMedia>;
+  /**
+   * Download + probe. Must not call a paid model provider. `onWait` reports a visible
+   * wait before a retry (R5); adapters that never retry may ignore it.
+   */
+  fetch(source: SourceRef, options?: { onWait?: (wait: SourceWait) => void }): Promise<PreparedMedia>;
   /** ffprobe-style fallback when the extractor reported no duration. */
   probeDuration?(localPath: string): Promise<number>;
   /** Raw beta upload metadata (`oss.json`) for the prepared file. */
@@ -244,7 +248,10 @@ export function createSourceRegistry(adapters: SourceAdapterBundle): SourcePort 
       return parseSourceUrl(input.url);
     },
 
-    async prepare(source: SourceRef, options?: { force?: boolean }): Promise<MediaInfo> {
+    async prepare(
+      source: SourceRef,
+      options?: { force?: boolean; onWait?: (wait: SourceWait) => void },
+    ): Promise<MediaInfo> {
       try {
         if (!options?.force) {
           const cached = await adapters.media.cached(source);
@@ -264,7 +271,7 @@ export function createSourceRegistry(adapters: SourceAdapterBundle): SourcePort 
           if (dir) await assertDiskSpace(adapters.diskSpace, dir, minFreeBytes);
         }
 
-        const fetched = await adapters.media.fetch(source);
+        const fetched = await adapters.media.fetch(source, options?.onWait ? { onWait: options.onWait } : undefined);
         const info = await leases.withLease(fetched.localPath, () => mediaInfoFor(source, fetched));
         await sweepCacheQuota();
         return info;

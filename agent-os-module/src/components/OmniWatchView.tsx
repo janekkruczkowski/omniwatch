@@ -59,10 +59,74 @@ interface Card {
   operationId?: string;
   /** the model call's outcome is unknown: only an explicit, warned retry may run it again */
   retry?: { operationId: string; warning: string };
+  /** R5: the raw tool output behind the friendly error, shown only under "details" */
+  detail?: string;
 }
 
+/** R5: a download failure as the server classified it (yt-dlp reason + raw output). */
+export interface SourceFailureInfo { reason: string; retryable?: boolean; message?: string; detail?: string }
+/** R5: a rate-limited download waiting before its single retry. */
+export interface WaitInfo { reason: string; seconds: number; remainingSeconds: number }
+
 /** What the jobs endpoint says about a failed run (poll or admission). */
-interface FailureInfo { error?: string; retryable?: boolean; retryWarning?: string; operationId?: string; id?: string }
+interface FailureInfo {
+  error?: string; retryable?: boolean; retryWarning?: string; operationId?: string; id?: string;
+  sourceFailure?: SourceFailureInfo;
+  /** true only when the server confirms no model call was ever started */
+  noModelCalls?: boolean;
+}
+
+/** What one poll means for the card, decided from the server's own words only (R5).
+ *
+ *  The old poll handler applied `stage` before it looked at `state`, and the server
+ *  labelled every failure "answer": a download that yt-dlp could not even start was
+ *  drawn as "writing the answer". A terminal state now wins over any stage, and a
+ *  stage the server did not send is not invented here. */
+export function readPoll(d: { state?: string; stage?: string; wait?: WaitInfo | null }): {
+  terminal: "done" | "error" | null; step: string; wait: WaitInfo | null;
+} {
+  if (d.state === "error") return { terminal: "error", step: "failed", wait: null };
+  if (d.state === "done") return { terminal: "done", step: "end", wait: null };
+  const step = d.stage === "merge" ? "watch" : d.stage || "";
+  const wait = d.wait && d.wait.remainingSeconds > 0 ? d.wait : null;
+  return { terminal: null, step, wait };
+}
+
+/** One clear sentence for a failed card: the translated reason when the server
+ *  classified the failure, otherwise the server's own message. "Nothing was sent to
+ *  the model" is said only when the server confirms it. */
+export function failureText(info: FailureInfo, ui: Record<string, string> | undefined, fallback: string): string {
+  const reason = info.sourceFailure?.reason;
+  const template = reason ? ui?.[`sourceError_${reason}`] : undefined;
+  if (!template) return info.sourceFailure?.message || fallback;
+  const noCost = info.noModelCalls === true
+    ? (ui?.sourceErrorNoCost || "Nothing was sent to the model and nothing was charged. ")
+    : "";
+  return template.replace("{noCost}", noCost).replace(/\s+$/, "");
+}
+
+/** "YouTube is limiting downloads — retrying in N s", from the server's real wait. */
+export function waitText(wait: WaitInfo, ui: Record<string, string> | undefined): string {
+  const template = wait.reason === "rate_limited_by_youtube"
+    ? (ui?.sourceWaitRetry || "YouTube is limiting downloads — retrying in {n} s")
+    : (ui?.sourceWaitRetryGeneric || "The site is limiting downloads — retrying in {n} s");
+  return template.replace("{n}", String(wait.remainingSeconds));
+}
+
+/** The line a running card shows before any text arrives — only what the server said. */
+export function pendingText(step: string, wait: WaitInfo | null, parts: number, ui: Record<string, string> | undefined): string {
+  if (wait) return waitText(wait, ui);
+  switch (step) {
+    case "download": return ui?.pendingDownload || "Downloading the video…";
+    case "upload": return ui?.pendingUpload || "Sending the video to Qwen…";
+    case "watch": return parts > 1
+      ? (ui?.pendingWatchMany || "Omni is watching {n} parts in parallel…").replace("{n}", String(parts))
+      : `${ui?.stepWatchOne || "Omni watches the whole video"}…`;
+    case "answer": return `${ui?.stepAnswer || "Writing the answer"}…`;
+    case "queued": return ui?.pendingQueued || "Waiting in line - another analysis is running…";
+    default: return ui?.pendingStart || "Starting…";
+  }
+}
 
 /** Retry offer for a card, or nothing. Only an operation the server marks retryable
  *  (state outcome_unknown) gets one; any other failure is not a paid-call question. */
@@ -150,6 +214,8 @@ export default function OmniWatchView() {
 
   const [running, setRunning] = useState(false);
   const [step, setStep] = useState<string>("");
+  /** R5: a real, server-reported wait before the single retry of a rate-limited download */
+  const [wait, setWait] = useState<WaitInfo | null>(null);
   const [meta, setMeta] = useState<Meta | null>(null);
   const [fps, setFps] = useState(0);
   const [parts, setParts] = useState(0);
@@ -248,7 +314,9 @@ export default function OmniWatchView() {
     const runMode: "ask" | "teardown" = force ?? (mode === "teardown" ? "teardown" : "ask");
     const id = ++cardId.current;
     setCards((c) => [{ id, q: q.trim(), mode: runMode, text: "", src: { url: link, title: "", seconds: 0, lang } }, ...c]);
-    setRunning(true); setStep("download"); setParts(0); setPartsDone(0); setReused(false); setHits([]); setFollowUp("");
+    // No step is lit until the server reports one (R5): "downloading" before anything
+    // was even admitted was the first of the made-up stages.
+    setRunning(true); setStep(""); setWait(null); setParts(0); setPartsDone(0); setReused(false); setHits([]); setFollowUp("");
 
     // Per run, not per poll: the player follows this run's first report only.
     let playerPinned = false;
@@ -266,7 +334,15 @@ export default function OmniWatchView() {
     };
     const fail = (message: string, info: FailureInfo = {}, operationId?: string) => {
       finish();
-      patch((c) => ({ ...c, error: message, retry: retryOffer(info, operationId ?? c.operationId) }));
+      // A failure stops the steps at once; the card carries the one clear error (R5).
+      setStep("failed"); setWait(null);
+      const ui = T?.ui as Record<string, string> | undefined;
+      patch((c) => ({
+        ...c,
+        error: failureText(info, ui, message),
+        detail: info.sourceFailure?.detail || undefined,
+        retry: retryOffer(info, operationId ?? c.operationId),
+      }));
     };
 
     let started: { id: string };
@@ -305,12 +381,15 @@ export default function OmniWatchView() {
     }
 
     pollRef.current = setInterval(async () => {
-      let d: Progress & { state: string; error?: string } & Partial<Stats> & FailureInfo;
+      let d: Progress & { state: string; error?: string; wait?: WaitInfo | null } & Partial<Stats> & FailureInfo;
       try {
         const r = await fetch(`/api/omniwatch/jobs?id=${started.id}`, { cache: "no-store" });
         if (r.status === 404) return fail("The dashboard restarted while this was running. Ask again — the video is cached, so it will be quick.");
         d = await r.json();
       } catch { return; } // a dropped poll is not a failed job; the next tick retries
+      // R5: a terminal error wins over everything else in the poll — no stage, no meta.
+      const view = readPoll(d);
+      if (view.terminal === "error") return fail(d.error || "The run failed", d, started.id);
       if (d.meta) {
         const m = d.meta;
         metaIdRef.current = m.id;
@@ -329,7 +408,8 @@ export default function OmniWatchView() {
           },
         }));
       }
-      if (d.stage) setStep(d.stage === "merge" ? "watch" : d.stage);
+      if (view.step) setStep(view.step);
+      setWait(view.wait);
       if (d.fps) setFps(d.fps);
       if (typeof d.parts === "number") setParts(d.parts);
       if (typeof d.partsDone === "number") setPartsDone(d.partsDone);
@@ -348,11 +428,9 @@ export default function OmniWatchView() {
             turnId: (d as { turnId?: string | null }).turnId ?? null,
           },
         }));
-      } else if (d.state === "error") {
-        fail(d.error || "The run failed", d, started.id);
       }
     }, 700);
-  }, [url, mode, lang, focus, setPlayer]);
+  }, [url, mode, lang, focus, setPlayer, T]);
 
   // ── handed a video by another tab ────────────────────────────────────────────
   // Astros finds what competitors published but works from titles, so its row of
@@ -528,6 +606,8 @@ export default function OmniWatchView() {
               </div>
             )}
 
+            {/* R5: a failed run shows no steps at all — only the error card. */}
+            {step !== "failed" && (
             <div className="panel p-4">
               <div className="flex items-center justify-between mb-3">
                 <span className="sidebar-section-label">{ui?.progress || "Progress"}</span>
@@ -552,12 +632,18 @@ export default function OmniWatchView() {
                   return <div key={s} className={`ow-step ${cls}`}><i />{label}<small>{note}</small></div>;
                 })}
               </div>
+              {wait && (
+                <div className="text-xs mt-3" data-omniwatch-wait={wait.remainingSeconds} style={{ color: "var(--gold-soft)" }}>
+                  {waitText(wait, ui)}
+                </div>
+              )}
               {parts > 1 && (
                 <div className="ow-parts">
                   {Array.from({ length: parts }, (_, i) => <i key={i} className={i < partsDone ? "ok" : "on"} />)}
                 </div>
               )}
             </div>
+            )}
 
             {meta && meta.strip?.length > 0 && (
               <div className="panel p-4">
@@ -612,6 +698,7 @@ export default function OmniWatchView() {
                 onSeek={(sec) => seek(sec, c.src?.id)}
                 frame={(sec) => frameUrl(c.src, sec)}
                 running={running && c.id === cardId.current}
+                pending={running && c.id === cardId.current ? pendingText(step, wait, parts, ui) : undefined}
                 source={c.src ?? null}
                 onRetry={running ? undefined : (r) => {
                   // Consent is explicit: the warning is shown on the card and confirmed here.
@@ -628,8 +715,10 @@ export default function OmniWatchView() {
 }
 
 // ── one question and its answer ────────────────────────────────────────────────
-function Answer({ card, locale, onSeek, frame, running, source, onRetry }: {
+function Answer({ card, locale, onSeek, frame, running, pending, source, onRetry }: {
   card: Card; locale: Locale | null; onSeek: (s: number) => void; frame: (s: number) => string; running: boolean;
+  /** R5: what the server says is happening now; nothing is claimed before it says so */
+  pending?: string;
   /** explicit retry of an outcome_unknown call; absent while another run is going */
   onRetry?: (retry: NonNullable<Card["retry"]>) => void;
   /** what was watched — needed to build a brief from this answer, absent while a job is
@@ -652,7 +741,16 @@ function Answer({ card, locale, onSeek, frame, running, source, onRetry }: {
 
       {card.error ? (
         <div className="space-y-2">
-          <div className="text-sm" style={{ color: "var(--plum)", whiteSpace: "pre-wrap" }}>⚠ {card.error}</div>
+          <div className="text-sm" role="alert" style={{ color: "var(--plum)", whiteSpace: "pre-wrap" }}>⚠ {card.error}</div>
+          {/* R5: the raw yt-dlp output stays available, but only behind a toggle. */}
+          {card.detail && (
+            <details className="text-xs" data-omniwatch-detail>
+              <summary style={{ color: "var(--cream-mute)", cursor: "pointer" }}>{ui.errorDetails || "Details"}</summary>
+              <pre className="mt-2 p-2 rounded overflow-x-auto" style={{ whiteSpace: "pre-wrap", background: "var(--bg-elev)", color: "var(--cream-dim)" }}>
+                {card.detail}
+              </pre>
+            </details>
+          )}
           {card.retry && (
             <div className="flex flex-wrap items-center gap-3" data-omniwatch-retry={card.retry.operationId}>
               <span className="text-xs" style={{ color: "var(--cream-dim)" }}>{card.retry.warning}</span>
@@ -669,7 +767,7 @@ function Answer({ card, locale, onSeek, frame, running, source, onRetry }: {
         </div>
       ) : !card.text ? (
         <div className="flex items-center gap-2 text-sm" style={{ color: "var(--cream-dim)" }}>
-          <Loader2 size={14} className="animate-spin" /> {ui.pendingDownload || "Downloading the video…"}
+          <Loader2 size={14} className="animate-spin" /> {pending || ui.pendingStart || "Starting…"}
         </div>
       ) : (
         <>

@@ -5,3 +5,4 @@ export * from "./legacy.ts";
 export * from "./media.ts";
 export * from "./mediaCache.ts";
 export * from "./registry.ts";
+export * from "./ytdlp.ts";

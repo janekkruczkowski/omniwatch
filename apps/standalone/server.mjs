@@ -56,6 +56,7 @@ const [
   { createSourceRegistry },
   { effectiveMaxFramesPerPart, fpsFor, formatDuration, keyframeAlignedStart, strip },
   { BETA_OSS_TTL_HOURS },
+  { createYtDlpRetryBudget, describeSourceFailure, runYtDlpResilient, ytDlpCookieArgs, ytDlpRetrySeconds },
 ] = await Promise.all(
   [
     "analysis/index",
@@ -69,6 +70,7 @@ const [
     "sources/registry",
     "sources/media",
     "sources/legacy",
+    "sources/ytdlp",
   ].map((rel) => importCore(rel, { core: CORE })),
 );
 
@@ -200,6 +202,10 @@ export function createStandaloneMediaTool(options) {
   const legacyAppRoot = options.legacyAppRoot ? path.resolve(options.legacyAppRoot) : null;
   const nowSeconds = options.nowSeconds ?? (() => Math.floor(Date.now() / 1000));
   const run = options.runTool ?? runTool;
+  // R5: opt-in yt-dlp settings. Cookies are passed ONLY when the user configured
+  // OMNIWATCH_YTDLP_COOKIES_FROM_BROWSER or OMNIWATCH_YTDLP_COOKIES; off by default.
+  const ytDlpEnv = options.env ?? {};
+  const sleep = options.sleep;
 
   const dirFor = (id) => path.join(cacheDir, assertSafeLegacyId(id));
 
@@ -257,12 +263,24 @@ export function createStandaloneMediaTool(options) {
       return preparedFrom(id, readInfoFile(id), localPath);
     },
 
-    async fetch(source) {
+    async fetch(source, fetchOptions = {}) {
       const id = source.legacyId ?? source.sourceId;
       const dir = dirFor(id);
       mkdirSync(dir, { recursive: true });
       const target = path.join(dir, "source.mp4");
-      const meta = await run("yt-dlp", ["-J", "--no-playlist", source.canonicalUrl]);
+      // R5: every yt-dlp call is classified (rate limit, bot check, private, ...) and a
+      // plain HTTP 429 waits once before one retry, shared by both calls of this fetch.
+      const cookies = ytDlpCookieArgs(ytDlpEnv);
+      const budget = createYtDlpRetryBudget(1);
+      const ytDlp = (args) => runYtDlpResilient([...cookies, ...args], {
+        run: (all) => run("yt-dlp", all),
+        url: source.canonicalUrl,
+        budget,
+        retrySeconds: ytDlpRetrySeconds(ytDlpEnv),
+        onWait: fetchOptions.onWait,
+        ...(sleep ? { sleep } : {}),
+      });
+      const meta = await ytDlp(["-J", "--no-playlist", source.canonicalUrl]);
       const parsed = JSON.parse(meta.stdout);
       const info = {
         title: parsed.title ?? id,
@@ -272,10 +290,10 @@ export function createStandaloneMediaTool(options) {
         extractor_key: parsed.extractor_key ?? "generic",
       };
       if (!existsSync(target)) {
-        await run("yt-dlp", [
+        // No `--no-warnings`: the warnings (429, PO token) explain a failure.
+        await ytDlp([
           "--no-playlist",
           "-q",
-          "--no-warnings",
           "-N",
           "8",
           "-S",
@@ -434,6 +452,9 @@ export function createStandaloneSource(options) {
  */
 export function progressToEvent(event) {
   switch (event.stage) {
+    case "source_wait":
+      // R5: a rate-limited download is really waiting before its single retry.
+      return { name: "source_wait", data: { reason: event.reason ?? "rate_limited", seconds: event.waitSeconds ?? 0 } };
     case "call":
       return event.itemIndex === 0 || event.itemIndex === undefined ? { name: "stage", data: { step: "answer" } } : null;
     case "part_done":
@@ -522,7 +543,16 @@ export async function runWatchPipeline(options) {
   }
 
   const sourceRef = savedRequest?.sourceRef ?? await wiring.deps.source.resolve({ url: request.url });
-  const info = await wiring.deps.source.prepare(sourceRef);
+  let info;
+  try {
+    info = await wiring.deps.source.prepare(sourceRef, {
+      onWait: (wait) => emit("source_wait", { reason: wait.reason, seconds: wait.seconds }),
+    });
+  } catch (error) {
+    // Nothing was admitted and no model was called: the page may say so (R5).
+    if (error && typeof error === "object") error.noModelCalls = true;
+    throw error;
+  }
   const legacyId = sourceRef.legacyId ?? sourceRef.sourceId;
   emit("meta", {
     id: legacyId,
@@ -645,11 +675,13 @@ export async function runWatchPipeline(options) {
   const buffer = wiring.store.getBuffer(enqueued.operation.id);
   const result = buffer?.result ?? null;
   if (summary.state !== "delivered" || !result) {
-    throw new OmniWatchError(
+    const failure = new OmniWatchError(
       summary.errorClass ?? "runtime_unavailable",
       summary.message ?? "Analiza nie zakonczyla sie poprawnie.",
       { operationId: enqueued.operation.id },
     );
+    failure.noModelCalls = summary.modelCalls === 0;
+    throw failure;
   }
 
   emit("answer.text", { text: result.content });
@@ -922,8 +954,18 @@ async function handleWatch(req, res, context, url) {
     }
   } catch (error) {
     const errorClass = error?.errorClass ?? "runtime_unavailable";
-    const message = String(error?.message ?? error).slice(0, 600);
-    emit("error", { error: errorClass, message, operationId: error?.operationId ?? null });
+    const raw = String(error?.message ?? error);
+    // R5: a download failure is classified; the page shows the translated reason and
+    // keeps the raw yt-dlp text behind "details" instead of as the headline.
+    const sourceFailure = describeSourceFailure(errorClass, raw);
+    const message = (sourceFailure ? sourceFailure.message : raw).slice(0, 600);
+    emit("error", {
+      error: errorClass,
+      message,
+      operationId: error?.operationId ?? null,
+      ...(sourceFailure ? { sourceFailure: { ...sourceFailure, detail: sourceFailure.detail.slice(-2000) } } : {}),
+      ...(typeof error?.noModelCalls === "boolean" ? { noModelCalls: error.noModelCalls } : {}),
+    });
   } finally {
     if (!res.writableEnded) res.end();
   }
@@ -1038,6 +1080,8 @@ export function createStandaloneServer(options = {}) {
         cacheDir: config.cacheDir,
         legacyAppRoot: config.appRoot,
         cacheHours: () => config.cacheHours,
+        // `.env` + process environment, for the opt-in yt-dlp settings (R5).
+        env: config.effectiveEnv ?? env,
       });
     const source = options.source ?? createStandaloneSource({ media, cacheHours: () => config.cacheHours });
     const wiring = createRuntimeWiring({

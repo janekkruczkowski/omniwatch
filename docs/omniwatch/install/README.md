@@ -245,6 +245,35 @@ wewnatrz procesu, `maxFramesPerPart`, `cacheHours`). Dzieki temu:
 Klucze zgodne z beta (standalone): `DASHSCOPE_API_KEY`, `DASHSCOPE_API`, `OMNI_MODEL`,
 `OMNI_LANG`, `OMNI_CACHE_HOURS`, `OMNI_MAX_FRAMES`.
 
+### Pobieranie z YouTube: blokady, ponowienie i (opcjonalnie) ciasteczka
+
+yt-dlp pobiera material **zanim** cokolwiek trafi do modelu. Gdy YouTube odmowi, operacja
+konczy sie jako `source_unavailable` z jednym powodem (`rate_limited_by_youtube` - HTTP 429,
+`bot_check` - "Sign in to confirm you're not a bot", `private`, `unavailable`,
+`geo_blocked`, `network`, `rate_limited`, `unknown`). Karta pokazuje jedno zdanie w jezyku
+interfejsu i - tylko gdy serwer to potwierdza - "Nic nie zostalo wyslane do modelu i nic nie
+kosztowalo". Surowy tekst yt-dlp jest schowany pod "szczegoly".
+
+- HTTP 429: jedno ponowienie po `OMNIWATCH_YTDLP_RETRY_SECONDS` sekundach (domyslnie 30,
+  maks. 120), widoczne jako "YouTube ogranicza — ponawiam za N s". Jedno na cale pobranie.
+- Weryfikacja bota: **bez** ponowienia (kolejne zapytania z tego samego adresu tylko
+  przedluzaja blokade). Pomaga odczekanie kilku-kilkunastu minut albo ciasteczka.
+
+Ciasteczka przegladarki sa **domyslnie wylaczone**. Wlaczasz je swiadomie, jedna z dwoch
+zmiennych (Agent OS: srodowisko procesu panelu; standalone: `.env` obok launcherow albo
+srodowisko):
+
+```
+# plik cookies.txt (format Netscape) - wezsze uprawnienie, ma pierwszenstwo
+OMNIWATCH_YTDLP_COOKIES=/sciezka/do/cookies.txt
+# albo: yt-dlp sam czyta ciasteczka z profilu przegladarki (BROWSER[+KEYRING][:PROFIL])
+OMNIWATCH_YTDLP_COOKIES_FROM_BROWSER=chrome
+```
+
+Wartosc trafia do yt-dlp jako `--cookies <plik>` albo `--cookies-from-browser <wartosc>`.
+To daje yt-dlp dostep do sesji Twojego konta w przegladarce - wlacz tylko, jesli sie na to
+zgadzasz. OmniWatch niczego tu nie wlacza ani nie odczytuje sam.
+
 ### Znana rozbieznosc bety: `OMNI_PART_MINUTES` nic nie robil
 
 README i `.env.example` bety opisywaly `OMNI_PART_MINUTES=40`, ale wydany kod **nigdy

@@ -106,7 +106,21 @@ const I18N: Record<string, Locale> = {
       "purposePattern": "Same rhythm, your topic",
       "purposePatternHint": "Retells this video's pacing and structure for your own subject — every word is yours.",
       "purposeReview": "Talk about this video",
-      "purposeReviewHint": "Narration can discuss the source — using your own footage, not clips from it (yet)."
+      "purposeReviewHint": "Narration can discuss the source — using your own footage, not clips from it (yet).",
+      "sourceError_rate_limited_by_youtube": "YouTube is rate-limiting downloads from this computer (too many requests). {noCost}Try again in a few to fifteen minutes, or enable downloading with browser cookies in the settings (OMNIWATCH_YTDLP_COOKIES_FROM_BROWSER).",
+      "sourceError_bot_check": "YouTube blocked downloading from this computer (the \"confirm you're not a bot\" check). {noCost}Try again in a few to fifteen minutes, or enable downloading with browser cookies in the settings (OMNIWATCH_YTDLP_COOKIES_FROM_BROWSER).",
+      "sourceError_rate_limited": "The site is rate-limiting downloads from this computer (too many requests). {noCost}Try again in a few minutes.",
+      "sourceError_private": "This video is private, members-only or age-restricted — it needs a signed-in account. {noCost}",
+      "sourceError_unavailable": "The video is unavailable (removed, blocked, not yet published, or not a video link). {noCost}",
+      "sourceError_geo_blocked": "The video is not available in this computer's region. {noCost}",
+      "sourceError_network": "Could not reach the site (network, DNS or timeout). {noCost}Check the connection and try again.",
+      "sourceError_unknown": "The video could not be downloaded. {noCost}",
+      "sourceErrorNoCost": "Nothing was sent to the model and nothing was charged. ",
+      "errorDetails": "Details",
+      "sourceWaitRetry": "YouTube is limiting downloads — retrying in {n} s",
+      "sourceWaitRetryGeneric": "The site is limiting downloads — retrying in {n} s",
+      "pendingQueued": "Waiting in line - another analysis is running…",
+      "pendingStart": "Starting…"
     }
   },
   "pl": {
@@ -207,7 +221,21 @@ const I18N: Record<string, Locale> = {
       "purposePattern": "To samo tempo, Twój temat",
       "purposePatternHint": "Przejmuje tempo i strukturę tego filmu dla Twojego tematu — słowa są w całości Twoje.",
       "purposeReview": "Komentarz o tym filmie",
-      "purposeReviewHint": "Narracja może odnosić się do źródła — na razie na Twoim własnym materiale, bez wycinków z oryginału."
+      "purposeReviewHint": "Narracja może odnosić się do źródła — na razie na Twoim własnym materiale, bez wycinków z oryginału.",
+      "sourceError_rate_limited_by_youtube": "YouTube ogranicza pobieranie z tego komputera (za dużo zapytań). {noCost}Spróbuj za kilka–kilkanaście minut albo włącz pobieranie z ciasteczkami przeglądarki w ustawieniach (OMNIWATCH_YTDLP_COOKIES_FROM_BROWSER).",
+      "sourceError_bot_check": "YouTube zablokował pobieranie z tego komputera (weryfikacja „nie jestem botem”). {noCost}Spróbuj za kilka–kilkanaście minut albo włącz pobieranie z ciasteczkami przeglądarki w ustawieniach (OMNIWATCH_YTDLP_COOKIES_FROM_BROWSER).",
+      "sourceError_rate_limited": "Serwis ogranicza pobieranie z tego komputera (za dużo zapytań). {noCost}Spróbuj ponownie za kilka minut.",
+      "sourceError_private": "Ten film jest prywatny, tylko dla członków albo z ograniczeniem wieku — wymaga zalogowanego konta. {noCost}",
+      "sourceError_unavailable": "Film jest niedostępny (usunięty, zablokowany, jeszcze nieopublikowany albo to nie jest link do filmu). {noCost}",
+      "sourceError_geo_blocked": "Film jest niedostępny w regionie tego komputera. {noCost}",
+      "sourceError_network": "Nie udało się połączyć z serwisem (sieć, DNS albo przekroczony czas). {noCost}Sprawdź połączenie i spróbuj ponownie.",
+      "sourceError_unknown": "Nie udało się pobrać filmu. {noCost}",
+      "sourceErrorNoCost": "Nic nie zostało wysłane do modelu i nic nie kosztowało. ",
+      "errorDetails": "szczegóły",
+      "sourceWaitRetry": "YouTube ogranicza — ponawiam za {n} s",
+      "sourceWaitRetryGeneric": "Serwis ogranicza pobieranie — ponawiam za {n} s",
+      "pendingQueued": "Czekam w kolejce - trwa inna analiza…",
+      "pendingStart": "Uruchamiam…"
     }
   },
   "de": {
@@ -308,7 +336,21 @@ const I18N: Record<string, Locale> = {
       "purposePattern": "Gleicher Rhythmus, dein Thema",
       "purposePatternHint": "Übernimmt Tempo und Struktur dieses Videos für dein eigenes Thema — jedes Wort ist deins.",
       "purposeReview": "Über dieses Video sprechen",
-      "purposeReviewHint": "Die Erzählung darf sich auf die Quelle beziehen — mit deinem eigenen Material, noch keine Ausschnitte daraus."
+      "purposeReviewHint": "Die Erzählung darf sich auf die Quelle beziehen — mit deinem eigenen Material, noch keine Ausschnitte daraus.",
+      "sourceError_rate_limited_by_youtube": "YouTube drosselt Downloads von diesem Computer (zu viele Anfragen). {noCost}Versuche es in ein paar bis fünfzehn Minuten erneut oder aktiviere den Download mit Browser-Cookies in den Einstellungen (OMNIWATCH_YTDLP_COOKIES_FROM_BROWSER).",
+      "sourceError_bot_check": "YouTube hat den Download von diesem Computer blockiert (Prüfung „kein Bot“). {noCost}Versuche es in ein paar bis fünfzehn Minuten erneut oder aktiviere den Download mit Browser-Cookies in den Einstellungen (OMNIWATCH_YTDLP_COOKIES_FROM_BROWSER).",
+      "sourceError_rate_limited": "Die Seite drosselt Downloads von diesem Computer (zu viele Anfragen). {noCost}Versuche es in ein paar Minuten erneut.",
+      "sourceError_private": "Dieses Video ist privat, nur für Mitglieder oder altersbeschränkt – es braucht ein angemeldetes Konto. {noCost}",
+      "sourceError_unavailable": "Das Video ist nicht verfügbar (entfernt, gesperrt, noch nicht veröffentlicht oder kein Videolink). {noCost}",
+      "sourceError_geo_blocked": "Das Video ist in der Region dieses Computers nicht verfügbar. {noCost}",
+      "sourceError_network": "Die Seite war nicht erreichbar (Netzwerk, DNS oder Zeitüberschreitung). {noCost}Prüfe die Verbindung und versuche es erneut.",
+      "sourceError_unknown": "Das Video konnte nicht heruntergeladen werden. {noCost}",
+      "sourceErrorNoCost": "Nichts wurde an das Modell gesendet, es sind keine Kosten entstanden. ",
+      "errorDetails": "Details",
+      "sourceWaitRetry": "YouTube drosselt Downloads — neuer Versuch in {n} s",
+      "sourceWaitRetryGeneric": "Die Seite drosselt Downloads — neuer Versuch in {n} s",
+      "pendingQueued": "Warte in der Warteschlange - eine andere Analyse läuft…",
+      "pendingStart": "Starte…"
     }
   },
   "es": {
@@ -409,7 +451,21 @@ const I18N: Record<string, Locale> = {
       "purposePattern": "Mismo ritmo, tu tema",
       "purposePatternHint": "Reutiliza el ritmo y la estructura de este vídeo para tu propio tema — cada palabra es tuya.",
       "purposeReview": "Hablar sobre este vídeo",
-      "purposeReviewHint": "La narración puede referirse a la fuente — con tu propio metraje, todavía sin fragmentos de ella."
+      "purposeReviewHint": "La narración puede referirse a la fuente — con tu propio metraje, todavía sin fragmentos de ella.",
+      "sourceError_rate_limited_by_youtube": "YouTube está limitando las descargas desde este ordenador (demasiadas solicitudes). {noCost}Inténtalo de nuevo en unos minutos (hasta quince) o activa la descarga con las cookies del navegador en los ajustes (OMNIWATCH_YTDLP_COOKIES_FROM_BROWSER).",
+      "sourceError_bot_check": "YouTube ha bloqueado la descarga desde este ordenador (verificación «no soy un bot»). {noCost}Inténtalo de nuevo en unos minutos (hasta quince) o activa la descarga con las cookies del navegador en los ajustes (OMNIWATCH_YTDLP_COOKIES_FROM_BROWSER).",
+      "sourceError_rate_limited": "El sitio está limitando las descargas desde este ordenador (demasiadas solicitudes). {noCost}Inténtalo de nuevo en unos minutos.",
+      "sourceError_private": "Este vídeo es privado, solo para miembros o con restricción de edad: necesita una cuenta con sesión iniciada. {noCost}",
+      "sourceError_unavailable": "El vídeo no está disponible (eliminado, bloqueado, aún no publicado o no es un enlace de vídeo). {noCost}",
+      "sourceError_geo_blocked": "El vídeo no está disponible en la región de este ordenador. {noCost}",
+      "sourceError_network": "No se pudo conectar con el sitio (red, DNS o tiempo de espera). {noCost}Comprueba la conexión e inténtalo de nuevo.",
+      "sourceError_unknown": "No se pudo descargar el vídeo. {noCost}",
+      "sourceErrorNoCost": "No se envió nada al modelo y no ha costado nada. ",
+      "errorDetails": "Detalles",
+      "sourceWaitRetry": "YouTube está limitando las descargas — reintento en {n} s",
+      "sourceWaitRetryGeneric": "El sitio está limitando las descargas — reintento en {n} s",
+      "pendingQueued": "En cola - hay otro análisis en curso…",
+      "pendingStart": "Iniciando…"
     }
   },
   "fr": {
@@ -510,7 +566,21 @@ const I18N: Record<string, Locale> = {
       "purposePattern": "Même rythme, ton sujet",
       "purposePatternHint": "Reprend le rythme et la structure de cette vidéo pour ton propre sujet — chaque mot est le tien.",
       "purposeReview": "Parler de cette vidéo",
-      "purposeReviewHint": "La narration peut évoquer la source — avec tes propres images, pas encore d'extraits de celle-ci."
+      "purposeReviewHint": "La narration peut évoquer la source — avec tes propres images, pas encore d'extraits de celle-ci.",
+      "sourceError_rate_limited_by_youtube": "YouTube limite les téléchargements depuis cet ordinateur (trop de requêtes). {noCost}Réessaie dans quelques minutes (jusqu'à quinze) ou active le téléchargement avec les cookies du navigateur dans les réglages (OMNIWATCH_YTDLP_COOKIES_FROM_BROWSER).",
+      "sourceError_bot_check": "YouTube a bloqué le téléchargement depuis cet ordinateur (vérification « je ne suis pas un robot »). {noCost}Réessaie dans quelques minutes (jusqu'à quinze) ou active le téléchargement avec les cookies du navigateur dans les réglages (OMNIWATCH_YTDLP_COOKIES_FROM_BROWSER).",
+      "sourceError_rate_limited": "Le site limite les téléchargements depuis cet ordinateur (trop de requêtes). {noCost}Réessaie dans quelques minutes.",
+      "sourceError_private": "Cette vidéo est privée, réservée aux membres ou soumise à une limite d'âge : il faut un compte connecté. {noCost}",
+      "sourceError_unavailable": "La vidéo n'est pas disponible (supprimée, bloquée, pas encore publiée ou ce n'est pas un lien vidéo). {noCost}",
+      "sourceError_geo_blocked": "La vidéo n'est pas disponible dans la région de cet ordinateur. {noCost}",
+      "sourceError_network": "Impossible de joindre le site (réseau, DNS ou délai dépassé). {noCost}Vérifie la connexion et réessaie.",
+      "sourceError_unknown": "La vidéo n'a pas pu être téléchargée. {noCost}",
+      "sourceErrorNoCost": "Rien n'a été envoyé au modèle et rien n'a été facturé. ",
+      "errorDetails": "Détails",
+      "sourceWaitRetry": "YouTube limite les téléchargements — nouvel essai dans {n} s",
+      "sourceWaitRetryGeneric": "Le site limite les téléchargements — nouvel essai dans {n} s",
+      "pendingQueued": "En file d'attente - une autre analyse est en cours…",
+      "pendingStart": "Démarrage…"
     }
   }
 };

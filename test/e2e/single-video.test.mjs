@@ -205,7 +205,9 @@ test("T10: dropping the poll does not cancel the work; re-opening by id shows it
   // No GET at all: the card is closed. The work is admitted, so it must survive.
   const reopened = await readDurableJob(panel(h).deps, started.id);
   assert.equal(reopened.state, "running");
-  assert.equal(reopened.progress.stage, "download");
+  // R5: admitted-but-not-started work is "queued" - nothing has been downloaded yet,
+  // and the card must not claim a stage no real event reported.
+  assert.equal(reopened.progress.stage, "queued");
 
   await drain(h, [started.id]);
 

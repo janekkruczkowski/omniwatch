@@ -1807,3 +1807,154 @@ test("QA R2 L1: frames for a beta-cached video are written to the new data direc
     await app.close();
   }
 });
+
+/* ------------------------------------------------ R5: YouTube download failure -- */
+
+/**
+ * R5: yt-dlp refused QzTkVaC-da4 (429, then "Sign in to confirm you're not a bot").
+ * The standalone must classify that, retry only a plain 429 (once, visibly), pass
+ * browser cookies only when configured, and show ONE translated error with the raw
+ * yt-dlp output behind "details" - never the raw text as the headline.
+ */
+const R5_BOT = [
+  "WARNING: [youtube] QzTkVaC-da4: Unable to download API page: HTTP Error 429: Too Many Requests",
+  "WARNING: [youtube] QzTkVaC-da4: Unable to fetch GVS PO Token for web client: Missing required Visitor Data.",
+  "ERROR: [youtube] QzTkVaC-da4: Sign in to confirm you're not a bot. Use --cookies-from-browser or --cookies for the authentication.",
+].join("\n");
+const R5_429 = "ERROR: [youtube] QzTkVaC-da4: Unable to download webpage: HTTP Error 429: Too Many Requests";
+const r5Source = { platform: "youtube", sourceId: "QzTkVaC-da4", legacyId: "QzTkVaC-da4", canonicalUrl: "https://www.youtube.com/watch?v=QzTkVaC-da4" };
+
+/** A runTool that plays back scripted yt-dlp outcomes and records every argument list. */
+function r5Tool(script) {
+  const calls = [];
+  return {
+    calls,
+    runTool: async (cmd, args) => {
+      calls.push([cmd, ...args]);
+      const next = script.shift() ?? "ok";
+      if (next !== "ok") throw new Error(`${cmd} zakonczyl sie kodem 1: ${next}`);
+      if (args.includes("-J")) return { stdout: JSON.stringify({ title: "T", duration: 12, extractor_key: "Youtube" }), stderr: "" };
+      fs.writeFileSync(args[args.indexOf("-o") + 1], "mp4");
+      return { stdout: "", stderr: "" };
+    },
+  };
+}
+
+test("R5 standalone: no cookie flag by default; the configured one reaches every yt-dlp call", async () => {
+  const plain = r5Tool(["ok", "ok"]);
+  await createStandaloneMediaTool({ cacheDir: fs.mkdtempSync(path.join(os.tmpdir(), "omni-r5-")), runTool: plain.runTool }).fetch(r5Source);
+  assert.equal(plain.calls.length, 2);
+  for (const call of plain.calls) assert.ok(!call.some((arg) => arg.startsWith("--cookies")), call.join(" "));
+
+  const withCookies = r5Tool(["ok", "ok"]);
+  await createStandaloneMediaTool({
+    cacheDir: fs.mkdtempSync(path.join(os.tmpdir(), "omni-r5-")),
+    runTool: withCookies.runTool,
+    env: { OMNIWATCH_YTDLP_COOKIES_FROM_BROWSER: "firefox" },
+  }).fetch(r5Source);
+  for (const call of withCookies.calls) assert.deepEqual(call.slice(0, 3), ["yt-dlp", "--cookies-from-browser", "firefox"]);
+
+  // `.env` next to the launchers is where a standalone user sets it.
+  const appRoot = fs.mkdtempSync(path.join(os.tmpdir(), "omni-r5-env-"));
+  fs.writeFileSync(path.join(appRoot, ".env"), "OMNIWATCH_YTDLP_COOKIES=/tmp/cookies.txt\n");
+  const config = loadStandaloneConfig({ appRoot, env: {} });
+  assert.equal(config.effectiveEnv.OMNIWATCH_YTDLP_COOKIES, "/tmp/cookies.txt");
+});
+
+test("R5 standalone: a 429 waits once and retries; a bot check fails at once, classified", async () => {
+  const limited = r5Tool([R5_429, "ok", "ok"]);
+  const waits = [];
+  const sleeps = [];
+  await createStandaloneMediaTool({
+    cacheDir: fs.mkdtempSync(path.join(os.tmpdir(), "omni-r5-")),
+    runTool: limited.runTool,
+    sleep: async (ms) => { sleeps.push(ms); },
+  }).fetch(r5Source, { onWait: (wait) => waits.push(wait) });
+  assert.equal(limited.calls.length, 3, "metadata 429, metadata retry, download");
+  assert.deepEqual(waits, [{ reason: "rate_limited_by_youtube", seconds: 30, attempt: 1 }]);
+  assert.deepEqual(sleeps, [30_000]);
+
+  const blocked = r5Tool([R5_BOT, "ok"]);
+  await assert.rejects(
+    createStandaloneMediaTool({
+      cacheDir: fs.mkdtempSync(path.join(os.tmpdir(), "omni-r5-")),
+      runTool: blocked.runTool,
+      sleep: async () => assert.fail("a bot check must not wait"),
+    }).fetch(r5Source),
+    (error) => error.errorClass === "source_unavailable" && /nie jestem botem/.test(error.message),
+  );
+  assert.equal(blocked.calls.length, 1);
+});
+
+test("R5 standalone live: the SSE error names the reason, confirms no model call and keeps the raw text as detail", async (t) => {
+  const appRoot = fs.mkdtempSync(path.join(os.tmpdir(), "omni-r5-sse-"));
+  const dataDir = path.join(appRoot, "data");
+  fs.mkdirSync(path.join(appRoot, "static"), { recursive: true });
+  for (const name of ["index.html", "i18n.json"]) {
+    fs.copyFileSync(path.join(repo, "apps/standalone/static", name), path.join(appRoot, "static", name));
+  }
+  const tool = r5Tool([R5_BOT]);
+  const media = createStandaloneMediaTool({ cacheDir: path.join(dataDir, "cache"), runTool: tool.runTool });
+  const app = createStandaloneServer({
+    appRoot,
+    dataDir,
+    env: { OMNIWATCH_DATA_DIR: dataDir, DASHSCOPE_API_KEY: "sk-test-not-used" },
+    media,
+    model: { modelName: "stub", call: async () => assert.fail("the model must never be called for a failed download") },
+    port: 0,
+  });
+  const address = await listenOrSkip(t, app);
+  if (!address) return;
+  try {
+    const response = await fetch(`http://127.0.0.1:${address.port}/api/watch?url=${encodeURIComponent(r5Source.canonicalUrl)}&lang=pl&mode=summary`);
+    const frames = (await response.text()).split("\n\n").map((chunk) => chunk.trim());
+    const stages = frames.filter((frame) => frame.startsWith("event: stage"));
+    assert.deepEqual(stages.map((frame) => JSON.parse(frame.split("data: ")[1]).step), ["download"],
+      "only the download stage was reached - no upload/watch/answer before the failure");
+    const error = frames.find((frame) => frame.startsWith("event: error"));
+    const payload = JSON.parse(error.split("\n").find((line) => line.startsWith("data: ")).slice(6));
+    assert.equal(payload.error, "source_unavailable");
+    assert.equal(payload.sourceFailure.reason, "bot_check");
+    assert.equal(payload.noModelCalls, true);
+    assert.doesNotMatch(payload.message, /Sign in to confirm/, "the headline is not yt-dlp's text");
+    assert.match(payload.sourceFailure.detail, /Sign in to confirm you're not a bot/);
+    assert.equal(tool.calls.length, 1, "no retry for a bot check");
+  } finally {
+    await app.close();
+  }
+});
+
+test("R5 standalone page: a real wait counts down; a failure is one translated error with raw text under details", async () => {
+  const i18n = JSON.parse(pageI18n);
+  for (const lang of Object.keys(i18n)) {
+    for (const key of ["sourceError_bot_check", "sourceError_rate_limited_by_youtube", "sourceErrorNoCost", "errorDetails", "sourceWaitRetry"]) {
+      assert.ok(i18n[lang].ui[key], `${lang}.ui.${key}`);
+    }
+  }
+  const { dom, bodyClasses, sources, submit } = runPage();
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  submit();
+  const es = sources[sources.length - 1];
+  const slot = dom.elements.get(".retry-action");
+  es.emit("stage", { step: "download" });
+  es.emit("source_wait", { reason: "rate_limited_by_youtube", seconds: 30 });
+  assert.equal(slot.textContent, i18n.pl.ui.sourceWaitRetry.replace("{n}", "30"), "YouTube ogranicza — ponawiam za 30 s");
+
+  es.emit("error", {
+    error: "source_unavailable",
+    message: "YouTube zablokowal pobieranie z tego komputera (weryfikacja \"nie jestem botem\").",
+    noModelCalls: true,
+    sourceFailure: { reason: "bot_check", retryable: false, detail: `${R5_BOT} <raw>` },
+  });
+  const html = slot.innerHTML;
+  const headline = /<div class="err" role="alert">([^<]*)<\/div>/.exec(html)?.[1] ?? "";
+  assert.match(headline, /YouTube zablokował pobieranie z tego komputera/);
+  assert.match(headline, /Nic nie zostało wysłane do modelu i nic nie kosztowało\./);
+  assert.doesNotMatch(headline, /Sign in to confirm/, "the raw yt-dlp text is not the headline");
+  assert.match(html, /<details class="err-detail"><summary>szczegóły<\/summary><pre>[^<]*Sign in to confirm you're not a bot[^<]*&lt;raw><\/pre><\/details>/);
+  assert.equal(es.closed, true);
+  assert.equal(bodyClasses.has("failed"), true, "failed hides the steps (body.failed .steps{display:none})");
+  assert.equal(bodyClasses.has("running"), false);
+  assert.match(pageHtml, /body\.failed \.steps,body\.done \.steps\{display:none\}/);
+});
