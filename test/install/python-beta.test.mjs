@@ -10,6 +10,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { EventEmitter } from "node:events";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -25,8 +26,10 @@ import {
   readLegacyUploads,
 } from "../../apps/standalone/legacy.mjs";
 import { loadStandaloneConfig, parseEnvText, resolveLanguage, resolveMode } from "../../apps/standalone/config.mjs";
-import { createStandaloneServer, sseFrame } from "../../apps/standalone/server.mjs";
-import { evaluateUploadFreshness } from "../../packages/omniwatch/src/sources/legacy.ts";
+import { createStandaloneMediaTool, createStandaloneServer, sseFrame } from "../../apps/standalone/server.mjs";
+import { mapLegacyArgs, nodeVersionSupported, runStandaloneCli } from "../../apps/standalone/cli.mjs";
+import { BETA_OSS_TTL_HOURS, evaluateUploadFreshness } from "../../packages/omniwatch/src/sources/legacy.ts";
+import { createSourceRegistry } from "../../packages/omniwatch/src/sources/registry.ts";
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const fixtures = path.join(repo, "test/fixtures/beta");
@@ -65,35 +68,71 @@ test("legacy ids keep the beta SHA-1 identity and reject unsafe ids", () => {
   }
 });
 
-test("oss.json timestamps are seconds: 47 h is stale at the beta default, fresh at a 48 h TTL", () => {
+test("oss.json timestamps are seconds; the upload TTL is the beta's fixed 47 h whatever OMNI_CACHE_HOURS says", async () => {
+  // QA R2 M2: this test used to assert that a configured 48 h cache window keeps a
+  // 47 h-old upload fresh - i.e. it froze the bug that sent expired oss:// URLs to the
+  // model. The provider keeps an upload 48 h and the beta refreshed it an hour early
+  // (`OSS_TTL = 47 * 3600`, independent of `OMNI_CACHE_HOURS`).
   const { appRoot } = betaCopy();
-  const at = NOW_SECONDS - 47 * 3600;
-
-  // The audit keeps the oss variants as separate fixture files; place the expired
-  // one where the beta itself stored it.
   fs.copyFileSync(
     path.join(fixtures, "oss", "expired.json"),
     path.join(appRoot, ".cache", "SYNTHETIC01", "oss.json"),
   );
-  const betaDefault = readLegacyUploads(appRoot, "SYNTHETIC01", { nowSeconds: NOW_SECONDS, cacheHours: 47 });
-  const entry = betaDefault.entries.find((item) => item.name === "source.mp4");
-  assert.equal(entry.freshness.valid, false, "the beta's own 47 h TTL treats 47 h as expired");
+  for (const cacheHours of [47, 48, 168, 100000]) {
+    const uploads = readLegacyUploads(appRoot, "SYNTHETIC01", { nowSeconds: NOW_SECONDS, cacheHours });
+    const entry = uploads.entries.find((item) => item.name === "source.mp4");
+    assert.equal(entry.freshness.valid, false, `a 47 h-old upload is expired with OMNI_CACHE_HOURS=${cacheHours}`);
+    const index = buildLegacyIndex(appRoot, { nowSeconds: NOW_SECONDS, cacheHours });
+    assert.equal(index.counts.freshUploads, 0, `migration counts no fresh upload with OMNI_CACHE_HOURS=${cacheHours}`);
+    assert.equal(index.uploadTtlHours, 47);
+  }
+  assert.equal(evaluateUploadFreshness({ at: NOW_SECONDS - 47 * 3600 }, BETA_OSS_TTL_HOURS, NOW_SECONDS).valid, false);
+  assert.equal(evaluateUploadFreshness({ at: NOW_SECONDS - 46 * 3600 }, BETA_OSS_TTL_HOURS, NOW_SECONDS).valid, true);
 
-  assert.equal(evaluateUploadFreshness({ at }, 48, NOW_SECONDS).valid, true, "a configured 48 h TTL keeps a 47 h entry");
-  assert.equal(evaluateUploadFreshness({ at }, 47, NOW_SECONDS).valid, false);
+  // The standalone media tool (a new upload path) and the core registry (reuse of a
+  // beta upload) both refuse a 47.5 h-old oss:// URL even with a one-week cache window.
+  const cacheDir = path.join(appRoot, "..", "cache");
+  fs.mkdirSync(path.join(cacheDir, "SYNTHETIC01"), { recursive: true });
+  const partFile = path.join(cacheDir, "SYNTHETIC01", "part_1_0.mp4");
+  fs.writeFileSync(partFile, "part");
+  const stale = NOW_SECONDS - Math.round(47.5 * 3600);
+  fs.writeFileSync(
+    path.join(cacheDir, "SYNTHETIC01", "oss.json"),
+    JSON.stringify({ "part_1_0.mp4": { url: "oss://stale/part_1_0.mp4", at: stale } }),
+  );
+  const media = createStandaloneMediaTool({ cacheDir, cacheHours: () => 168, nowSeconds: () => NOW_SECONDS });
+  await assert.rejects(
+    () => media.uploadPart({ localPath: partFile }, { apiKey: () => null }),
+    /Brak klucza/,
+    "a stale upload is not reused, so a new upload is attempted (and needs a key)",
+  );
+  const registry = createSourceRegistry({
+    media: {
+      cached: async () => ({ localPath: "/tmp/x/source.mp4", durationSeconds: 16 }),
+      fetch: async () => { throw new Error("no download expected"); },
+      readUploads: async () => ({ "source.mp4": { url: "oss://stale/source.mp4", at: stale } }),
+      slice: async () => "/tmp/x/part.mp4",
+    },
+    cacheHours: () => 168,
+    now: () => NOW_SECONDS,
+  });
+  const info = await registry.prepare({
+    platform: "youtube", sourceId: "SYNTHETIC01", canonicalUrl: "https://youtu.be/SYNTHETIC01", legacyId: "SYNTHETIC01",
+  });
+  assert.equal(info.reusedUpload, false, "the registry does not reuse a 47.5 h-old upload with OMNI_CACHE_HOURS=168");
 
   fs.copyFileSync(
     path.join(fixtures, "oss", "fresh.json"),
     path.join(appRoot, ".cache", "SYNTHETIC01", "oss.json"),
   );
-  const fresh = readLegacyUploads(appRoot, "SYNTHETIC01", { nowSeconds: NOW_SECONDS, cacheHours: 48 });
+  const fresh = readLegacyUploads(appRoot, "SYNTHETIC01", { nowSeconds: NOW_SECONDS });
   assert.equal(fresh.entries.find((item) => item.name === "source.mp4").freshness.valid, true);
 
   fs.copyFileSync(
     path.join(fixtures, "oss", "future.json"),
     path.join(appRoot, ".cache", "SYNTHETIC01", "oss.json"),
   );
-  const future = readLegacyUploads(appRoot, "SYNTHETIC01", { nowSeconds: NOW_SECONDS, cacheHours: 48 });
+  const future = readLegacyUploads(appRoot, "SYNTHETIC01", { nowSeconds: NOW_SECONDS });
   assert.equal(future.entries.find((item) => item.name === "source.mp4").freshness.valid, false, "future is never fresh");
 });
 
@@ -356,4 +395,73 @@ test("T17: install.sh refuses cleanly when Node is not on PATH, before any migra
   assert.notEqual(withOverride.status, 0);
   assert.match(withOverride.stderr, /brak Node w PATH/i);
   assert.deepEqual(digest(appRoot), before, "an invalid OMNIWATCH_NODE override still leaves beta data untouched");
+});
+
+test("QA R2 L6: unrelated work directories under .cache are not counted as cached films", () => {
+  const { appRoot } = betaCopy();
+  fs.mkdirSync(path.join(appRoot, ".cache", "outer-loop"), { recursive: true });
+  fs.writeFileSync(path.join(appRoot, ".cache", "outer-loop", "b1-report.md"), "render notes\n");
+  fs.writeFileSync(path.join(appRoot, ".cache", "b2-report.md"), "a file, not a film\n");
+  const index = buildLegacyIndex(appRoot, { nowSeconds: NOW_SECONDS });
+  assert.deepEqual(index.entries.map((entry) => entry.legacyId).sort(), ["SYNTHETIC01", "ade4dd11a0580e69"]);
+  assert.equal(index.counts.cacheEntries, 2);
+});
+
+test("QA R2 M1: the beta CLI honours OMNIWATCH_APP_ROOT like the server and config do", async () => {
+  const { root, appRoot } = betaCopy();
+  let err = "";
+  const noKey = await runStandaloneCli(["https://youtu.be/SYNTHETIC01"], {
+    env: { OMNIWATCH_APP_ROOT: appRoot },
+    stdout: () => {},
+    stderr: (text) => { err += text; },
+  });
+  assert.equal(noKey, 3);
+  assert.ok(err.includes(path.join(appRoot, ".env")), `the key is looked up in ${appRoot}/.env, got: ${err}`);
+
+  // With the key in that .env, the runtime is started on that app's data directory.
+  fs.writeFileSync(path.join(appRoot, ".env"), "DASHSCOPE_API_KEY=fixture-not-a-secret\n");
+  const spawned = [];
+  const code = await runStandaloneCli(["https://youtu.be/SYNTHETIC01", "-q", "co pokazuje ekran"], {
+    env: { OMNIWATCH_APP_ROOT: appRoot },
+    stdout: () => {},
+    stderr: () => {},
+    spawnImpl: (command, args) => {
+      spawned.push(args);
+      const child = new EventEmitter();
+      child.kill = () => {};
+      setImmediate(() => child.emit("exit", 0, null));
+      return child;
+    },
+  });
+  assert.equal(code, 0);
+  const args = spawned[0];
+  assert.equal(args[args.indexOf("--data-dir") + 1], path.join(appRoot, "data"));
+  assert.equal(args[args.indexOf("--config") + 1], path.join(appRoot, "data", "runtime-config.json"));
+  assert.ok(fs.existsSync(path.join(appRoot, "data", "runtime-config.json")));
+  assert.ok(!fs.existsSync(path.join(repo, "apps", "standalone", "data")), "nothing written next to the checkout");
+  void root;
+  assert.deepEqual(mapLegacyArgs(["u", "-q", "x"]).args, ["analyze", "u", "--question", "x"]);
+});
+
+test("QA R2 L7: launchers accept only the tested Node lines (22 from 22.22.3, and 24)", () => {
+  for (const version of ["22.22.3", "22.23.0", "24.0.0", "24.9.1", "v24.1.0"]) {
+    assert.equal(nodeVersionSupported(version), true, version);
+  }
+  for (const version of ["22.22.2", "20.19.0", "23.0.0", "23.11.1", "25.0.0", "26.1.0", "garbage"]) {
+    assert.equal(nodeVersionSupported(version), false, version);
+  }
+  // The Python launchers apply the same bounds before they exec Node.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "omniwatch-node-"));
+  for (const [name, version] of [["node23", "v23.4.0"], ["node25", "v25.0.0"], ["node20", "v20.19.0"]]) {
+    const fake = path.join(dir, name);
+    fs.writeFileSync(fake, `#!/bin/sh\necho ${version}\n`, { mode: 0o755 });
+    for (const launcher of ["app.py", "omniwatch.py"]) {
+      const result = spawnSync("python3", [path.join(repo, "apps/standalone", launcher), "https://youtu.be/x"], {
+        encoding: "utf8",
+        env: { ...process.env, OMNIWATCH_NODE: fake },
+      });
+      assert.equal(result.status, 4, `${launcher} with Node ${version}: ${result.stderr}`);
+      assert.match(result.stderr, />=22\.22\.3 <23 \|\| >=24\.0\.0 <25/);
+    }
+  }
 });

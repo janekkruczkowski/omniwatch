@@ -22,8 +22,13 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { loadStandaloneConfig, writeRuntimeConfigFile } from "./config.mjs";
+import { resolveCore } from "./core.mjs";
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 export const MIN_NODE_VERSION = [22, 22, 3];
+/** The release's supported Node lines (manifest `node.requirement`). */
+export const NODE_REQUIREMENT = ">=22.22.3 <23 || >=24.0.0 <25";
 export const EXIT = { ok: 0, error: 1, invalid_input: 2, missing_config: 3, runtime_unavailable: 4, unknown: 5 };
 
 const HELP = [
@@ -41,9 +46,13 @@ const HELP = [
   "Analize wykonuje wspolny runtime OmniWatch (jedna implementacja dla CLI i WWW).",
 ].join("\n");
 
-/** Where the shared CLI lives, relative to this standalone app. */
-export function coreCliPath(appRoot) {
-  return path.join(path.resolve(appRoot), "..", "..", "packages", "omniwatch", "src", "runtime", "cli.ts");
+/**
+ * Where the shared CLI lives for this shell: the installed release under
+ * `vendor/omniwatch/current` (built `dist/runtime/cli.js`), or the checkout's
+ * `packages/omniwatch/src/runtime/cli.ts` during development (core.mjs, QA R2 H3).
+ */
+export function coreCliPath(shellRoot = HERE, env = process.env) {
+  return resolveCore({ shellRoot, env }).modulePath("runtime/cli");
 }
 
 function parseVersion(text) {
@@ -52,14 +61,18 @@ function parseVersion(text) {
   return [Number(match[1]), Number(match[2]), Number(match[3])];
 }
 
+/**
+ * Both bounds of the tested lines: 22 from 22.22.3, and 24. Node 23 and 25+ are not
+ * tested releases and are refused like a too-old Node (QA R2 L7).
+ */
 export function nodeVersionSupported(version) {
   const parsed = parseVersion(version);
   if (!parsed) return false;
-  for (let i = 0; i < 3; i += 1) {
-    if (parsed[i] > MIN_NODE_VERSION[i]) return true;
-    if (parsed[i] < MIN_NODE_VERSION[i]) return false;
+  const [major, minor, patch] = parsed;
+  if (major === 22) {
+    return minor > MIN_NODE_VERSION[1] || (minor === MIN_NODE_VERSION[1] && patch >= MIN_NODE_VERSION[2]);
   }
-  return true;
+  return major === 24;
 }
 
 const VALUE_FLAGS = new Set(["-q", "--question", "--lang", "--conversation", "--parent"]);
@@ -116,22 +129,38 @@ export function mapLegacyArgs(argv) {
   return { args: ["analyze", url, ...out], help: false, error: null };
 }
 
+/**
+ * The app directory: `.env`, beta data and the default data dir live here. An
+ * explicit option wins, then `OMNIWATCH_APP_ROOT` (the launchers set it, and the
+ * server and config already honoured it - QA R2 M1), then this file's directory.
+ */
+export function resolveAppRoot(options = {}, env = process.env) {
+  const explicit = options.appRoot ?? (typeof env.OMNIWATCH_APP_ROOT === "string" && env.OMNIWATCH_APP_ROOT.trim() !== ""
+    ? env.OMNIWATCH_APP_ROOT
+    : null);
+  return path.resolve(explicit ?? HERE);
+}
+
 /** Readable installation instruction; returned instead of starting anything. */
 export function preflight(options = {}) {
-  const appRoot = path.resolve(options.appRoot ?? path.dirname(fileURLToPath(import.meta.url)));
+  const env = options.env ?? process.env;
   const version = options.nodeVersion ?? process.versions.node;
   if (!nodeVersionSupported(version)) {
     return {
       ok: false,
       code: EXIT.runtime_unavailable,
       message: [
-        `OmniWatch wymaga Node ${MIN_NODE_VERSION.join(".")} lub nowszego (znaleziono ${version}).`,
+        `OmniWatch wymaga Node ${NODE_REQUIREMENT} (znaleziono ${version}).`,
         "Zainstaluj Node 22 LTS: https://nodejs.org/download/release/v22.22.3/",
         "Po instalacji uruchom ponownie: uv run omniwatch.py <url>",
       ].join("\n"),
     };
   }
-  const cli = options.coreCli ?? process.env.OMNIWATCH_CORE_CLI ?? coreCliPath(appRoot);
+  // The core belongs to the SHELL (the directory the installer wrote), not to the
+  // data directory an OMNIWATCH_APP_ROOT may point at.
+  const shellRoot = path.resolve(options.shellRoot ?? HERE);
+  const core = resolveCore({ shellRoot, env });
+  const cli = options.coreCli ?? env.OMNIWATCH_CORE_CLI ?? core.modulePath("runtime/cli");
   if (!existsSync(cli)) {
     return {
       ok: false,
@@ -139,10 +168,13 @@ export function preflight(options = {}) {
       message: [
         "Nie znaleziono wspolnego runtime OmniWatch (artefakt rdzenia).",
         `Oczekiwana sciezka: ${cli}`,
+        core.ok ? null : core.reason,
         "Zainstaluj wydanie OmniWatch (instalator kopiuje rdzen razem z aplikacja) albo",
         "uruchom `npm install` w katalogu repozytorium, jesli pracujesz ze zrodlami.",
         "Stary silnik Python nie jest uruchamiany awaryjnie.",
-      ].join("\n"),
+      ]
+        .filter(Boolean)
+        .join("\n"),
     };
   }
   return { ok: true, code: EXIT.ok, message: "", cli };
@@ -153,8 +185,8 @@ export function preflight(options = {}) {
  * `process.exit`, so tests can drive it in-process.
  */
 export async function runStandaloneCli(argv, options = {}) {
-  const appRoot = path.resolve(options.appRoot ?? path.dirname(fileURLToPath(import.meta.url)));
   const env = options.env ?? process.env;
+  const appRoot = resolveAppRoot(options, env);
   const stdout = options.stdout ?? ((text) => process.stdout.write(text));
   const stderr = options.stderr ?? ((text) => process.stderr.write(text));
 
@@ -168,7 +200,7 @@ export async function runStandaloneCli(argv, options = {}) {
     return EXIT.invalid_input;
   }
 
-  const ready = preflight({ appRoot, env });
+  const ready = preflight({ env, shellRoot: options.shellRoot, coreCli: options.coreCli, nodeVersion: options.nodeVersion });
   if (!ready.ok) {
     stderr(`${ready.message}\n`);
     return ready.code;

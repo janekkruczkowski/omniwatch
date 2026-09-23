@@ -440,6 +440,7 @@ function ask(q, options = {}) {
   on('operation', d => { if (d.operationId) activeOperationId = d.operationId; });
   on('stage', d => {
     setStep(d.step);
+    if (d.step === 'queued') pending(T().pendingQueued);
     if (d.step === 'upload') pending(T().pendingUpload);
     if (d.step === 'watch') { $('#strip').classList.add('scanning'); $('#watchLabel').textContent += ` · ${d.fps} fps`;
       pending(d.parts > 1 ? T().pendingWatchMany.replace('{n}', d.parts) : T().pendingWatchOne.replace('{fps}', d.fps)); }
@@ -477,11 +478,16 @@ function ask(q, options = {}) {
     const reused = usage ? usage.reused : d.reused;
     const tokens = usage ? (usage.in || 0) + (usage.out || 0) : d.tokens;
     const elapsed = typeof d.seconds === 'number' ? d.seconds : Math.round((performance.now() - t0) / 1000);
+    // A read of a saved answer costs nothing now; never repeat the old bill as if it
+    // were new, and never confuse it with the upload-reuse label of a paid run.
+    const saved = usage && usage.savedAnswer === true;
     // Unknown cost stays unknown: never render a null/absent price as $0.000.
-    const cost = usage && usage.costKnown === true && typeof usage.costUsd === 'number'
+    const cost = saved
+      ? `<span>${T().statSaved}</span>`
+      : usage && usage.costKnown === true && typeof usage.costUsd === 'number'
       ? `<span>💰 <b>$${usage.costUsd.toFixed(3)}</b>${typeof tokens === 'number' ? ` · ${(tokens / 1000).toFixed(0)}k tokenów` : ''}</span>`
       : `<span>💰 <b>${T().statCostUnknown}</b></span>`;
-    answerCard.insertAdjacentHTML('beforeend', `<div class="stats"><span>⏱ <b>${elapsed}s</b></span>${parts > 1 ? `<span>${T().statParts.replace('{n}', parts)}</span>` : ''}${cost}${reused ? `<span>${T().statReused}</span>` : ''}</div>`);
+    answerCard.insertAdjacentHTML('beforeend', `<div class="stats"><span>⏱ <b>${elapsed}s</b></span>${parts > 1 ? `<span>${T().statParts.replace('{n}', parts)}</span>` : ''}${cost}${reused && !saved ? `<span>${T().statReused}</span>` : ''}</div>`);
     options.sourceCard?.remove();
     $('#q2').focus();
   });

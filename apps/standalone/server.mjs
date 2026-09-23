@@ -24,18 +24,7 @@ import { createServer } from "node:http";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { createOpenAiModelPort } from "../../packages/omniwatch/src/analysis/index.ts";
-import { OmniWatchError } from "../../packages/omniwatch/src/contracts/errors.ts";
-import { uploadPolicyUrl } from "../../packages/omniwatch/src/contracts/endpoints.ts";
-import { ANALYSIS_VERSION } from "../../packages/omniwatch/src/contracts/types.ts";
-import { createRuntimeWiring } from "../../packages/omniwatch/src/runtime/poc.ts";
-import { enqueueAnalysis } from "../../packages/omniwatch/src/runtime/queue.ts";
-import { OperationJournal } from "../../packages/omniwatch/src/storage/operations.ts";
-import { recoverPendingWork, runOperation } from "../../packages/omniwatch/src/runtime/worker.ts";
-import { createSourceRegistry } from "../../packages/omniwatch/src/sources/registry.ts";
-import { fpsFor, formatDuration, strip } from "../../packages/omniwatch/src/sources/media.ts";
-import { parseSourceUrl } from "../../packages/omniwatch/src/sources/url.ts";
-
+import { importCore, resolveCore } from "./core.mjs";
 import {
   loadStandaloneConfig,
   resolveLanguage,
@@ -49,6 +38,39 @@ import {
   legacyCacheDirsFor,
   migrateLegacyData,
 } from "./legacy.mjs";
+
+/**
+ * The shared core, loaded from the installed release (`vendor/omniwatch/current`) or,
+ * in the source checkout, from `packages/omniwatch/src` - see core.mjs (D4, QA R2 H3).
+ */
+export const CORE = resolveCore();
+const [
+  { createOpenAiModelPort },
+  { OmniWatchError },
+  { uploadPolicyUrl },
+  { ANALYSIS_VERSION },
+  { createRuntimeWiring },
+  { analysisKeyForRequest, enqueueAnalysis },
+  { OperationJournal },
+  { recoverPendingWork, runOperation },
+  { createSourceRegistry },
+  { fpsFor, formatDuration, strip },
+  { BETA_OSS_TTL_HOURS },
+] = await Promise.all(
+  [
+    "analysis/index",
+    "contracts/errors",
+    "contracts/endpoints",
+    "contracts/types",
+    "runtime/poc",
+    "runtime/queue",
+    "storage/operations",
+    "runtime/worker",
+    "sources/registry",
+    "sources/media",
+    "sources/legacy",
+  ].map((rel) => importCore(rel, { core: CORE })),
+);
 
 export const DEFAULT_HOST = "127.0.0.1";
 /** Beta pricing for qwen3.8-omni-flash; the standalone is the host that owns pricing. */
@@ -176,7 +198,6 @@ function runTool(command, args, options = {}) {
 export function createStandaloneMediaTool(options) {
   const cacheDir = path.resolve(options.cacheDir);
   const legacyAppRoot = options.legacyAppRoot ? path.resolve(options.legacyAppRoot) : null;
-  const cacheHours = () => options.cacheHours?.() ?? 48;
   const nowSeconds = options.nowSeconds ?? (() => Math.floor(Date.now() / 1000));
   const run = options.runTool ?? runTool;
 
@@ -343,7 +364,9 @@ export function createStandaloneMediaTool(options) {
         known = {};
       }
       const name = path.basename(part.localPath);
-      const verdict = evaluateUploadFreshness(known?.[name] ?? null, cacheHours(), nowSeconds());
+      // The provider's upload lifetime (47 h, the beta's OSS_TTL), not the local cache
+      // window: a longer OMNI_CACHE_HOURS must never resend an expired oss:// URL.
+      const verdict = evaluateUploadFreshness(known?.[name] ?? null, BETA_OSS_TTL_HOURS, nowSeconds());
       if (verdict.valid && typeof known[name]?.url === "string") {
         return { url: known[name].url, reused: true };
       }
@@ -411,6 +434,25 @@ export function progressToEvent(event) {
     default:
       return null;
   }
+}
+
+/**
+ * Usage for a READ of an answer that was already paid for (QA R2-07). Nothing new is
+ * billed, so no cost is presented as this request's cost: `savedAnswer` tells the UI
+ * to say "saved analysis - no new cost" instead of repeating the old bill next to the
+ * "video already in Qwen" upload-reuse label (which belongs to paid analyses).
+ */
+export function savedAnswerUsage(usage, parts) {
+  const payload = {
+    in: 0,
+    out: 0,
+    parts,
+    reused: false,
+    savedAnswer: true,
+    newCostUsd: 0,
+  };
+  if (usage?.costKnown === true && typeof usage.costUsd === "number") payload.originalCostUsd = usage.costUsd;
+  return payload;
 }
 
 export function usagePayload(usage, parts, reused) {
@@ -553,7 +595,7 @@ export async function runWatchPipeline(options) {
           analysisId: existing.analysisId,
           reused: true,
         });
-        emit("done", { text: existing.content, usage: usagePayload(existing.usage, existing.parts, true) });
+        emit("done", { text: existing.content, usage: savedAnswerUsage(existing.usage, existing.parts) });
         return { analysisId: existing.analysisId, operationId: enqueued.operation.id, reused: true };
       }
     }
@@ -594,6 +636,64 @@ export async function runWatchPipeline(options) {
   return { analysisId: result.analysisId, operationId: enqueued.operation.id };
 }
 
+/**
+ * R2-06: find an answer that already exists for exactly this request WITHOUT joining
+ * the queue. The key is computed the same way admission computes it
+ * (`analysisKeyForRequest` over the same request fields `runWatchPipeline` builds), and
+ * only a finished operation with a buffered result counts. Nothing is written, nothing
+ * is downloaded (a film that is not in the local cache falls back to the normal path),
+ * and no model is called. Returns null when the request needs real work.
+ */
+export async function findSavedAnswer(options) {
+  const { wiring, request, media } = options;
+  if (request.retryOperationId) return null;
+  const sourceRef = await wiring.deps.source.resolve({ url: request.url });
+  const analysisRequest = {
+    sourceRef,
+    mode: request.mode,
+    focus: null,
+    question: request.question === "" ? null : request.question,
+    language: request.language,
+    analysisVersion: ANALYSIS_VERSION,
+    conversationId: request.conversationId,
+    parentTurnId: request.parentTurnId,
+    force: false,
+  };
+  const key = analysisKeyForRequest(wiring.store, analysisRequest);
+  const operation = wiring.store.getOperationByKey(key);
+  if (!operation || !["delivered", "result_ready"].includes(operation.state)) return null;
+  const result = wiring.store.getBuffer(operation.id)?.result ?? null;
+  if (!result) return null;
+  // Film metadata for the page header, only from the local cache: a free read must
+  // never trigger a download.
+  if (media && typeof media.cached === "function" && !(await media.cached(sourceRef))) return null;
+  const info = await wiring.deps.source.prepare(sourceRef);
+  return { sourceRef, info, operation, result };
+}
+
+/** The SSE frames of a saved-answer read (same shape as the in-queue reuse path). */
+export function emitSavedAnswer(emit, saved) {
+  const { sourceRef, info, operation, result } = saved;
+  emit("meta", {
+    id: sourceRef.legacyId ?? sourceRef.sourceId,
+    title: info.title,
+    channel: info.channel ?? "",
+    duration: formatDuration(info.durationSeconds),
+    seconds: info.durationSeconds,
+    strip: strip(info.durationSeconds),
+  });
+  emit("operation", { operationId: operation.id });
+  emit("answer.text", { text: result.content });
+  emit("turn", {
+    conversationId: result.conversationId,
+    turnId: result.turnId,
+    parentTurnId: result.parentTurnId ?? null,
+    analysisId: result.analysisId,
+    reused: true,
+  });
+  emit("done", { text: result.content, usage: savedAnswerUsage(result.usage, result.parts) });
+}
+
 /* ---------------------------------------------------------------- HTTP app ---- */
 
 function sendJson(res, status, payload) {
@@ -619,19 +719,18 @@ export function resolveMediaPath(context, vid, name) {
   return null;
 }
 
-/** Where a frame for a freshly downloaded video should be written. */
+/**
+ * Where a generated frame is written: always the NEW runtime's data directory.
+ *
+ * The source video may still live in the beta's `.cache/<id>` (read-only for this
+ * runtime), but the frame we render is ours. Writing it next to the beta's files
+ * changed the beta tree and made a rollback no longer byte-identical (QA R2 L1).
+ */
 export function frameTargetPath(context, vid, sec) {
   const safe = assertSafeLegacyId(vid);
-  const fresh = path.join(context.config.cacheDir, safe);
-  if (existsSync(path.join(fresh, "source.mp4"))) {
-    return { dir: fresh, file: path.join(fresh, "frames", `${sec}.jpg`) };
-  }
-  for (const dir of legacyCacheDirsFor(context.config.appRoot, safe)) {
-    if (existsSync(path.join(dir, "source.mp4"))) {
-      return { dir, file: path.join(dir, "frames", `${sec}.jpg`) };
-    }
-  }
-  return null;
+  if (!resolveMediaPath(context, safe, "source.mp4")) return null;
+  const dir = path.join(context.config.cacheDir, safe);
+  return { dir, file: path.join(dir, "frames", `${sec}.jpg`) };
 }
 
 /**
@@ -922,6 +1021,7 @@ export function createStandaloneServer(options = {}) {
       ...(options.clock ? { clock: options.clock } : {}),
       ...(options.store ? { store: options.store } : {}),
     });
+    wiring.standaloneMedia = options.source ? (options.media ?? null) : media;
     if (!options.model) {
       // The shared runtime cannot know how the standalone maps a part to a provider
       // URL, so the host adapter supplies that mapping (D5: host owns uploads).
@@ -944,10 +1044,33 @@ export function createStandaloneServer(options = {}) {
   // order; each claims ownership and admits work only when its turn begins. This keeps
   // two tabs independent while retaining the store's cross-process fencing.
   let watchTail = Promise.resolve();
+  let watchesInFlight = 0;
   context.defaultWatch = async ({ emit, request }) => {
+    // R2-06: reading an answer that already exists is free and must not wait behind
+    // somebody else's long paid analysis. Any failure here simply falls through to
+    // the normal path, which reports errors the usual way.
+    if (!request.retryOperationId) {
+      let probe = null;
+      let saved = null;
+      try {
+        probe = buildWiring();
+        saved = await findSavedAnswer({ wiring: probe, request, media: probe.standaloneMedia });
+      } catch {
+        saved = null;
+      } finally {
+        probe?.close();
+      }
+      if (saved) {
+        emitSavedAnswer(emit, saved);
+        return;
+      }
+    }
     const previous = watchTail;
     let release;
     watchTail = new Promise((resolve) => { release = resolve; });
+    // Say so when this request waits for another one, instead of a frozen "downloading".
+    if (watchesInFlight > 0) emit("stage", { step: "queued", ahead: watchesInFlight });
+    watchesInFlight += 1;
     await previous;
     let wiring;
     try {
@@ -955,6 +1078,7 @@ export function createStandaloneServer(options = {}) {
       await runWatchPipeline({ wiring, emit, request, config });
     } finally {
       wiring?.close();
+      watchesInFlight -= 1;
       release();
     }
   };
@@ -1006,7 +1130,6 @@ export async function startStandaloneServer(options = {}) {
   const migration = migrateLegacyData({
     appRoot: app.config.appRoot,
     dataDir: app.config.dataDir,
-    cacheHours: app.config.cacheHours,
     nowSeconds: options.nowSeconds,
   });
   writeRuntimeConfigFile(app.config);

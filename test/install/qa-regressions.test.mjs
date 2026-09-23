@@ -27,7 +27,7 @@ import { OmniWatchError } from "../../packages/omniwatch/src/contracts/errors.ts
 import { loadStandaloneConfig, runtimeConfigDocument } from "../../apps/standalone/config.mjs";
 import { createFixtureSource, createRuntimeWiring } from "../../packages/omniwatch/src/runtime/poc.ts";
 import { partPlan } from "../../packages/omniwatch/src/sources/media.ts";
-import { createStandaloneServer } from "../../apps/standalone/server.mjs";
+import { createStandaloneServer, frameTargetPath } from "../../apps/standalone/server.mjs";
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const fixtures = path.join(repo, "test/fixtures/beta");
@@ -1187,7 +1187,9 @@ test("a prompt-template bump never re-pays for a film already analysed under the
   const again = await driveWatch(createStandaloneServer(options), { url });
   const done = sseData(again.body, "done");
   assert.ok(done, again.body);
-  assert.equal(done.usage.reused, true, "the saved result is returned, not recomputed");
+  // QA R2-07: a read of the saved result is labelled as such, with no new cost.
+  assert.equal(done.usage.savedAnswer, true, "the saved result is returned, not recomputed");
+  assert.equal(done.usage.costUsd, undefined, "the old bill is not presented as a new cost");
   assert.match(done.text, /stary wynik/);
   assert.deepEqual(calls, [0], "no new paid call after the template version changed");
 });
@@ -1365,6 +1367,172 @@ test("integration: unknown stays gated after other questions; a confirmed next-d
     assert.equal(calls.length, 3);
     assert.deepEqual(calls[2], { operationId, date: "2026-09-22" });
     assert.equal(calls[1].date, "2026-09-22", "every path carries the date");
+  } finally {
+    await app.close();
+  }
+});
+
+/* ------------------------------------------ QA R2 (standalone shell, 2026-09-23) ---- */
+
+/** A model that answers at once until `hold()` is called, then waits for `release()`. */
+function holdableModel() {
+  const calls = [];
+  let gate = null;
+  return {
+    modelName: "stub-holdable",
+    calls,
+    hold() {
+      let release;
+      const promise = new Promise((resolve) => { release = resolve; });
+      gate = { promise, release };
+    },
+    release() {
+      gate?.release();
+      gate = null;
+    },
+    async call(request) {
+      calls.push(request.operationId);
+      if (gate) await gate.promise;
+      return {
+        text: `## Odpowiedz\n- [0:05] odpowiedz ${calls.length}`,
+        usage: { inputTokens: 1000, outputTokens: 500, costUsd: 0.0101, costKnown: true },
+        completed: true,
+      };
+    },
+  };
+}
+
+test("QA R2-06: a saved answer is read at once while another film's paid analysis is running", async () => {
+  const { appRoot, dataDir, cacheDir } = watchShell();
+  const model = holdableModel();
+  const app = createStandaloneServer({
+    appRoot, dataDir, cacheDir, model,
+    source: createFixtureSource({ durationSeconds: 16 }),
+    env: { OMNIWATCH_APP_ROOT: appRoot, OMNIWATCH_DATA_DIR: dataDir },
+  });
+  try {
+    const url = "https://youtu.be/SYNTHETIC01";
+    const first = await driveWatch(app, { url, q: "kat lokci" });
+    assert.ok(sseData(first.body, "done"), first.body);
+    assert.equal(model.calls.length, 1);
+
+    // Another film's long paid analysis occupies the queue.
+    model.hold();
+    const long = driveWatch(app, { url: "https://youtu.be/OTHERFILM01", q: "dlugie pytanie" });
+    for (let i = 0; i < 200 && model.calls.length < 2; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.equal(model.calls.length, 2, "the long analysis is running");
+
+    const timeout = new Promise((resolve) => setTimeout(() => resolve("timeout"), 3000));
+    const read = await Promise.race([driveWatch(app, { url, q: "kat lokci" }), timeout]);
+    assert.notEqual(read, "timeout", "the free read of a saved answer must not wait behind the running analysis");
+    const done = sseData(read.body, "done");
+    assert.ok(done, read.body);
+    assert.match(done.text, /odpowiedz 1/);
+    assert.equal(done.usage.savedAnswer, true);
+    assert.doesNotMatch(read.body, /"step":"download"/, "no misleading 'downloading' stage for a saved read");
+    assert.equal(model.calls.length, 2, "no new paid call");
+
+    // New work that has to wait says so instead of showing a frozen download step.
+    const waiting = driveWatch(app, { url, q: "nowe pytanie" });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    model.release();
+    const [longDone, waited] = await Promise.all([long, waiting]);
+    assert.match(longDone.body, /event: done/);
+    assert.match(waited.body, /event: done/, waited.body);
+    const stages = waited.body.split("\n\n").filter((frame) => frame.startsWith("event: stage\n"));
+    assert.match(stages[0] ?? "", /"step":"queued"/, "the first stage of a waiting request is 'queued'");
+  } finally {
+    model.release();
+    await app.close();
+  }
+});
+
+test("QA R2-07: reading a saved answer reports no new cost and is not labelled as a paid upload reuse", async () => {
+  const { appRoot, dataDir, cacheDir } = watchShell();
+  const model = holdableModel();
+  const app = createStandaloneServer({
+    appRoot, dataDir, cacheDir, model,
+    source: createFixtureSource({ durationSeconds: 16 }),
+    env: { OMNIWATCH_APP_ROOT: appRoot, OMNIWATCH_DATA_DIR: dataDir },
+  });
+  try {
+    const url = "https://youtu.be/SYNTHETIC01";
+    const paid = sseData((await driveWatch(app, { url, q: "ile kosztuje" })).body, "done");
+    assert.equal(paid.usage.costKnown, true);
+    assert.equal(paid.usage.savedAnswer, undefined);
+    const saved = sseData((await driveWatch(app, { url, q: "ile kosztuje" })).body, "done");
+    assert.equal(saved.usage.savedAnswer, true);
+    assert.equal(saved.usage.newCostUsd, 0);
+    assert.equal(saved.usage.costUsd, undefined, "the old bill is not the cost of this read");
+    assert.equal(saved.usage.costKnown, undefined);
+    assert.equal(saved.usage.reused, false, "the upload-reuse label belongs to paid analyses");
+    assert.equal(saved.usage.originalCostUsd, paid.usage.costUsd, "the original cost stays available");
+  } finally {
+    await app.close();
+  }
+
+  // The page shows "saved analysis - no new cost" for a read and the price for a paid run.
+  const i18n = JSON.parse(pageI18n);
+  for (const lang of Object.keys(i18n)) {
+    assert.ok(i18n[lang].ui.statSaved, `statSaved in ${lang}`);
+    assert.ok(i18n[lang].ui.pendingQueued, `pendingQueued in ${lang}`);
+  }
+  const previousMarked = globalThis.marked;
+  globalThis.marked = { parse: (text) => text };
+  try {
+    const statsFor = async (usage) => {
+      const { dom, sources, submit } = runPage();
+      await new Promise((resolve) => setImmediate(resolve));
+      await new Promise((resolve) => setImmediate(resolve));
+      submit();
+      const card = [...dom.elements.entries()].filter(([id]) => id.startsWith("#dyn-")).pop()[1];
+      const html = [];
+      card.insertAdjacentHTML = (_position, markup) => html.push(markup);
+      const es = sources[sources.length - 1];
+      es.emit("stage", { step: "queued", ahead: 1 });
+      const pendingText = dom.elements.get(".retry-action").textContent;
+      es.emit("done", { text: "## Odpowiedz\n- ok", usage });
+      return { stats: html.join(""), pendingText };
+    };
+    const read = await statsFor({ in: 0, out: 0, parts: 1, reused: false, savedAnswer: true, newCostUsd: 0, originalCostUsd: 0.0101 });
+    assert.match(read.stats, new RegExp(i18n.pl.ui.statSaved));
+    assert.doesNotMatch(read.stats, /\$0\.010/, "no old bill on a saved read");
+    assert.doesNotMatch(read.stats, new RegExp(i18n.pl.ui.statReused));
+    assert.equal(read.pendingText, i18n.pl.ui.pendingQueued, "a queued request says it is waiting");
+    const paidRun = await statsFor({ in: 1000, out: 500, parts: 1, reused: true, costUsd: 0.0101, costKnown: true });
+    assert.match(paidRun.stats, /\$0\.010/);
+    assert.match(paidRun.stats, new RegExp(i18n.pl.ui.statReused));
+    assert.doesNotMatch(paidRun.stats, new RegExp(i18n.pl.ui.statSaved));
+  } finally {
+    globalThis.marked = previousMarked;
+  }
+});
+
+test("QA R2 L1: frames for a beta-cached video are written to the new data directory, never into the beta tree", async (t) => {
+  const appRoot = fs.mkdtempSync(path.join(os.tmpdir(), "omni-l1-"));
+  const dataDir = path.join(appRoot, "data");
+  fs.mkdirSync(path.join(appRoot, "static"), { recursive: true });
+  fs.copyFileSync(path.join(repo, "apps/standalone/static/index.html"), path.join(appRoot, "static", "index.html"));
+  const betaDir = path.join(appRoot, ".cache", "SYNTHETIC01");
+  fs.mkdirSync(betaDir, { recursive: true });
+  fs.copyFileSync(path.join(fixtures, "legacy/.cache/SYNTHETIC01/source.mp4"), path.join(betaDir, "source.mp4"));
+
+  const context = { config: { appRoot, cacheDir: path.join(dataDir, "cache") } };
+  const target = frameTargetPath(context, "SYNTHETIC01", 3);
+  assert.equal(target.file, path.join(dataDir, "cache", "SYNTHETIC01", "frames", "3.jpg"));
+  assert.equal(frameTargetPath(context, "UNKNOWNFIX", 3), null, "no video, no frame target");
+
+  const app = createStandaloneServer({ appRoot, dataDir, env: { OMNIWATCH_DATA_DIR: dataDir }, port: 0 });
+  const address = await listenOrSkip(t, app);
+  if (!address) return;
+  try {
+    const response = await fetch(`http://127.0.0.1:${address.port}/frame/SYNTHETIC01/3.jpg`);
+    assert.equal(response.status, 200);
+    assert.ok(fs.existsSync(target.file), "the frame is in the new runtime's cache");
+    assert.equal(fs.existsSync(path.join(betaDir, "frames")), false, "the beta .cache is not written");
+    assert.deepEqual(fs.readdirSync(betaDir), ["source.mp4"]);
   } finally {
     await app.close();
   }

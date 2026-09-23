@@ -27,6 +27,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 MIN_NODE = (22, 22, 3)
 MIN_NODE_TEXT = ".".join(str(part) for part in MIN_NODE)
+# The release's tested lines (manifest `node.requirement`): 22 from 22.22.3, and 24.
+NODE_REQUIREMENT = ">=22.22.3 <23 || >=24.0.0 <25"
 
 HELP = """OmniWatch - zapytaj film, a Qwen Omni obejrzy go za Ciebie.
 
@@ -42,7 +44,7 @@ HELP = """OmniWatch - zapytaj film, a Qwen Omni obejrzy go za Ciebie.
 Analize wykonuje wspolny runtime OmniWatch (jedna implementacja dla CLI i WWW).
 """
 
-INSTALL_HINT = f"""OmniWatch wymaga Node {MIN_NODE_TEXT} lub nowszego.
+INSTALL_HINT = f"""OmniWatch wymaga Node {NODE_REQUIREMENT} (linia 22 od {MIN_NODE_TEXT} albo linia 24).
 Zainstaluj Node 22 LTS: https://nodejs.org/download/release/v22.22.3/
 Po instalacji uruchom ponownie: uv run omniwatch.py <url>
 Stary silnik Python nie jest uruchamiany awaryjnie.
@@ -68,6 +70,15 @@ def node_version(node: str) -> tuple[int, int, int] | None:
     return (int(match.group(1)), int(match.group(2)), int(match.group(3)))
 
 
+def node_supported(version: tuple[int, int, int] | None) -> bool:
+    """Both bounds: Node 23 and 25+ are untested lines and are refused (QA R2 L7)."""
+    if version is None:
+        return False
+    if version[0] == 22:
+        return version >= MIN_NODE
+    return version[0] == 24
+
+
 def main(argv: list[str]) -> int:
     if "--help" in argv or "-h" in argv:
         sys.stdout.write(HELP)
@@ -79,7 +90,7 @@ def main(argv: list[str]) -> int:
         return 4
 
     version = node_version(node)
-    if version is None or version < MIN_NODE:
+    if not node_supported(version):
         found = ".".join(str(part) for part in version) if version else "nieznana"
         sys.stderr.write(INSTALL_HINT)
         sys.stderr.write(f"Znaleziona wersja Node: {found}.\n")

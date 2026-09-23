@@ -32,7 +32,7 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 
-import { readIntegrationFile } from "./shell-integration.mjs";
+import { SHELL_ARTIFACT_PREFIX } from "./shell-integration.mjs";
 import {
   copyFileSync,
   existsSync,
@@ -45,7 +45,8 @@ import {
   writeFileSync,
 } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { homedir } from "node:os";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gunzipSync } from "node:zlib";
 
@@ -131,6 +132,8 @@ function parseArgs(argv) {
     backup: null,
     help: false,
     skipIntegration: false,
+    hostAlias: false,
+    rootNormalizedFrom: null,
   };
   const argvList = [...argv];
   for (let i = 0; i < argvList.length; i++) {
@@ -147,10 +150,13 @@ function parseArgs(argv) {
       case "--root":
         options.root = resolve(next());
         break;
-      // `--host` was used in an early QA instruction; accept it as a clear alias for
-      // `--root` instead of failing with "nieznany argument".
+      // `--host <agent-os>/source` is the command the QA handoff documented for the
+      // Agent OS host. It is an alias for `--target agent-os --root <agent-os>`: the
+      // target defaults to agent-os and a path to the Next app (`.../source`) is
+      // normalised to the Agent OS root below (QA R2 H1 / ISSUE-001).
       case "--host":
         options.root = resolve(next());
+        options.hostAlias = true;
         break;
       case "--tarball":
         options.tarball = resolve(next());
@@ -204,12 +210,33 @@ function parseArgs(argv) {
     }
   }
   if (options.help) return options;
+  if (!options.target && options.hostAlias) options.target = "agent-os";
   if (!options.target) throw new InstallError("brak --target (agent-os|standalone)");
   if (!["agent-os", "standalone"].includes(options.target)) {
     throw new InstallError(`nieznany --target "${options.target}"; dozwolone: agent-os, standalone`);
   }
   if (!options.root) throw new InstallError("brak --root (katalog docelowej powloki)");
+  if (options.target === "agent-os") normalizeAgentOsRoot(options);
   return options;
+}
+
+/**
+ * The Agent OS root is the directory that CONTAINS `source/` (the Next app). Users and
+ * the QA handoff naturally point at the app itself (`<agent-os>/source`); that used to
+ * look for `<agent-os>/source/source/...` and fail. A path whose basename is `source`,
+ * that holds the app (`src/`) and has no nested `source/`, is the app directory, so
+ * the installer uses its parent and reports the normalisation.
+ */
+function normalizeAgentOsRoot(options) {
+  const root = options.root;
+  if (
+    basename(root) === "source" &&
+    existsSync(join(root, "src")) &&
+    !existsSync(join(root, "source", "src"))
+  ) {
+    options.rootNormalizedFrom = root;
+    options.root = dirname(root);
+  }
 }
 
 /* ------------------------------------------------------------------- tar ---- */
@@ -499,7 +526,10 @@ function planIntegration(options, manifest, previous, conflicts, warnings, entri
     );
     return [];
   }
-  const moduleRoot = join(REPO_ROOT, "agent-os-module");
+  // The bytes come from the VERIFIED artifact, never from a checkout next to the
+  // installer: a file edited in the checkout after the build must not reach the host
+  // (QA R2 M4). Every file is checked against the manifest before anything is written.
+  const packed = artifactShellFiles(integration, entries, "agent-os");
   const managedBefore = previous?.integrationFiles ?? {};
   const protectedHost = new Set(integration.protectedHostFiles ?? []);
   const planned = [];
@@ -510,7 +540,7 @@ function planIntegration(options, manifest, previous, conflicts, warnings, entri
       absolute,
       rel,
       kind: "integration",
-      entry: { path: file.path, data: readIntegrationFile(moduleRoot, file.path), mode: file.mode },
+      entry: { path: file.path, data: packed.get(file.path).data, mode: file.mode },
       sha256After: file.sha256,
     };
     if (!existsSync(absolute)) {
@@ -584,8 +614,136 @@ function planIntegration(options, manifest, previous, conflicts, warnings, entri
   return planned;
 }
 
+/**
+ * Map a manifest shell section onto the verified tarball entries. A file the manifest
+ * names that is missing from the artifact, or whose sha256/size differ, stops the
+ * install in preflight - before any write (QA R2 M4).
+ */
+function artifactShellFiles(section, entries, target) {
+  const prefix = section.artifactPrefix;
+  if (typeof prefix !== "string" || prefix === "" || prefix !== SHELL_ARTIFACT_PREFIX[target]) {
+    throw new InstallError(
+      `manifest nie wskazuje plikow powloki ${target} w artefakcie (artifactPrefix); ` +
+        "to wydanie zbudowano starszym build-core.mjs - przebuduj artefakt. " +
+        "Instalator nie czyta plikow powloki z checkoutu.",
+    );
+  }
+  const byPath = new Map(entries.map((entry) => [entry.path, entry]));
+  const found = new Map();
+  const problems = [];
+  for (const file of section.files ?? []) {
+    const entry = byPath.get(`${prefix}/${file.path}`);
+    if (!entry) problems.push(`${file.path}: brak w artefakcie`);
+    else if (entry.sha256 !== file.sha256 || (typeof file.bytes === "number" && entry.size !== file.bytes)) {
+      problems.push(`${file.path}: sha256 ${entry.sha256} zamiast ${file.sha256}`);
+    } else found.set(file.path, entry);
+  }
+  if (problems.length) {
+    throw new InstallError(
+      `pliki powloki ${target} niezgodne z manifestem (${problems.length}): ${problems.slice(0, 5).join("; ")}. ` +
+        "Instalacja zatrzymana przed jakimkolwiek zapisem.",
+      { details: { target, problems } },
+    );
+  }
+  return found;
+}
+
+/**
+ * The standalone shell from the artifact (QA R2 H2/H3): thin `app.py`/`omniwatch.py`
+ * launchers, the Node adapters and the frontend, written at the app root.
+ *
+ * Ownership rules, all decided before any write:
+ * - a missing file is created;
+ * - a file byte-identical to the release is adopted as is;
+ * - a file this installer wrote earlier (recorded in `shellFiles`) is replaced, unless
+ *   the user changed it since - then it is a conflict;
+ * - a directory that never had a managed shell but holds the beta layout (`app.py` AND
+ *   `omniwatch.py`) is the documented beta migration: its shell files are backed up and
+ *   replaced, `.env`, `.cache/`, `summaries/` and every other file stay untouched, and
+ *   `--rollback` restores the beta byte for byte;
+ * - anything else that already exists is somebody else's file - a conflict.
+ */
+function planStandaloneShell(options, manifest, previous, conflicts, entries) {
+  const section = manifest.standaloneShell;
+  if (!section || !Array.isArray(section.files) || section.files.length === 0) {
+    throw new InstallError(
+      "manifest nie zawiera powloki standalone (app.py/omniwatch.py/server.mjs); przebuduj wydanie " +
+        "- bez niej zainstalowana aplikacja nie mialaby czym uruchomic rdzenia",
+    );
+  }
+  const packed = artifactShellFiles(section, entries, "standalone");
+  const owned = previous?.shellFiles ?? null;
+  const betaLayout =
+    owned === null &&
+    existsSync(join(options.root, "app.py")) &&
+    existsSync(join(options.root, "omniwatch.py"));
+  const planned = [];
+  const adopted = [];
+  for (const file of section.files) {
+    const absolute = join(options.root, ...file.path.split("/"));
+    const rel = relative(options.root, absolute);
+    const item = {
+      absolute,
+      rel,
+      kind: "shell",
+      entry: { path: file.path, data: packed.get(file.path).data, mode: file.mode || 0o644 },
+      sha256After: file.sha256,
+    };
+    if (!existsSync(absolute)) {
+      planned.push(item);
+      continue;
+    }
+    if (statSync(absolute).isDirectory()) {
+      conflicts.push({ path: rel, reason: "w miejscu pliku powloki jest katalog" });
+      continue;
+    }
+    const current = sha256File(absolute);
+    if (current === file.sha256) {
+      planned.push({ ...item, unchanged: true });
+      continue;
+    }
+    const ownedBefore = owned?.[rel] ?? null;
+    if (ownedBefore !== null) {
+      if (ownedBefore !== current) {
+        conflicts.push({ path: rel, reason: "plik powloki OmniWatch zmieniony przez uzytkownika od ostatniej instalacji" });
+        continue;
+      }
+      planned.push(item);
+      continue;
+    }
+    if (betaLayout) {
+      adopted.push(rel);
+      planned.push({ ...item, adopt: true });
+      continue;
+    }
+    conflicts.push({
+      path: rel,
+      reason:
+        "plik istnieje, ale nie nalezy do instalacji OmniWatch (brak ukladu bety app.py + omniwatch.py) - " +
+        "instalator go nie nadpisze",
+    });
+  }
+  return { planned, adopted, betaMigration: betaLayout && adopted.length > 0 };
+}
 
 function verifyShell(target, root) {
+  if (target === "standalone") {
+    // The shell now comes from the artifact, so a clean directory is a valid target;
+    // a missing one is created when its parent exists (fresh install).
+    if (existsSync(root)) {
+      if (!statSync(root).isDirectory()) {
+        throw new InstallError(`katalog docelowy nie jest katalogiem: ${root}`);
+      }
+      return { created: false };
+    }
+    if (!existsSync(dirname(root)) || !statSync(dirname(root)).isDirectory()) {
+      throw new InstallError(
+        `katalog docelowy nie istnieje, a jego katalog nadrzedny tez nie: ${root}. ` +
+          "Podaj istniejacy katalog aplikacji albo katalog, ktory instalator moze utworzyc.",
+      );
+    }
+    return { created: true };
+  }
   if (!existsSync(root) || !statSync(root).isDirectory()) {
     throw new InstallError(`katalog docelowy nie istnieje lub nie jest katalogiem: ${root}`);
   }
@@ -593,14 +751,13 @@ function verifyShell(target, root) {
   if (missing.length) {
     throw new InstallError(
       `${target}: powloka nie jest gotowa - brak ${missing.join(", ")}. ` +
-        "Instalator nie udaje sukcesu: najpierw musi istniec plik powloki (Sidebar.tsx/TopBar.tsx " +
-        "dla Agent OS; app.py/omniwatch.py dla standalone).",
+        "Instalator nie udaje sukcesu: najpierw musi istniec plik powloki Agent OS " +
+        "(source/src/components/Sidebar.tsx i TopBar.tsx). --root wskazuje katalog Agent OS, " +
+        "ktory zawiera source/ (albo sam katalog source/ - zostanie znormalizowany).",
       { details: { missing } },
     );
   }
-  if (target === "standalone" && !existsSync(join(root, "static"))) {
-    throw new InstallError(`standalone: brak katalogu static/ w ${root} - powloka niekompletna`);
-  }
+  return { created: false };
 }
 
 function verifyNode(manifest, version) {
@@ -636,39 +793,122 @@ function verifyTools(options) {
   return { required: found, optional };
 }
 
-function resolveDataDir(options) {
-  if (options.dataDir) return { dir: options.dataDir, explicit: true };
-  const candidates = [join(options.root, ".omniwatch-data"), join(options.root, "data", "omniwatch")];
-  for (const candidate of candidates) {
-    if (existsSync(join(candidate, "state.sqlite"))) return { dir: candidate, explicit: false };
+/** `KEY=value` lines of a beta-style `.env` (first occurrence wins, like the beta). */
+function readDotEnv(file) {
+  const values = {};
+  if (!existsSync(file)) return values;
+  let text = "";
+  try {
+    text = readFileSync(file, "utf8");
+  } catch {
+    return values;
   }
-  return { dir: candidates[0], explicit: false };
+  for (const line of text.split(/\r?\n/)) {
+    const at = line.indexOf("=");
+    if (at < 0) continue;
+    const key = line.slice(0, at).trim();
+    if (key === "" || key.startsWith("#") || key in values) continue;
+    values[key] = line.slice(at + 1).trim();
+  }
+  return values;
+}
+
+/**
+ * Every data directory the target shell really uses (QA R2 M3). The gate used to look
+ * only at `<root>/.omniwatch-data` and `<root>/data/omniwatch`, while the standalone
+ * writes to `<appRoot>/data` and the Agent OS panel to `~/.agentic-os/omniwatch/data`,
+ * so paused or unfinished work in the real directory was never seen.
+ *
+ * - `--data-dir` names exactly one directory;
+ * - otherwise `OMNIWATCH_DATA_DIR` (process environment; for standalone also the
+ *   app's `.env`, where the beta kept its settings) and the shell's defaults:
+ *   standalone `<root>/data`; Agent OS `~/.agentic-os/omniwatch/data`
+ *   (`panelDataDir`), plus the older `<root>/.omniwatch-data` and `<root>/data/omniwatch`.
+ */
+function dataDirCandidates(options) {
+  if (options.dataDir) return [{ dir: options.dataDir, source: "--data-dir", explicit: true }];
+  const candidates = [];
+  const add = (dir, source) => {
+    if (typeof dir !== "string" || dir.trim() === "") return;
+    const resolved = resolve(options.root, dir.trim());
+    if (!candidates.some((item) => item.dir === resolved)) candidates.push({ dir: resolved, source, explicit: false });
+  };
+  if (options.target === "standalone") {
+    add(process.env.OMNIWATCH_DATA_DIR, "OMNIWATCH_DATA_DIR");
+    add(readDotEnv(join(options.root, ".env")).OMNIWATCH_DATA_DIR, ".env OMNIWATCH_DATA_DIR");
+    add(join(options.root, "data"), "standalone <root>/data");
+  } else {
+    add(process.env.OMNIWATCH_DATA_DIR, "OMNIWATCH_DATA_DIR");
+    add(join(homedir(), ".agentic-os", "omniwatch", "data"), "panel ~/.agentic-os/omniwatch/data");
+  }
+  add(join(options.root, ".omniwatch-data"), "<root>/.omniwatch-data");
+  add(join(options.root, "data", "omniwatch"), "<root>/data/omniwatch");
+  return candidates;
 }
 
 /**
  * D5 in-flight gate. Reads the operational snapshot read-only: unfinished
  * operations (including paused ones) record the analysis contract they were
  * accepted under. A release that cannot resume that contract must refuse the
- * update instead of re-analysing the work with new prompts.
+ * update instead of re-analysing the work with new prompts. Every candidate data
+ * directory that holds a `state.sqlite` is checked.
  */
 function checkInFlight(manifest, options) {
-  const { dir, explicit } = resolveDataDir(options);
-  const stateDb = join(dir, "state.sqlite");
-  const supportedAnalysis = manifest.contracts?.supportedAnalysisVersions ?? [];
-  const supportedContracts = manifest.contracts?.supportedContractVersions ?? [];
+  const candidates = dataDirCandidates(options);
+  const withState = candidates.filter((item) => existsSync(join(item.dir, "state.sqlite")));
+  const primary = withState[0] ?? candidates[0];
   const result = {
     checked: false,
-    dataDir: dir,
-    stateDb,
+    dataDir: primary.dir,
+    stateDb: join(primary.dir, "state.sqlite"),
+    dataDirs: candidates.map((item) => ({
+      dir: item.dir,
+      source: item.source,
+      hasState: existsSync(join(item.dir, "state.sqlite")),
+    })),
     unfinished: 0,
     paused: 0,
     unsupported: [],
     decision: "no-state",
   };
-  if (!existsSync(stateDb)) {
-    if (explicit) result.note = "wskazany katalog danych nie zawiera jeszcze state.sqlite";
+  if (withState.length === 0) {
+    if (primary.explicit) result.note = "wskazany katalog danych nie zawiera jeszcze state.sqlite";
     return result;
   }
+  const decisions = [];
+  for (const item of withState) {
+    const single = checkOneStateDb(manifest, join(item.dir, "state.sqlite"));
+    if (single.checked) result.checked = true;
+    result.unfinished += single.unfinished;
+    result.paused += single.paused;
+    result.unsupported.push(...single.unsupported.map((entry) => ({ ...entry, dataDir: item.dir })));
+    decisions.push(single.decision);
+  }
+  result.decision = result.unsupported.length
+    ? "unsupported"
+    : decisions.includes("compatible")
+      ? "compatible"
+      : decisions[0];
+  if (result.unsupported.length) {
+    const supportedAnalysis = manifest.contracts?.supportedAnalysisVersions ?? [];
+    throw new InstallError(
+      `${result.unsupported.length} operacji w toku nie da sie wznowic w tym wydaniu ` +
+        `(wspierane analysisVersion: ${supportedAnalysis.join(", ") || "brak"}). ` +
+        "Aktualizacja odrzucona - nie podstawiamy nowych promptow; dokoncz lub jawnie zamknij te operacje, " +
+        "potem uruchom instalacje ponownie. Operacje: " +
+        result.unsupported
+          .map((item) => `${item.operationId} (${item.state}: ${item.problems.join(", ")}; ${item.dataDir})`)
+          .join("; "),
+      { code: EXIT_COMPATIBILITY, details: result },
+    );
+  }
+  return result;
+}
+
+function checkOneStateDb(manifest, stateDb) {
+  const supportedAnalysis = manifest.contracts?.supportedAnalysisVersions ?? [];
+  const supportedContracts = manifest.contracts?.supportedContractVersions ?? [];
+  const result = { checked: false, unfinished: 0, paused: 0, unsupported: [], decision: "no-state" };
   let DatabaseSync;
   try {
     ({ DatabaseSync } = require("node:sqlite"));
@@ -731,18 +971,6 @@ function checkInFlight(manifest, options) {
       result.paused += Number(pausedRuns?.total ?? 0);
     }
     result.decision = result.unsupported.length ? "unsupported" : "compatible";
-    if (result.unsupported.length) {
-      throw new InstallError(
-        `${result.unsupported.length} operacji w toku nie da sie wznowic w tym wydaniu ` +
-          `(wspierane analysisVersion: ${supportedAnalysis.join(", ") || "brak"}). ` +
-          "Aktualizacja odrzucona - nie podstawiamy nowych promptow; dokoncz lub jawnie zamknij te operacje, " +
-          "potem uruchom instalacje ponownie. Operacje: " +
-          result.unsupported
-            .map((item) => `${item.operationId} (${item.state}: ${item.problems.join(", ")})`)
-            .join("; "),
-        { code: EXIT_COMPATIBILITY, details: result },
-      );
-    }
     return result;
   } finally {
     db.close();
@@ -976,13 +1204,48 @@ function planInstall(options, layout, manifest, entries, previous) {
     );
   }
 
-  return { releaseDir, planned, nav, integration, conflicts, warnings, version };
+  // The standalone shell: launchers, adapters and frontend from the same artifact.
+  const standalone =
+    options.target === "standalone"
+      ? planStandaloneShell(options, manifest, previous, conflicts, entries)
+      : { planned: [], adopted: [], betaMigration: false };
+  if (standalone.betaMigration) {
+    warnings.push(
+      `migracja bety: powloka Pythona (${standalone.adopted.join(", ")}) zostanie zastapiona cienkimi ` +
+        "launcherami nowego silnika; kopia w backups/, powrot: --rollback. Dane (.env, .cache/, summaries/) zostaja.",
+    );
+  }
+
+  return {
+    releaseDir,
+    planned,
+    nav,
+    integration,
+    shell: standalone.planned,
+    shellAdopted: standalone.adopted,
+    betaMigration: standalone.betaMigration,
+    conflicts,
+    warnings,
+    version,
+  };
 }
 
 /* ----------------------------------------------------------------- apply ---- */
 
-function backupIdForNow() {
-  return new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
+/**
+ * A backup id that never reuses an existing directory. Two installs in the same second
+ * (a repeat install right after a beta migration) used to share one id, and the second
+ * backup overwrote the first - losing the only copy of the beta shell. A suffix keeps
+ * ids unique and still sorted oldest-to-newest.
+ */
+function backupIdForNow(layout) {
+  const base = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
+  if (!layout || !existsSync(join(layout.backupsDir, base))) return base;
+  for (let i = 1; i < 100; i += 1) {
+    const candidate = `${base}-${String(i).padStart(2, "0")}`;
+    if (!existsSync(join(layout.backupsDir, candidate))) return candidate;
+  }
+  return `${base}-${process.pid}`;
 }
 
 function snapshotBackup(options, layout, plan, previous, backupId) {
@@ -998,12 +1261,12 @@ function snapshotBackup(options, layout, plan, previous, backupId) {
     record(item.rel, item.absolute);
   }
   for (const file of plan.nav) record(file.rel, file.absolute);
-  for (const item of plan.integration ?? []) {
+  for (const item of [...(plan.integration ?? []), ...(plan.shell ?? [])]) {
     if (existsSync(item.absolute)) record(item.rel, item.absolute);
   }
-  if (previous && existsSync(layout.manifestFile)) {
-    record(relative(options.root, layout.manifestFile), layout.manifestFile);
-  }
+  const manifestRel = relative(options.root, layout.manifestFile);
+  const manifestExisted = existsSync(layout.manifestFile);
+  if (manifestExisted) record(manifestRel, layout.manifestFile);
   // Paths this install creates. Rollback removes them again, so a first install
   // can be undone completely; the release directory is removed whole.
   const absent = plan.planned
@@ -1012,9 +1275,12 @@ function snapshotBackup(options, layout, plan, previous, backupId) {
   for (const file of plan.nav) {
     if (!existsSync(file.absolute)) absent.push(file.rel);
   }
-  for (const item of plan.integration ?? []) {
+  for (const item of [...(plan.integration ?? []), ...(plan.shell ?? [])]) {
     if (!existsSync(item.absolute)) absent.push(item.rel);
   }
+  // A first install also creates install-manifest.json. Rolling that install back must
+  // remove it again, or the next run believes files are still managed (QA R2 L2).
+  if (!manifestExisted) absent.push(manifestRel);
   const releaseCreated = existsSync(plan.releaseDir) ? null : relative(options.root, plan.releaseDir);
   mkdirSync(dir, { recursive: true });
   writeFileSync(
@@ -1052,10 +1318,17 @@ function restoreBackup(options, layout, backupId) {
   }
   // Files this install created are removed again: a rollback of the first install
   // leaves the host as it was, and never keeps a pointer to a release it undid.
+  const removed = [];
+  const releasePrefix = record.releaseCreated ? `${record.releaseCreated}/` : null;
   for (const rel of record.absent ?? []) {
     const target = join(options.root, ...rel.split("/"));
-    if (existsSync(target)) rmSync(target, { force: true });
+    if (existsSync(target)) {
+      rmSync(target, { force: true });
+      // Files of a release directory are reported once, as that directory.
+      if (!releasePrefix || !rel.startsWith(releasePrefix)) removed.push(rel);
+    }
   }
+  record.removedNow = removed;
   if (record.releaseCreated) {
     const target = join(options.root, ...record.releaseCreated.split("/"));
     if (existsSync(target)) rmSync(target, { recursive: true, force: true });
@@ -1072,7 +1345,7 @@ function newestBackup(layout) {
 }
 
 function applyInstall(options, layout, manifest, plan, previous, tools) {
-  const backupId = backupIdForNow();
+  const backupId = backupIdForNow(layout);
   crashPoint("before-backup");
   snapshotBackup(options, layout, plan, previous, backupId);
   crashPoint("after-backup");
@@ -1104,6 +1377,24 @@ function applyInstall(options, layout, manifest, plan, previous, tools) {
   }
   if (integrationWritten > 0) log(`· zainstalowano integracje Agent OS (${integrationWritten} plikow)`);
   crashPoint("after-integration");
+
+  // Standalone shell: the launchers and adapters that load the release just unpacked.
+  let shellWritten = 0;
+  for (const item of plan.shell ?? []) {
+    if (item.unchanged) continue;
+    mkdirSync(dirname(item.absolute), { recursive: true });
+    const temporary = `${item.absolute}.omniwatch-tmp-${process.pid}`;
+    writeFileSync(temporary, item.entry.data, { mode: item.entry.mode || 0o644 });
+    renameSync(temporary, item.absolute);
+    shellWritten += 1;
+  }
+  if (shellWritten > 0) {
+    log(
+      `· zainstalowano powloke standalone (${shellWritten} plikow)` +
+        (plan.betaMigration ? ` - zastapiono powloke bety: ${plan.shellAdopted.join(", ")}` : ""),
+    );
+  }
+  crashPoint("after-shell");
 
   // Navigation is the only host-owned file this installer edits.
   const navResults = [];
@@ -1148,6 +1439,10 @@ function applyInstall(options, layout, manifest, plan, previous, tools) {
   for (const item of plan.integration ?? []) {
     if (existsSync(item.absolute)) integrationHashes[item.rel] = sha256File(item.absolute);
   }
+  const shellHashes = {};
+  for (const item of plan.shell ?? []) {
+    if (existsSync(item.absolute)) shellHashes[item.rel] = sha256File(item.absolute);
+  }
   const managedFiles = {};
   for (const item of plan.planned) {
     if (item.kind === "current") managedFiles[item.rel] = sha256(item.content);
@@ -1176,6 +1471,14 @@ function applyInstall(options, layout, manifest, plan, previous, tools) {
      * host's own code.
      */
     integrationFiles: integrationHashes,
+    /**
+     * Standalone shell files this installer placed at the app root (launchers,
+     * adapters, frontend). A later install replaces them only while they still have
+     * these hashes; a user edit is a conflict.
+     */
+    ...(options.target === "standalone"
+      ? { shellFiles: shellHashes, betaMigration: plan.betaMigration ? plan.shellAdopted : [] }
+      : {}),
     navSkip: options.skipNav,
     inFlight: options.inFlight ?? null,
   };
@@ -1212,6 +1515,17 @@ function summarize(options, layout, manifest, plan, tools, inFlight, extra = {})
     conflicts: [],
     warnings: plan.warnings,
     checkOnly: options.check,
+    ...(options.rootNormalizedFrom ? { rootNormalizedFrom: options.rootNormalizedFrom } : {}),
+    ...(options.target === "standalone"
+      ? {
+          shell: {
+            files: (plan.shell ?? []).filter((item) => !item.unchanged).map((item) => item.rel),
+            unchanged: (plan.shell ?? []).filter((item) => item.unchanged).map((item) => item.rel),
+            betaMigration: plan.betaMigration === true,
+            replacedBetaFiles: plan.shellAdopted ?? [],
+          },
+        }
+      : {}),
     ...extra,
   };
 }
@@ -1222,6 +1536,7 @@ function run() {
   const options = parseArgs(process.argv.slice(2));
   if (options.help) {
     log("usage: install.mjs --target agent-os|standalone --root <dir> [--check|--rollback] [--json]");
+    log("       install.mjs --host <agent-os>/source [...]   (alias: --target agent-os --root <agent-os>)");
     return EXIT_OK;
   }
   if (resolve(options.root) === REPO_ROOT || isWithin(REPO_ROOT, options.root)) {
@@ -1247,12 +1562,16 @@ function run() {
       root: options.root,
       backupId,
       restoredFiles: (record.files ?? []).map((file) => file.path),
-      removedPaths: record.absent ?? [],
+      removedPaths: record.removedNow ?? [],
       removedRelease: record.releaseCreated ?? null,
       previousRelease: record.previousRelease ?? null,
       note: "katalog danych OmniWatch nie zostal zmieniony; dane uzytkownika pozostaja na miejscu",
     };
-    log(`✓ cofnieto instalacje z kopii ${backupId} (${summary.restoredFiles.length} plikow)`);
+    log(
+      `✓ cofnieto instalacje z kopii ${backupId}: przywrocono ${summary.restoredFiles.length} plikow, ` +
+        `usunieto ${summary.removedPaths.length} plikow utworzonych przez instalacje` +
+        (summary.removedRelease ? ` oraz katalog wydania ${summary.removedRelease}` : ""),
+    );
     if (options.json) process.stdout.write(`${JSON.stringify(summary)}\n`);
     return EXIT_OK;
   }
@@ -1262,7 +1581,10 @@ function run() {
   const entries = verifyPackage(manifest, tarballPath);
   verifyNode(manifest, options.nodeVersion);
   const tools = verifyTools(options);
-  verifyShell(options.target, options.root);
+  const shellState = verifyShell(options.target, options.root);
+  if (options.rootNormalizedFrom) {
+    log(`· --root ${options.rootNormalizedFrom} to katalog aplikacji Next; uzywam katalogu Agent OS ${options.root}`);
+  }
   const inFlight = checkInFlight(manifest, options);
   options.inFlight = inFlight;
 
@@ -1277,7 +1599,21 @@ function run() {
     if (options.json) process.stdout.write(`${JSON.stringify(summary)}\n`);
     log(`✗ konflikty (${plan.conflicts.length}): ${plan.conflicts.map((item) => item.path).join(", ")}`);
     for (const conflict of plan.conflicts) log(`  · ${conflict.path}: ${conflict.reason}`);
-    log("  nic nie zostalo nadpisane; uzyj --skip-nav, aby zaktualizowac sama biblioteke bez nawigacji");
+    log("  nic nie zostalo nadpisane.");
+    // --skip-nav only helps when the conflict IS a navigation file (QA R2 L3).
+    const navRels = new Set(plan.nav.map((file) => file.rel));
+    const navConflict = plan.conflicts.some(
+      (conflict) => navRels.has(conflict.path) || /(Sidebar|TopBar|AstrosView|MemoryPanel)\.tsx$|hermes\/page\.tsx$/.test(conflict.path),
+    );
+    if (navConflict) {
+      log("  konflikt dotyczy nawigacji: --skip-nav zaktualizuje biblioteke bez zmian w nawigacji.");
+    }
+    if (plan.conflicts.some((conflict) => !navRels.has(conflict.path))) {
+      log(
+        "  pozostale konflikty: przywroc plik z kopii (backups/) albo przenies swoje zmiany poza ten plik, " +
+          "potem uruchom instalacje ponownie; --skip-nav ich nie omija.",
+      );
+    }
     return EXIT_CONFLICT;
   }
 
@@ -1292,6 +1628,7 @@ function run() {
   }
 
   try {
+    if (shellState?.created) mkdirSync(options.root, { recursive: true });
     const result = applyInstall(options, layout, manifest, plan, previous, tools);
     const summary = summarize(options, layout, manifest, plan, tools, inFlight, {
       backupId: result.backupId,

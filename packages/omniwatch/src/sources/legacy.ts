@@ -15,9 +15,11 @@ import type { SourceRef } from "../contracts/types.ts";
 import { parseSourceUrl } from "./url.ts";
 
 /**
- * The upload TTL hard-coded in the released Python beta. It remains the default so
- * the frozen fixture reading ("47 h old = expired") holds even when the user has no
- * `OMNI_CACHE_HOURS` configured; a configured value overrides it deliberately.
+ * The `oss://` upload TTL of the released Python beta (`OSS_TTL = 47 * 3600`): the
+ * provider keeps an upload for 48 h and the beta refreshed it an hour early. It is a
+ * property of the provider, not of the local cache, so `OMNI_CACHE_HOURS` (the local
+ * video cache window) never changes it - a longer cache must not send an expired
+ * `oss://` URL to the model (QA R2 M2).
  */
 export const BETA_OSS_TTL_HOURS = 47;
 
@@ -132,16 +134,16 @@ export function resolveLegacyId(input: string | SourceRef): string {
  * `at` is in SECONDS (the beta wrote `Date.now()`-style millisecond values nowhere in
  * this file, but a value in the millions of millions is a millisecond value that leaked
  * into a seconds field; it is treated as malformed rather than silently reinterpreted).
- * The TTL comes from the caller's `cacheHours` argument, which is the documented fix
- * for the beta's hard-coded 47 h OSS_TTL: with `cacheHours = 48` an entry that is
- * exactly 47 h old is still fresh, while 48 h is not.
+ * The TTL is an explicit argument so the rule stays testable; every runtime caller
+ * passes `BETA_OSS_TTL_HOURS` (47 h, the beta's `OSS_TTL`) and never the local
+ * `OMNI_CACHE_HOURS` window, which describes the local files, not the provider copy.
  *
  * A timestamp in the future is never fresh: a clock skew or a corrupted file must not
  * pin a stale upload for as long as the clock is wrong.
  */
 export function evaluateUploadFreshness(
   entry: LegacyUploadEntry | null | undefined,
-  /** Configured TTL from `OMNI_CACHE_HOURS`; null/undefined falls back to the beta constant. */
+  /** Upload TTL in hours; null/undefined means the beta constant `BETA_OSS_TTL_HOURS`. */
   cacheHours: number | null | undefined,
   nowSeconds: number,
 ): UploadFreshness {

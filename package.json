@@ -16,9 +16,9 @@
     "test": "node scripts/test-all.mjs",
     "test:core": "node --test packages/omniwatch/test/*.test.mjs",
     "test:contract": "node --test packages/omniwatch/test/contract-smoke.test.mjs",
-    "test:integration": "node --test test/integration/",
-    "test:e2e": "node --test test/e2e/",
-    "test:install": "node --test test/install/",
+    "test:integration": "node --test \"agent-os-module/test/**/*.test.mjs\"",
+    "test:e2e": "node --test \"test/e2e/**/*.test.mjs\"",
+    "test:install": "node --test --test-concurrency=1 \"test/install/*.test.mjs\"",
     "eval:omniwatch": "node test/eval/omniwatch/run-evals.mjs",
     "poc": "node scripts/poc/demo.mjs"
   },
