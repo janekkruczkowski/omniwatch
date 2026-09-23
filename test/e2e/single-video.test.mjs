@@ -19,6 +19,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { OmniWatchError } from "../../packages/omniwatch/src/contracts/errors.ts";
 import { enqueueAnalysis } from "../../packages/omniwatch/src/runtime/queue.ts";
 import { runWorker } from "../../packages/omniwatch/src/runtime/worker.ts";
 import { createJobsHandler, readDurableJob } from "../../agent-os-module/src/app/api/omniwatch/jobs/handler.ts";
@@ -212,6 +213,81 @@ test("T10: dropping the poll does not cancel the work; re-opening by id shows it
   assert.equal(after.state, "done");
   assert.match(after.text, /punkt pierwszy/);
   assert.equal(after.operationId, started.id);
+});
+
+/**
+ * T09 gap closed: QA (E-tests, section 3/4, item 2) found no test for an HTTP
+ * 500/connection-loss from the model dependency reaching this API contract, and
+ * no test that the done result carries the timestamp references a UI needs to
+ * jump into the video.
+ *
+ * `provider.test.mjs` already proves 500/503 classify as `outcome_unknown` and a
+ * reset-after-send is `outcome_unknown` too (never retried) at the transport
+ * layer; this closes the gap one layer up, at the same `/api/omniwatch/jobs`
+ * contract T09 already covers: a model that fails the way a dependency's 500 or a
+ * dropped connection would must leave the job in a *readable terminal* state
+ * (not a forever "running" spinner), must not have been retried, and must not
+ * silently look like success.
+ */
+test("T09: an HTTP-500/connection-loss style provider failure ends the job readably, without a blind retry", async () => {
+  const h = createHarness();
+  let calls = 0;
+  h.model.call = async () => {
+    calls += 1;
+    // Mirrors what the OpenAI transport (provider-openai.ts) raises for a 500/503
+    // response or a connection reset after the request was sent: `outcome_unknown`,
+    // because the call may have been billed even though no answer came back.
+    throw new OmniWatchError(
+      "outcome_unknown",
+      "polaczenie z dostawca modelu przerwane (HTTP 500 / utrata polaczenia); wynik nieznany",
+    );
+  };
+  const { handler, enqueued } = panel(h);
+
+  const started = await post(handler, { url: URL_A });
+  const { id } = await started.json();
+  await drain(h, [id]);
+
+  assert.equal(calls, 1, "exactly one attempt reaches the provider, no blind paid retry");
+
+  const poll = await get(handler, id);
+  assert.equal(poll.status, 200, "the job stays readable by id, never 'gone'");
+  const view = await poll.json();
+  assert.equal(view.state, "error", "a broken dependency ends the job, it does not spin forever as 'running'");
+  assert.equal(view.errorClass, "outcome_unknown");
+  assert.equal(typeof view.error, "string");
+  assert.ok(view.error.length > 0, "a readable end error is shown, not a blank failure");
+
+  // Re-polling must not silently retry: still one call, still the same terminal state.
+  const secondPoll = await get(handler, id);
+  const secondView = await secondPoll.json();
+  assert.equal(secondView.state, "error");
+  assert.equal(calls, 1, "polling after the failure must never trigger a second paid call");
+  assert.equal(enqueued.length, 1, "the failure did not create a duplicate operation either");
+});
+
+test("T09: a finished summary carries timestamp references the UI can jump to", async () => {
+  const h = createHarness();
+  const { handler } = panel(h);
+
+  const started = await post(handler, { url: URL_A });
+  const { id } = await started.json();
+  await drain(h, [id]);
+
+  const poll = await get(handler, id);
+  const view = await poll.json();
+  assert.equal(view.state, "done");
+  // The model's answer carries inline `[m:ss]` markers into the video (T09's "jump
+  // to timestamp" contract); the recording stub's reply always includes these.
+  assert.match(view.text, /\[0:\d{2}\]/, "the answer text carries at least one timestamp marker");
+  // The card also gets a frame strip in seconds, independent of the answer text, so
+  // the player has concrete positions even before the text is parsed.
+  assert.ok(Array.isArray(view.meta.strip), "the poll exposes a frame strip in seconds");
+  assert.ok(view.meta.strip.length > 0, "the frame strip is not empty for a known-duration video");
+  assert.ok(
+    view.meta.strip.every((seconds) => Number.isFinite(seconds) && seconds >= 0 && seconds <= view.meta.seconds),
+    "every strip position is a real second offset inside the video's duration",
+  );
 });
 
 test("T10: an unknown id is reported as gone instead of spinning forever", async () => {

@@ -9,6 +9,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -280,4 +281,79 @@ test("the beta installation is untouched by serving and migration", () => {
   readAnalysisCompat({ appRoot, dataDir, id: "SYNTHETIC01" });
   readLegacyUploads(appRoot, "SYNTHETIC01", { nowSeconds: NOW_SECONDS, cacheHours: 48 });
   assert.deepEqual(digest(appRoot), before, "reading and migrating must not modify the beta installation");
+});
+
+/**
+ * T17 gap closed: QA (E-tests, section 3/4, item 3) found no "no Node" scenario
+ * for the beta migration/launcher path.
+ *
+ * The migration functions in this file (`migrateLegacyData` and friends) run
+ * *inside* Node, so they cannot observe their own runtime missing — by the time
+ * JS executes, Node is present by definition. The place a "no Node" failure is
+ * actually reachable is one layer out: `agent-os-module/install.sh`, the shell
+ * launcher a user (or Hermes) runs to trigger the Agent OS install/migration,
+ * which `exec`s `node scripts/release/install.mjs ...` (install.mjs then calls
+ * `migrateLegacyData`'s Agent OS counterpart). That script does its own
+ * `command -v "$NODE_BIN"` preflight before touching anything, so this test
+ * exercises the real launcher, not a re-implementation of it.
+ *
+ * Note the installer's own `--required-tools` check inside `install.mjs`
+ * (`findExecutable`, scripts/release/install.mjs) special-cases `"node"` to
+ * always return `process.execPath` — i.e. once inside the Node installer,
+ * "node is missing" can never be detected. `install.sh`'s `command -v` guard is
+ * therefore the *only* place this product actually detects a missing Node, and
+ * it must run, and must refuse, before `install.mjs` (and thus any beta
+ * migration or data write) is ever invoked.
+ */
+test("T17: install.sh refuses cleanly when Node is not on PATH, before any migration or install runs", () => {
+  const installSh = path.join(repo, "agent-os-module", "install.sh");
+  assert.ok(fs.existsSync(installSh), "the beta/Agent OS launcher must exist");
+
+  const { appRoot, dataDir } = betaCopy();
+  const digest = (dir) => {
+    const out = [];
+    const walk = (current) => {
+      for (const entry of fs.readdirSync(current, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+        const full = path.join(current, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else out.push(`${path.relative(dir, full)}:${sha256(fs.readFileSync(full))}`);
+      }
+    };
+    walk(dir);
+    return out;
+  };
+  const before = digest(appRoot);
+
+  // A PATH with no `node` (and no other executables) on it: `command -v node`
+  // must fail the same way it would on a host where Node was never installed.
+  const emptyPathDir = fs.mkdtempSync(path.join(os.tmpdir(), "omniwatch-no-node-path-"));
+  const bash = fs.existsSync("/bin/bash") ? "/bin/bash" : "/usr/bin/bash";
+  // Real coreutils (dirname, cd, ...) so the script gets past its own plumbing, but
+  // no directory that could contain a `node` binary — this must look like a host
+  // that genuinely never had Node installed, not an empty PATH the script would
+  // fail on for unrelated reasons.
+  const strippedPath = ["/usr/bin", "/bin", "/usr/sbin", "/sbin", emptyPathDir].join(":");
+  const result = spawnSync(bash, [installSh, appRoot], {
+    encoding: "utf8",
+    env: { PATH: strippedPath, HOME: process.env.HOME ?? emptyPathDir },
+  });
+
+  assert.notEqual(result.status, 0, "the launcher must not exit 0 when Node cannot be found");
+  assert.match(result.stderr, /brak Node w PATH/i, "a readable, specific error, not a stack trace or silence");
+  assert.match(result.stderr, /OMNIWATCH_NODE/, "the error tells the user how to point at Node explicitly");
+  assert.equal(result.stdout.trim(), "", "nothing that looks like install progress reaches stdout");
+
+  assert.deepEqual(digest(appRoot), before, "beta data is untouched: the launcher stopped before install.mjs ran");
+  assert.ok(!fs.existsSync(path.join(appRoot, "omniwatch")), "no release directory was created");
+
+  // Pointing OMNIWATCH_NODE at a binary that does not exist must fail the same
+  // readable way, not with a raw ENOENT from `exec`.
+  const missingNodeBin = path.join(emptyPathDir, "not-a-real-node");
+  const withOverride = spawnSync(bash, [installSh, appRoot], {
+    encoding: "utf8",
+    env: { PATH: strippedPath, HOME: process.env.HOME ?? emptyPathDir, OMNIWATCH_NODE: missingNodeBin },
+  });
+  assert.notEqual(withOverride.status, 0);
+  assert.match(withOverride.stderr, /brak Node w PATH/i);
+  assert.deepEqual(digest(appRoot), before, "an invalid OMNIWATCH_NODE override still leaves beta data untouched");
 });

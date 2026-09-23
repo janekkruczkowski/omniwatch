@@ -155,3 +155,66 @@ test("--help exits 0 and documents the shared commands", () => {
     assert.match(result.stdout, new RegExp(command));
   }
 });
+
+/**
+ * T01 gap closed: QA (E-tests, section 3/4, item 1) found no test for a symlink
+ * pointing outside the allowed directory for local input.
+ *
+ * `parseSourceUrl` (packages/omniwatch/src/sources/url.ts) is the only T01 entry
+ * point and it accepts nothing but `http:`/`https:` — every other scheme (`file:`,
+ * a bare filesystem path, a UNC path) is rejected before `new URL()` even
+ * succeeds, or rejected on the protocol check right after. There is no code path
+ * anywhere in `packages/omniwatch/src` or `agent-os-module/src` that opens a
+ * locally supplied video file, so "a symlink pointing outside the allowed
+ * directory for local input" has no directory to escape from: OmniWatch has no
+ * local-file input feature to begin with (grep for `formData`/`multipart`/
+ * `filePath` under those trees turns up only the unrelated teardown-asset upload
+ * route, `agent-os-module/src/app/api/omniwatch/assets/route.ts`, which is not on
+ * the T01 analyze path and never resolves a symlink either — it stores the
+ * uploaded bytes under a generated name).
+ *
+ * This test is therefore the documented substitute the task asked for: it proves
+ * that a symlink-shaped or otherwise local-looking path, in every form a person
+ * could paste it (a bare filesystem path, a `file:` URL, a UNC share, a
+ * `file:` URL whose path resolves through `..` the way a symlink escape would),
+ * is rejected as `invalid_input` before the media tool is ever touched — i.e. the
+ * same guarantee a "symlink escape" test would need, given there is no local
+ * filesystem input surface to attach a symlink to.
+ */
+test("T01: symlink-shaped and local-file-scheme input never reaches the media tool", async () => {
+  const { source, calls } = countingSource();
+  const dir = tempDir();
+  const outside = path.join(dir, "outside", "secret.mp4");
+  fs.mkdirSync(path.dirname(outside), { recursive: true });
+  fs.writeFileSync(outside, "not a real video");
+  const allowed = path.join(dir, "allowed");
+  fs.mkdirSync(allowed, { recursive: true });
+  const linkPath = path.join(allowed, "video.mp4");
+  // Best-effort: symlink creation can be denied by policy on some hosts (notably
+  // Windows without dev mode). The rejection below does not depend on the link
+  // actually resolving — parseSourceUrl never touches the filesystem at all — so
+  // the test still proves the contract when the symlink itself cannot be made.
+  try {
+    fs.symlinkSync(outside, linkPath);
+  } catch {
+    // fall through: linkPath stays a plain path string, still local-looking.
+  }
+
+  const bad = [
+    linkPath,
+    `file://${linkPath}`,
+    `file://${outside}`,
+    `file:///${allowed.replace(/\\/g, "/")}/../outside/secret.mp4`,
+    "\\\\server\\share\\video.mp4",
+    "/etc/passwd",
+    "C:\\Users\\Public\\video.mp4",
+  ];
+  for (const url of bad) {
+    await assert.rejects(
+      () => source.resolve({ url }),
+      (error) => error instanceof OmniWatchError && error.errorClass === "invalid_input",
+      `expected rejection for ${JSON.stringify(url)}`,
+    );
+  }
+  assert.equal(calls.length, 0, "a local/symlink-shaped input must not reach the media tool");
+});
