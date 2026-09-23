@@ -290,11 +290,13 @@ test("strip and duration formatting match the frozen beta output", () => {
 });
 
 test("part splitting is driven by maxFramesPerPart, not by minutes", () => {
-  assert.equal(partCountFor(2402, { maxFramesPerPart: 2400 }), 3);
-  assert.equal(partCountFor(1200, { maxFramesPerPart: 2400 }), 1);
-  assert.equal(partCountFor(1201, { maxFramesPerPart: 2400 }), 2);
+  // The beta's sampling (10 fps up to 3 min, 2 fps above), pinned explicitly.
+  const beta = { fpsForSeconds: (seconds) => (seconds <= 180 ? 10 : 2) };
+  assert.equal(partCountFor(2402, { maxFramesPerPart: 2400, ...beta }), 3);
+  assert.equal(partCountFor(1200, { maxFramesPerPart: 2400, ...beta }), 1);
+  assert.equal(partCountFor(1201, { maxFramesPerPart: 2400, ...beta }), 2);
 
-  const plan = partPlan(2402, { maxFramesPerPart: 2400 });
+  const plan = partPlan(2402, { maxFramesPerPart: 2400, ...beta });
   assert.equal(plan.length, 3);
   assert.ok(Math.abs(plan[0].startSeconds - 0) < 1e-9);
   assert.ok(Math.abs(plan[1].startSeconds - 2402 / 3) < 1e-9);
@@ -302,7 +304,12 @@ test("part splitting is driven by maxFramesPerPart, not by minutes", () => {
   assert.ok(Math.abs(plan[2].endSeconds - 2402) < 1e-9);
 
   // The documented beta README knob has no effect: the frame budget is the only input.
-  assert.equal(partCountFor(2402, { maxFramesPerPart: 4800 }), 2);
+  assert.equal(partCountFor(2402, { maxFramesPerPart: 4800, ...beta }), 2);
+
+  // LF2 default sampling: films over 10 minutes are sampled at 1 fps.
+  assert.equal(partCountFor(600, { maxFramesPerPart: 240 }), 5, "10 min at 2 fps");
+  assert.equal(partCountFor(2402, { maxFramesPerPart: 2400 }), 2, "40 min at 1 fps");
+  assert.equal(partCountFor(1953, { maxFramesPerPart: 120 }), 17, "32:33 at 1 fps in 2-minute parts");
 });
 
 test("timestamps shift into full-video time unless they are already absolute", () => {
@@ -436,9 +443,9 @@ test("split only calls the injected slicer when there is more than one part", as
   const many = stubMedia({});
   const manyParts = await createSourceRegistry({ media: many.media }).split(
     { sourceRef: SOURCE, title: "T", channel: null, durationSeconds: 2402, extractor: "Generic", localPath: "/tmp/source.mp4" },
-    { maxFramesPerPart: 2400 },
+    { maxFramesPerPart: 1200 },
   );
-  assert.equal(manyParts.length, 3);
+  assert.equal(manyParts.length, 3, "2402 s at 1 fps and 1200 frames");
   assert.equal(many.calls.slice, 3);
   assert.deepEqual(manyParts.map((part) => part.index), [0, 1, 2]);
 });

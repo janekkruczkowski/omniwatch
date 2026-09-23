@@ -23,6 +23,11 @@
  *
  * Completion means the protocol said so: a `data: [DONE]` sentinel or a chunk with a
  * non-null `finish_reason`. A bare socket close is not a completion.
+ *
+ * Failures carry `transportPhase` so the engine can apply its bounded resend policy
+ * (LF2): `not_sent` for a media upload or connection that never reached the provider,
+ * `headers` for a provider close before any response header that was not our own
+ * deadline or idle abort. The provider itself still never resends.
  */
 
 import { OmniWatchError } from "../contracts/errors.ts";
@@ -152,7 +157,18 @@ export function createOpenAiModelPort(options: OpenAiModelPortOptions): OpenAiMo
     }
     const media: Array<Record<string, unknown>> = [];
     for (const part of request.mediaParts) {
-      const url = await options.resolveMediaUrl(part, refresh ? { refresh: true } : undefined);
+      let url: string | null;
+      try {
+        url = await options.resolveMediaUrl(part, refresh ? { refresh: true } : undefined);
+      } catch (error) {
+        // The upload failed before any model request was sent: nothing was billed.
+        if (error instanceof OmniWatchError) throw error;
+        throw new OmniWatchError("provider_rejected", `Nie udalo sie wyslac materialu czesci ${part.index} do providera (${errorCodeOf(error) || "upload"}).`, {
+          action: { label: "sprawdz polaczenie", kind: "check_operation" },
+          cause: error,
+          transportPhase: "not_sent",
+        });
+      }
       if (!url) {
         throw new OmniWatchError("source_unavailable", `Nie ma adresu providera dla czesci ${part.index}.`, {
           action: { label: "przygotuj material ponownie", kind: "none" },
@@ -253,12 +269,16 @@ export function createOpenAiModelPort(options: OpenAiModelPortOptions): OpenAiMo
           throw new OmniWatchError("provider_rejected", `Nie udalo sie wyslac zadania do modelu (${code}).`, {
             action: { label: "sprawdz polaczenie", kind: "check_operation" },
             cause: error,
+            transportPhase: "not_sent",
           });
         }
         const detail = transportDiagnostic(error, "headers", abortSource, Date.now() - startedAt);
         throw new OmniWatchError("outcome_unknown", `Polaczenie z modelem przerwane; nie wiadomo, czy wywolanie doszlo do skutku. (${detail})`, {
           action: { label: "sprawdz operacje", kind: "check_operation" },
           cause: error,
+          // Only the provider's own close (its ~60 s no-first-token limit) qualifies;
+          // our deadline or idle abort does not.
+          ...(abortSource === "none" ? { transportPhase: "headers" as const } : {}),
         });
       }
       if (response.status !== 400 || round > 0 || !request.mediaParts.length || !options.resolveMediaUrl) break;

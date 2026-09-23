@@ -460,24 +460,27 @@ test("engine: an unterminated stream is incomplete, keeps the text and is not re
   assert.match(result.content, /Analiza niekompletna/);
 });
 
-test("engine: a rejected or rate limited call fails without a retry", async () => {
+test("engine: a rejected call fails without a retry; a 429 (never run, never billed) gets two backoff resends (LF2)", async () => {
   for (const errorClass of ["provider_rejected", "rate_limited"]) {
     const sourceStub = makeSourceStub();
     const model = makeModelStub(async () => {
       throw new OmniWatchError(errorClass, `${errorClass} from stub`, {});
     });
     const { deps, sink } = engineDeps(model, sourceStub);
+    // The backoff is policy; do not actually wait for it here.
+    deps.clock = { ...deps.clock, setTimeout: (fn) => setImmediate(fn) };
 
     await assert.rejects(
       () => analyze(requestFor(sourceStub.sourceRef), deps),
       (error) => error.errorClass === errorClass,
     );
-    assert.equal(model.state.count, 1, `${errorClass} must not be retried`);
-    assert.deepEqual(sink.phases, ["intent", "started", "failed"]);
+    const sends = errorClass === "rate_limited" ? 3 : 1;
+    assert.equal(model.state.count, sends, `${errorClass} is sent ${sends} time(s)`);
+    assert.deepEqual(sink.phases, Array.from({ length: sends }, () => ["intent", "started", "failed"]).flat());
   }
 });
 
-test("engine: parts are analysed one at a time, then merged", async () => {
+test("engine: parts are analysed side by side, then merged once all are confirmed (LF2)", async () => {
   const parts = [
     { index: 0, startSeconds: 0, endSeconds: 800.67, localPath: "/tmp/part0.mp4" },
     { index: 1, startSeconds: 800.67, endSeconds: 1601.33, localPath: "/tmp/part1.mp4" },
@@ -495,7 +498,9 @@ test("engine: parts are analysed one at a time, then merged", async () => {
 
   assert.equal(model.state.count, 4, "three part calls plus one merge call");
   assert.deepEqual(model.state.requests.map((request) => request.partIndex), [0, 1, 2, 3]);
-  assert.equal(model.state.maxInFlight, 1, "D11: one model call at a time");
+  // LF2 superseded D11's one-call-at-a-time rule for parts: they are independent paid
+  // calls and the provider's pre-header close is not caused by running them together.
+  assert.equal(model.state.maxInFlight, 3, "the three parts are in flight together");
   assert.deepEqual(model.state.requests.map((request) => request.mediaParts.length), [1, 1, 1, 0]);
   assert.equal(result.parts, 3);
   assert.equal(result.content, "## In short\nmerged");

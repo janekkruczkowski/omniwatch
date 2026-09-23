@@ -45,11 +45,9 @@ export interface ModelCallRequest {
   language: string;
   maxOutputTokens?: number;
   /**
-   * Called once when the provider has STARTED answering (response headers). The
-   * engine starts the next part only after this, because DashScope queues prefill:
-   * parts sent together wait behind each other and hit the ~60 s pre-header close.
-   * Providers that cannot tell may never call it; the engine then waits for the call
-   * to settle.
+   * Optional hint, called once when the provider has STARTED answering (response
+   * headers). The engine no longer gates new parts on it (LF2: the gate made long
+   * films serial and did not prevent the provider's ~60 s pre-header close).
    */
   onResponseStarted?: () => void;
 }
@@ -71,8 +69,21 @@ export interface AttemptSink {
   intent(record: Omit<AttemptRecord, "createdAt">): Promise<void>;
   started(attemptId: string, meta?: Record<string, unknown>): Promise<void>;
   response(attemptId: string, response: ModelCallResponse): Promise<void>;
-  unknown(attemptId: string, errorClass: ErrorClass, message: string): Promise<void>;
-  failed(attemptId: string, errorClass: ErrorClass, message: string): Promise<void>;
+  /**
+   * `deferOperationState` (LF2): the engine resends this call right away under its
+   * bounded resend policy, or folds it into the call's own outcome (a rejected resend
+   * after a pre-header close stays unknown). The attempt is journaled as usual, but the
+   * OPERATION state is left to the run's final outcome - a part that answers on the
+   * resend must not leave the operation stuck in outcome_unknown/failed. A crash before
+   * the resend is still recovered from the journal (last attempt unknown ->
+   * outcome_unknown; last attempt failed -> an unpaid retry).
+   */
+  unknown(attemptId: string, errorClass: ErrorClass, message: string, options?: AttemptOutcomeOptions): Promise<void>;
+  failed(attemptId: string, errorClass: ErrorClass, message: string, options?: AttemptOutcomeOptions): Promise<void>;
+}
+
+export interface AttemptOutcomeOptions {
+  deferOperationState?: boolean;
 }
 
 export interface ModelPort {
@@ -230,6 +241,12 @@ export interface ConfigPort {
   maxFramesPerPart(): number;
   /** Parts of one film in flight at once (default DEFAULT_PART_CONCURRENCY). */
   partConcurrency?(): number;
+  /**
+   * Automatic resends of a call the provider closed before any response header
+   * (default DEFAULT_PRE_HEADER_RETRIES = 2, capped at 3; 0 restores the strict
+   * no-resend policy). Each resend is journaled as its own attempt.
+   */
+  preHeaderRetries?(): number;
   cacheHours(): number;
   /** Config location for spawned workers; non-secret. */
   configPath?: string;

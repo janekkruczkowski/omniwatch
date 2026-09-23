@@ -27,7 +27,17 @@ export const SHORT_MAX_SECONDS = 3 * 60;
 export const FPS_SHORT = 10;
 export const FPS_LONG = 2;
 
-export const fpsFor = (seconds: number): number => (seconds <= SHORT_MAX_SECONDS ? FPS_SHORT : FPS_LONG);
+/**
+ * Films longer than this are sampled at FPS_LONG_FILM (LF2, 2026-09-23). A 30-35 minute
+ * talk at 2 fps is ~800k input tokens in 17 calls of ~49k; at 1 fps it is half the
+ * tokens and half the cost, each call prefills in about half the time, and the owner
+ * asked for exactly this trade (fewer frames per second, more and smaller calls).
+ */
+export const LONG_FILM_SECONDS = 10 * 60;
+export const FPS_LONG_FILM = 1;
+
+export const fpsFor = (seconds: number): number =>
+  seconds <= SHORT_MAX_SECONDS ? FPS_SHORT : seconds <= LONG_FILM_SECONDS ? FPS_LONG : FPS_LONG_FILM;
 
 /**
  * Frames one Qwen3.8-Omni-Flash call may carry (2 minutes at 2 fps, about 46k input
@@ -43,10 +53,29 @@ export const fpsFor = (seconds: number): number => (seconds <= SHORT_MAX_SECONDS
  */
 export const QWEN38_OMNI_FLASH_MAX_FRAMES_PER_PART = 240;
 
-/** The configured frame budget, bounded for models with a measured provider limit. */
-export function effectiveMaxFramesPerPart(modelName: string | null | undefined, configured: number): number {
+/**
+ * Frames per call for a long film (> LONG_FILM_SECONDS, sampled at 1 fps): 2 minutes,
+ * ~25k input tokens. Measured live on 2026-09-23 (qa-omniwatch-20260923/LF2-speed):
+ * 17 such parts of a 32:33 film sent all at once got headers after 12-48 s, 17 of 17,
+ * and the whole film was watched in 101 s; 33 of 33 concurrent calls of this size
+ * answered that day. The ~60 s pre-header close is a random queueing tail at the
+ * provider (a 13k-token call once waited 56 s alone, a 25k-token one was closed), not
+ * a function of size or of how many of our calls run together.
+ */
+export const QWEN38_OMNI_FLASH_LONG_FILM_MAX_FRAMES_PER_PART = 120;
+
+/**
+ * The configured frame budget, bounded for models with a measured provider limit.
+ * `durationSeconds` (when known) selects the long-film bound.
+ */
+export function effectiveMaxFramesPerPart(
+  modelName: string | null | undefined,
+  configured: number,
+  durationSeconds?: number,
+): number {
   if (/^qwen3\.8-omni-flash(?:$|-)/i.test(String(modelName ?? ""))) {
-    return Math.min(configured, QWEN38_OMNI_FLASH_MAX_FRAMES_PER_PART);
+    const longFilm = typeof durationSeconds === "number" && Number.isFinite(durationSeconds) && durationSeconds > LONG_FILM_SECONDS;
+    return Math.min(configured, longFilm ? QWEN38_OMNI_FLASH_LONG_FILM_MAX_FRAMES_PER_PART : QWEN38_OMNI_FLASH_MAX_FRAMES_PER_PART);
   }
   return configured;
 }

@@ -2,9 +2,13 @@
  * Long films against DashScope's ~60 s pre-header close (LF, R2-01/03/05/08).
  *
  * Stubs only - no network, no API key, no ffmpeg. The provider behaviour these
- * tests model was measured live on 2026-09-23 (qa-omniwatch-20260923/LF-long-film):
- *   - headers arrive only with the first token; no headers after ~60 s = closed;
- *   - parts sent together wait behind each other's prefill;
+ * tests model was measured live on 2026-09-23 (qa-omniwatch-20260923/LF-long-film and
+ * LF2-speed):
+ *   - headers arrive only with the first token; no headers after ~60 s = closed, on the
+ *     compatible and the native SSE endpoint alike (TCP keepalive, HTTP/2 and timeout
+ *     headers do not change it);
+ *   - that close is a random provider queueing tail, not caused by our concurrency:
+ *     17 parts sent at once all answered;
  *   - an oss:// URL that already served a request can later be refused with 400.
  */
 
@@ -12,12 +16,20 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { OmniWatchError } from "../src/contracts/index.ts";
-import { aggregateUsage, analyze, runGated, unknownPartsMessage } from "../src/analysis/engine.ts";
+import {
+  aggregateUsage,
+  analyze,
+  DEFAULT_PART_CONCURRENCY,
+  runBounded,
+  unknownPartsMessage,
+} from "../src/analysis/engine.ts";
 import { createOpenAiModelPort } from "../src/analysis/provider-openai.ts";
 import {
   effectiveMaxFramesPerPart,
+  fpsFor,
   keyframeAlignedStart,
   partPlan,
+  QWEN38_OMNI_FLASH_LONG_FILM_MAX_FRAMES_PER_PART,
   QWEN38_OMNI_FLASH_MAX_FRAMES_PER_PART,
   shiftTimestamps,
   splitParts,
@@ -27,41 +39,52 @@ const tick = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /* ------------------------------------------------------------ scheduling --- */
 
-test("runGated never exceeds the limit and starts the next item only after the running ones started answering", async () => {
-  const log = [];
+test("runBounded keeps up to the limit in flight without waiting for headers (LF2)", async () => {
   let inFlight = 0;
   let maxInFlight = 0;
-  let waitingForHeaders = 0;
-  let violations = 0;
-  await runGated([0, 1, 2, 3, 4, 5], 3, async (item, started) => {
-    if (waitingForHeaders > 0) violations += 1;
+  const ended = [];
+  await runBounded([0, 1, 2, 3, 4, 5, 6, 7, 8, 9], 4, async (item) => {
     inFlight += 1;
-    waitingForHeaders += 1;
     maxInFlight = Math.max(maxInFlight, inFlight);
-    log.push(`start ${item}`);
-    await tick(5); // prefill
-    waitingForHeaders -= 1;
-    started();
-    await tick(item === 0 ? 40 : 15); // generation; part 0 is slow
+    // A call that never answers for a long time does not hold the others back.
+    await tick(item === 0 ? 40 : 5);
     inFlight -= 1;
-    log.push(`end ${item}`);
+    ended.push(item);
   });
-  assert.equal(violations, 0, "no part is sent while another is still waiting for headers");
-  assert.ok(maxInFlight > 1, "generation overlaps with the next prefill");
-  assert.ok(maxInFlight <= 3, `at most 3 in flight, saw ${maxInFlight}`);
-  assert.equal(log.filter((line) => line.startsWith("end")).length, 6);
+  assert.equal(maxInFlight, 4, "the limit is used in full, not one-by-one behind a header gate");
+  assert.equal(ended.length, 10);
+  assert.ok(ended.indexOf(0) > 3, "later items finished while the slow first one was still waiting");
 });
 
-test("runGated treats a call that never reports headers as started when it settles, and honours stop()", async () => {
+test("runBounded honours stop() and swallows nothing it should not start", async () => {
   const started = [];
-  await runGated([0, 1, 2, 3], 2, async (item) => {
+  await runBounded([0, 1, 2, 3], 2, async (item) => {
     started.push(item);
     await tick(2);
   }, () => started.length >= 2);
   assert.deepEqual(started, [0, 1], "stop() prevents new starts; running items finish");
+  assert.ok(DEFAULT_PART_CONCURRENCY >= 8, "a 30-minute film's parts run side by side by default");
 });
 
 /* ------------------------------------------------------------ split policy --- */
+
+test("long films (> 10 min) are sampled at 1 fps in 2-minute parts of 120 frames (LF2)", () => {
+  assert.equal(fpsFor(180), 10);
+  assert.equal(fpsFor(181), 2);
+  assert.equal(fpsFor(600), 2);
+  assert.equal(fpsFor(601), 1);
+  assert.equal(QWEN38_OMNI_FLASH_LONG_FILM_MAX_FRAMES_PER_PART, 120);
+  assert.equal(effectiveMaxFramesPerPart("qwen3.8-omni-flash", 2400, 1953), 120);
+  assert.equal(effectiveMaxFramesPerPart("qwen3.8-omni-flash", 2400, 600), 240, "a 10-minute film keeps 2 fps parts");
+  assert.equal(effectiveMaxFramesPerPart("qwen3.8-omni-flash", 60, 1953), 60, "a smaller setting still wins");
+  assert.equal(effectiveMaxFramesPerPart("other-model", 2400, 1953), 2400);
+  // The owner's film: 32:33 -> 17 parts of ~115 s at 1 fps (~25k tokens each).
+  const plan = partPlan(1953, { maxFramesPerPart: 120 });
+  assert.equal(plan.length, 17);
+  assert.ok(plan.every((part) => part.endSeconds - part.startSeconds <= 120));
+  // 34:21 -> 18 parts.
+  assert.equal(partPlan(2061, { maxFramesPerPart: 120 }).length, 18);
+});
 
 test("Qwen3.8-Omni-Flash parts are capped at 240 frames in the core, for every shell", () => {
   assert.equal(QWEN38_OMNI_FLASH_MAX_FRAMES_PER_PART, 240);
@@ -69,9 +92,9 @@ test("Qwen3.8-Omni-Flash parts are capped at 240 frames in the core, for every s
   assert.equal(effectiveMaxFramesPerPart("qwen3.8-omni-flash-2026-09-01", 480), 240);
   assert.equal(effectiveMaxFramesPerPart("qwen3.8-omni-flash", 100), 100, "a smaller setting still wins");
   assert.equal(effectiveMaxFramesPerPart("other-model", 2400), 2400);
-  // The film from the report: 1953 s at 2 fps -> 17 parts of ~115 s (~46k tokens).
-  const plan = partPlan(1953, { maxFramesPerPart: 240 });
-  assert.equal(plan.length, 17);
+  // Without a known length the 240-frame bound applies (2 fps films up to 10 min).
+  const plan = partPlan(600, { maxFramesPerPart: 240 });
+  assert.equal(plan.length, 5);
   assert.ok(plan.every((part) => (part.endSeconds - part.startSeconds) * 2 <= 240));
 });
 
@@ -139,17 +162,25 @@ test("R3 M19: ranges are shifted to the film's clock and a clip overrun never pa
 
 /* ----------------------------------------------------------- engine runs --- */
 
-function engineDeps({ duration = 600, model, completedAttempts = [], concurrency }) {
+// Timers fire at once: the unbilled-retry backoff is policy, not something to wait for here.
+const fastClock = {
+  now: () => new Date("2026-09-23T12:00:00.000Z"),
+  setTimeout: (fn) => setImmediate(fn),
+  clearTimeout() {},
+};
+
+function engineDeps({ duration = 600, model, completedAttempts = [], concurrency, preHeaderRetries, clock }) {
   const sourceRef = { platform: "youtube", sourceId: "LONG01", canonicalUrl: "https://www.youtube.com/watch?v=LONG01" };
   const journal = [];
   const events = [];
   const deps = {
-    clock: { now: () => new Date("2026-09-23T12:00:00.000Z"), setTimeout, clearTimeout },
+    clock: clock ?? { now: () => new Date("2026-09-23T12:00:00.000Z"), setTimeout, clearTimeout },
     logger: { info() {}, warn() {}, error() {} },
     config: {
       dataDir: "/tmp/lf", memoryRoot: "/tmp/lf/m", language: "pl", modelName: model.modelName,
       apiKey: () => "k", apiBaseUrl: () => "https://p.invalid/v1", maxFramesPerPart: () => 240, cacheHours: () => 48,
       ...(concurrency ? { partConcurrency: () => concurrency } : {}),
+      ...(preHeaderRetries !== undefined ? { preHeaderRetries: () => preHeaderRetries } : {}),
     },
     source: {
       capabilities: () => ({}),
@@ -169,8 +200,14 @@ function engineDeps({ duration = 600, model, completedAttempts = [], concurrency
         const intent = journal.find((entry) => entry.id === id);
         journal.push({ ...intent, phase: "response", responseSummary: response.text, usage: response.usage, createdAt: "2026-09-23T12:00:00.000Z" });
       },
-      async unknown(id) { journal.push({ id, phase: "unknown" }); },
-      async failed(id) { journal.push({ id, phase: "failed" }); },
+      async unknown(id) {
+        const intent = journal.find((entry) => entry.id === id);
+        journal.push({ id, partIndex: intent?.partIndex, phase: "unknown" });
+      },
+      async failed(id) {
+        const intent = journal.find((entry) => entry.id === id);
+        journal.push({ id, partIndex: intent?.partIndex, phase: "failed" });
+      },
     },
     completedAttempts,
     progress: (event) => events.push(event),
@@ -186,7 +223,7 @@ function request(sourceRef) {
 
 const usage = { inputTokens: 100, outputTokens: 10, costUsd: 0.01, costKnown: true };
 
-test("parts run side by side under the gate; one unknown part does not stop the others; no merge; cost unknown", async () => {
+test("parts run side by side; one unknown part does not stop the others; no merge; cost unknown", async () => {
   const calls = [];
   let inFlight = 0;
   let maxInFlight = 0;
@@ -199,8 +236,9 @@ test("parts run side by side under the gate; one unknown part does not stop the 
       try {
         await tick(3);
         if (req.partIndex === 1 || req.partIndex === 3) {
-          // The provider closed the socket before headers: never started answering.
-          throw new OmniWatchError("outcome_unknown", "Polaczenie z modelem przerwane (phase=headers code=UND_ERR_SOCKET).");
+          // Unknown for a reason other than a provider pre-header close (no transportPhase):
+          // never resent automatically.
+          throw new OmniWatchError("outcome_unknown", "Model zwrocil blad 502; nie wiadomo, czy wywolanie zostalo rozliczone.");
         }
         req.onResponseStarted?.();
         await tick(10);
@@ -214,7 +252,7 @@ test("parts run side by side under the gate; one unknown part does not stop the 
   const outcome = await analyze(request(sourceRef), deps);
   assert.equal(outcome.parts, 5, "600 s at 2 fps and 240 frames -> 5 parts");
   assert.deepEqual([...calls].sort(), [0, 1, 2, 3, 4], "every part was attempted once; no merge");
-  assert.ok(maxInFlight > 1 && maxInFlight <= 3, `bounded overlap, saw ${maxInFlight}`);
+  assert.equal(maxInFlight, 5, "all five parts in flight together, no header gate");
   assert.equal(outcome.errorClass, "outcome_unknown");
   assert.deepEqual(outcome.unknownParts, [1, 3]);
   assert.match(outcome.outcomeMessage, /czesci 2, 4 \(z 5\)/);
@@ -259,7 +297,7 @@ test("a definitive rejection stops new parts but waits for the ones in flight", 
       return { text: "[0:01] x", usage, completed: true };
     },
   };
-  const { deps, sourceRef } = engineDeps({ duration: 600, model });
+  const { deps, sourceRef } = engineDeps({ duration: 600, model, concurrency: 2 });
   await assert.rejects(analyze(request(sourceRef), deps), (error) => error.errorClass === "provider_rejected");
   assert.ok(!calls.includes(4), `no new part after the rejection, called ${calls}`);
   assert.deepEqual(settled.sort(), calls.filter((index) => index !== 1).sort(), "every started call finished before the throw");
@@ -383,4 +421,149 @@ test("a pre-header close stays outcome_unknown, is never resent, and reports wir
     },
   );
   assert.equal(sent, 1);
+});
+
+/* ------------------------------------------------ LF2 bounded resend policy --- */
+
+const preHeaderClose = () => new OmniWatchError("outcome_unknown",
+  "Polaczenie z modelem przerwane; nie wiadomo, czy wywolanie doszlo do skutku. (phase=headers code=UND_ERR_SOCKET name=TypeError abort=none elapsed_ms=60040)",
+  { transportPhase: "headers" });
+
+function scriptedModel(script) {
+  const calls = [];
+  return {
+    calls,
+    model: {
+      modelName: "qwen3.8-omni-flash",
+      async call(req) {
+        calls.push(req.partIndex);
+        const seen = calls.filter((index) => index === req.partIndex).length;
+        const step = script(req.partIndex, seen);
+        if (step instanceof Error) throw step;
+        if (step === "broken-stream") return { text: "[0:01] pol", usage, completed: false, failureDetail: "phase=stream code=UND_ERR_SOCKET" };
+        return { text: req.mediaParts.length ? `[0:10] notatka ${req.partIndex}` : "## Scalone", usage, completed: true };
+      },
+    },
+  };
+}
+
+test("LF2: a provider close before headers is resent once and the film is delivered; cost is reported as unknown", async () => {
+  const { calls, model } = scriptedModel((index, seen) => (index === 2 && seen === 1 ? preHeaderClose() : "ok"));
+  const { deps, journal, events, sourceRef } = engineDeps({ duration: 600, model });
+  const outcome = await analyze(request(sourceRef), deps);
+  assert.equal(outcome.errorClass, null, "all parts confirmed, merged, delivered");
+  assert.equal(outcome.content, "## Scalone");
+  assert.equal(outcome.unknownParts, undefined);
+  assert.deepEqual(calls.filter((index) => index === 2), [2, 2], "part 2 sent twice");
+  assert.equal(calls.filter((index) => index === 5).length, 1, "one merge");
+  // The closed attempt keeps its own journal record; the resend is a new attempt.
+  const part2 = journal.filter((entry) => entry.partIndex === 2);
+  assert.deepEqual(part2.map((entry) => entry.phase), ["intent", "unknown", "intent", "response"]);
+  assert.notEqual(part2[0].id, part2[2].id);
+  assert.equal(outcome.usage.costKnown, false, "the closed attempt may have been billed");
+  assert.equal(outcome.usage.costUsd, null);
+  assert.deepEqual(events.filter((event) => event.stage === "part_retry").map((event) => event.itemIndex), [2]);
+});
+
+test("LF2: resends are bounded (default 2): a part closed every time ends unknown, and no merge is paid for", async () => {
+  const { calls, model } = scriptedModel((index) => (index === 1 ? preHeaderClose() : "ok"));
+  const { deps, sourceRef } = engineDeps({ duration: 600, model });
+  const outcome = await analyze(request(sourceRef), deps);
+  assert.equal(outcome.errorClass, "outcome_unknown");
+  assert.deepEqual(outcome.unknownParts, [1]);
+  assert.equal(calls.filter((index) => index === 1).length, 3, "two resends, not more");
+  assert.ok(!calls.includes(5), "no merge while a part is unknown");
+  assert.match(outcome.outcomeMessage, /czesc 2\/5/);
+});
+
+test("LF2: preHeaderRetries=0 restores the strict policy; 1 allows a single resend", async () => {
+  for (const [retries, sends] of [[0, 1], [1, 2]]) {
+    const { calls, model } = scriptedModel((index) => (index === 1 ? preHeaderClose() : "ok"));
+    const { deps, sourceRef } = engineDeps({ duration: 600, model, preHeaderRetries: retries });
+    const outcome = await analyze(request(sourceRef), deps);
+    assert.deepEqual(outcome.unknownParts, [1]);
+    assert.equal(calls.filter((index) => index === 1).length, sends);
+  }
+});
+
+test("LF2: a stream that broke after headers is never resent", async () => {
+  const { calls, model } = scriptedModel((index) => (index === 3 ? "broken-stream" : "ok"));
+  const { deps, sourceRef } = engineDeps({ duration: 600, model });
+  const outcome = await analyze(request(sourceRef), deps);
+  assert.deepEqual(outcome.unknownParts, [3]);
+  assert.equal(calls.filter((index) => index === 3).length, 1);
+});
+
+test("LF2: a 429 (not run, not billed) is resent after a backoff and the cost stays known", async () => {
+  const limited = () => new OmniWatchError("rate_limited", "Model odrzucil tempo zapytan (429).");
+  const { calls, model } = scriptedModel((index, seen) => (index === 0 && seen <= 2 ? limited() : "ok"));
+  const { deps, journal, sourceRef } = engineDeps({ duration: 600, model, clock: fastClock });
+  const outcome = await analyze(request(sourceRef), deps);
+  assert.equal(outcome.errorClass, null);
+  assert.equal(calls.filter((index) => index === 0).length, 3, "two backoff resends");
+  assert.deepEqual(journal.filter((entry) => entry.partIndex === 0).map((entry) => entry.phase),
+    ["intent", "failed", "intent", "failed", "intent", "response"]);
+  assert.equal(outcome.usage.costKnown, true, "nothing unknown was sent");
+});
+
+test("LF2: an upload that never reached the provider is resent at most twice, then fails the run", async () => {
+  const notSent = () => new OmniWatchError("provider_rejected", "Nie udalo sie wyslac materialu czesci 4 do providera (ENOTFOUND).", { transportPhase: "not_sent" });
+  const { calls, model } = scriptedModel((index) => (index === 4 ? notSent() : "ok"));
+  const { deps, sourceRef } = engineDeps({ duration: 600, model, clock: fastClock });
+  await assert.rejects(analyze(request(sourceRef), deps), (error) => error.errorClass === "provider_rejected");
+  assert.equal(calls.filter((index) => index === 4).length, 3);
+});
+
+test("LF2 provider: only the provider's own pre-header close is marked for resend; uploads that fail are not_sent", async () => {
+  const part = { index: 0, startSeconds: 0, endSeconds: 10, localPath: "/tmp/p.mp4", fps: 1 };
+  const req = { operationId: "op", attemptId: "a", partIndex: 0, messages: [{ role: "user", text: "x" }], mediaParts: [part], language: "pl" };
+  const socketClose = () => { const error = new TypeError("fetch failed"); error.cause = { code: "UND_ERR_SOCKET" }; return error; };
+  const closing = createOpenAiModelPort({
+    config: { modelName: "m", apiKey: () => "k", apiBaseUrl: () => "https://p.invalid/v1", maxFramesPerPart: () => 120 },
+    resolveMediaUrl: async () => "oss://bucket/x.mp4",
+    fetchImpl: async () => { throw socketClose(); },
+  });
+  await assert.rejects(closing.call(req, sink()), (error) => error.errorClass === "outcome_unknown" && error.transportPhase === "headers");
+
+  // Our own start-up deadline is not the provider's close: no resend mark.
+  const timers = { setTimeout: (fn) => { setImmediate(fn); return 1; }, clearTimeout() {} };
+  const slow = createOpenAiModelPort({
+    config: { modelName: "m", apiKey: () => "k", apiBaseUrl: () => "https://p.invalid/v1", maxFramesPerPart: () => 120 },
+    resolveMediaUrl: async () => "oss://bucket/x.mp4",
+    timeoutMs: 5, idleTimeoutMs: 0, timers,
+    fetchImpl: (_url, init) => new Promise((_resolve, reject) => {
+      init.signal.addEventListener("abort", () => reject(Object.assign(new Error("aborted"), { name: "AbortError" })));
+    }),
+  });
+  await assert.rejects(slow.call(req, sink()), (error) => {
+    assert.equal(error.errorClass, "outcome_unknown");
+    assert.match(error.message, /abort=deadline/);
+    assert.equal(error.transportPhase, undefined);
+    return true;
+  });
+
+  let fetched = 0;
+  const failingUpload = createOpenAiModelPort({
+    config: { modelName: "m", apiKey: () => "k", apiBaseUrl: () => "https://p.invalid/v1", maxFramesPerPart: () => 120 },
+    resolveMediaUrl: async () => { const error = new TypeError("fetch failed"); error.cause = { code: "ENOTFOUND" }; throw error; },
+    fetchImpl: async () => { fetched += 1; return sseResponse(DONE); },
+  });
+  await assert.rejects(failingUpload.call(req, sink()), (error) => {
+    assert.equal(error.errorClass, "provider_rejected");
+    assert.equal(error.transportPhase, "not_sent");
+    assert.match(error.message, /ENOTFOUND/);
+    return true;
+  });
+  assert.equal(fetched, 0, "no model request after a failed upload");
+});
+
+test("LF2: a resend that is then rejected keeps the part unknown (the closed send may have been billed)", async () => {
+  const rejected = () => new OmniWatchError("provider_rejected", "Model odrzucil zadanie (400).");
+  const { calls, model } = scriptedModel((index, seen) => (index === 2 ? (seen === 1 ? preHeaderClose() : rejected()) : "ok"));
+  const { deps, sourceRef } = engineDeps({ duration: 600, model });
+  const outcome = await analyze(request(sourceRef), deps);
+  assert.equal(outcome.errorClass, "outcome_unknown");
+  assert.deepEqual(outcome.unknownParts, [2]);
+  assert.equal(calls.filter((index) => index === 2).length, 2);
+  assert.match(outcome.outcomeMessage, /Ponowne wyslanie odrzucone/);
 });

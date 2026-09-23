@@ -26,7 +26,7 @@ import {
 import { OmniWatchError } from "../../packages/omniwatch/src/contracts/errors.ts";
 import { loadStandaloneConfig, runtimeConfigDocument } from "../../apps/standalone/config.mjs";
 import { createFixtureSource, createRuntimeWiring } from "../../packages/omniwatch/src/runtime/poc.ts";
-import { partPlan } from "../../packages/omniwatch/src/sources/media.ts";
+import { effectiveMaxFramesPerPart, partPlan } from "../../packages/omniwatch/src/sources/media.ts";
 import { createStandaloneMediaTool, createStandaloneServer, frameTargetPath } from "../../apps/standalone/server.mjs";
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -39,10 +39,13 @@ test("long Qwen3.8-Omni film uses short calls within the provider frame budget",
   assert.equal(config.maxFrames, 2400, "legacy setting remains visible");
   const effective = runtimeConfigDocument(config).maxFramesPerPart;
   assert.equal(effective, 480);
-  const plan = partPlan(2061, { maxFramesPerPart: effective });
-  assert.equal(plan.length, 9);
-  assert.ok(plan.every((part) => part.endSeconds - part.startSeconds <= 240));
-  assert.ok(plan.every((part) => (part.endSeconds - part.startSeconds) * 2 < 2048));
+  // The engine (and the standalone pre-split) bound it again by the film's length:
+  // a 34:21 film is sampled at 1 fps in 2-minute parts (LF2).
+  const perPart = effectiveMaxFramesPerPart(config.model, effective, 2061);
+  assert.equal(perPart, 120);
+  const plan = partPlan(2061, { maxFramesPerPart: perPart });
+  assert.equal(plan.length, 18);
+  assert.ok(plan.every((part) => part.endSeconds - part.startSeconds <= 120));
   assert.equal(runtimeConfigDocument({ ...config, model: "other-model" }).maxFramesPerPart, 2400);
 });
 
@@ -649,7 +652,8 @@ test("LF: a long film runs its parts side by side; unknown parts are marked and 
   };
   const app = createStandaloneServer({
     appRoot, dataDir, cacheDir, model,
-    source: createFixtureSource({ durationSeconds: 750 }),
+    // 25 min at 1 fps (LF2 long-film sampling) and 300 frames -> 5 parts.
+    source: createFixtureSource({ durationSeconds: 1500 }),
     env: { OMNIWATCH_APP_ROOT: appRoot, OMNIWATCH_DATA_DIR: dataDir, OMNI_MAX_FRAMES: "300" },
   });
   const url = "https://youtu.be/SYNTHETIC01";
@@ -682,6 +686,85 @@ test("LF: a long film runs its parts side by side; unknown parts are marked and 
     const attempts = wiring.store.listAttempts(operationId);
     assert.equal(attempts.filter((attempt) => attempt.phase === "unknown").length, 2, "the uncertain calls stay in the audit trail");
     assert.equal(attempts.filter((attempt) => attempt.phase === "response").length, 6);
+  } finally {
+    wiring.close();
+  }
+});
+
+test("LF2 standalone: a part the provider closed before headers is resent, the film is delivered and the close stays in the journal", async () => {
+  const { appRoot, dataDir, cacheDir } = watchShell();
+  const calls = [];
+  const model = {
+    modelName: "stub-long",
+    async call(request) {
+      calls.push(request.partIndex);
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      if (request.partIndex === 2 && calls.filter((index) => index === 2).length === 1) {
+        throw new OmniWatchError("outcome_unknown",
+          "Polaczenie z modelem przerwane; nie wiadomo, czy wywolanie doszlo do skutku. (phase=headers code=UND_ERR_SOCKET name=TypeError abort=none elapsed_ms=60040)",
+          { transportPhase: "headers" });
+      }
+      return {
+        text: request.mediaParts.length ? `[0:05] czesc ${request.partIndex}` : "## W skrocie\nscalone [3:00]",
+        usage: { inputTokens: 10, outputTokens: 5, costUsd: 0.001, costKnown: true },
+        completed: true,
+      };
+    },
+  };
+  const app = createStandaloneServer({
+    appRoot, dataDir, cacheDir, model,
+    source: createFixtureSource({ durationSeconds: 1500 }),
+    env: { OMNIWATCH_APP_ROOT: appRoot, OMNIWATCH_DATA_DIR: dataDir, OMNI_MAX_FRAMES: "300" },
+  });
+  const run = await driveWatch(app, { url: "https://youtu.be/SYNTHETIC02" });
+  assert.ok(sseData(run.body, "done"), run.body);
+  assert.equal(sseData(run.body, "error"), null, "no state-transition error after a successful resend");
+  const operationId = sseData(run.body, "operation")?.operationId;
+  assert.deepEqual([...calls].sort((a, b) => a - b), [0, 1, 2, 2, 3, 4, 5], "part 2 twice, then one merge");
+  const wiring = createRuntimeWiring({
+    dataDir, config: runtimeConfigDocument(loadStandaloneConfig({ appRoot, env: {} })), environment: {},
+  });
+  try {
+    assert.equal(wiring.store.getOperation(operationId).state, "delivered");
+    const attempts = wiring.store.listAttempts(operationId);
+    assert.equal(attempts.filter((attempt) => attempt.phase === "unknown").length, 1, "the closed call is still journaled");
+    assert.equal(attempts.filter((attempt) => attempt.phase === "response").length, 6);
+  } finally {
+    wiring.close();
+  }
+});
+
+test("LF2 standalone: a resend rejected after a pre-header close leaves the operation outcome_unknown, never failed", async () => {
+  const { appRoot, dataDir, cacheDir } = watchShell();
+  const calls = [];
+  const model = {
+    modelName: "stub-long",
+    async call(request) {
+      calls.push(request.partIndex);
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      if (request.partIndex === 1) {
+        if (calls.filter((index) => index === 1).length === 1) {
+          throw new OmniWatchError("outcome_unknown", "Polaczenie z modelem przerwane. (phase=headers code=UND_ERR_SOCKET abort=none)", { transportPhase: "headers" });
+        }
+        throw new OmniWatchError("provider_rejected", "Model odrzucil zadanie (400).");
+      }
+      return { text: `[0:05] czesc ${request.partIndex}`, usage: { inputTokens: 10, outputTokens: 5, costUsd: 0.001, costKnown: true }, completed: true };
+    },
+  };
+  const app = createStandaloneServer({
+    appRoot, dataDir, cacheDir, model,
+    source: createFixtureSource({ durationSeconds: 1500 }),
+    env: { OMNIWATCH_APP_ROOT: appRoot, OMNIWATCH_DATA_DIR: dataDir, OMNI_MAX_FRAMES: "300" },
+  });
+  const run = await driveWatch(app, { url: "https://youtu.be/SYNTHETIC03" });
+  const error = sseData(run.body, "error");
+  assert.equal(error?.error, "outcome_unknown", run.body);
+  assert.match(error.message, /czesc 2\/5/);
+  const wiring = createRuntimeWiring({
+    dataDir, config: runtimeConfigDocument(loadStandaloneConfig({ appRoot, env: {} })), environment: {},
+  });
+  try {
+    assert.equal(wiring.store.getOperation(error.operationId).state, "outcome_unknown");
   } finally {
     wiring.close();
   }

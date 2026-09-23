@@ -271,14 +271,18 @@ export class OperationJournal {
           usage: response.usage,
         });
       },
-      unknown: async (attemptId, errorClass, message) => {
+      unknown: async (attemptId, errorClass, message, options) => {
         this.assertOwnership(operationId);
         this.writeAttempt(operationId, attemptId, "unknown", { model, responseSummary: message });
+        // A call the engine resends at once (LF2) does not decide the operation; the
+        // run's final outcome does. The journal row above is the durable evidence.
+        if (options?.deferOperationState) return;
         this.markOutcomeUnknown(operationId, `${errorClass}: ${message}`);
       },
-      failed: async (attemptId, errorClass, message) => {
+      failed: async (attemptId, errorClass, message, options) => {
         this.assertOwnership(operationId);
         this.writeAttempt(operationId, attemptId, "failed", { model, responseSummary: message });
+        if (options?.deferOperationState) return;
         this.markFailed(operationId, errorClass, message);
       },
     };

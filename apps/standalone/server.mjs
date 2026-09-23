@@ -522,10 +522,14 @@ export async function runWatchPipeline(options) {
   });
   emit("stage", { step: "upload" });
 
-  // The same bound the engine applies, or the UI would draw a different part count
-  // than the engine reports progress for.
+  // The same bound the engine applies (it depends on the film's length), or the UI
+  // would draw a different part count than the engine reports progress for.
   const parts = await wiring.deps.source.split(info, {
-    maxFramesPerPart: effectiveMaxFramesPerPart(wiring.deps.model.modelName, wiring.deps.config.maxFramesPerPart()),
+    maxFramesPerPart: effectiveMaxFramesPerPart(
+      wiring.deps.model.modelName,
+      wiring.deps.config.maxFramesPerPart(),
+      info.durationSeconds,
+    ),
   });
   emit("parts", { n: parts.length, starts: parts.map((part) => part.startSeconds) });
   emit("uploaded", { reused: info.reusedUpload === true });

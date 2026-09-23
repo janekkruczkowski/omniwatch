@@ -1,17 +1,21 @@
 /**
  * The single analysis engine (T1).
  *
- * Orchestration only: prepare media, split it, call the model for each part (a few at
- * a time, see runGated), merge, produce an AnalysisResult. Storage, delivery and process lifecycle belong to
+ * Orchestration only: prepare media, split it, call the model for each part (several at
+ * a time, see runBounded), merge, produce an AnalysisResult. Storage, delivery and process lifecycle belong to
  * the runtime; this module receives ports and emits events.
  *
  * Cost safety, which is most of what this file is about:
  *   - every paid call gets an `intent` record written BEFORE it is issued;
  *   - a call whose outcome is unknown (timeout, abort, 5xx after send, unterminated
  *     stream) is never retried automatically - the partial text is returned with
- *     `incomplete: true` and `errorClass: "outcome_unknown"`;
- *   - a call that was definitely rejected (4xx) or rate limited (429) is reported as a
- *     failure and also not retried here;
+ *     `incomplete: true` and `errorClass: "outcome_unknown"`. The one bounded
+ *     exception (LF2) is a provider close BEFORE any response header: resent at most
+ *     `preHeaderRetries` times (default 2), each resend journaled as its own attempt,
+ *     and the run's cost is then reported as unknown;
+ *   - a call that never reached the provider (upload/DNS failure) or was rate limited
+ *     (429) was not billed and is resent after a short backoff, at most twice;
+ *   - any other definite rejection (4xx) is reported as a failure and not retried;
  *   - `costKnown` is false when the provider reported no usage, instead of a fake zero.
  */
 
@@ -49,55 +53,53 @@ import { effectiveMaxFramesPerPart, fpsFor, parseTimestamp, shiftTimestamps } fr
 export const DEFAULT_CONVERSATION_BUDGET_TOKENS = 12000;
 
 /**
- * Parts of one film in flight at once. The limit alone is not what protects the
- * provider: runGated also holds every new part until all running ones have started
- * answering. Measured live (2026-09-23): three ~46k-token parts sent together got
- * headers after 30/36/45 s instead of ~16 s alone, nine together lost five to the
- * ~60 s pre-header close. DashScope evidently prefills one account's requests one
- * after another, so overlap is only useful while an earlier part is generating.
+ * Parts of one film in flight at once (LF2). The earlier header gate (start the next
+ * part only after every running one got headers) made a 17-part film effectively
+ * serial: each ~60 s pre-header close held the whole film for a minute, and the
+ * owner's 32-minute film had 4 parts after 460 s. Measured live on 2026-09-23
+ * (qa-omniwatch-20260923/LF2-speed): 6, 10 and 17 parts sent at once all answered
+ * (33 of 33, headers after 8-48 s; 17 parts of a 32:33 film done in 101 s), while
+ * single calls sent alone still hit the provider's random >60 s queueing tail. The
+ * close is not caused by our own concurrency, so parts simply run side by side.
  */
-export const DEFAULT_PART_CONCURRENCY = 3;
+export const DEFAULT_PART_CONCURRENCY = 8;
 
 /**
- * Run `work` for every item with at most `limit` in flight, starting the next item
- * only when every running one has called `started` (or settled). Items are started in
+ * Provider closes before headers that are resent automatically, per call (LF2). The
+ * close is random per request (the same 2-minute part answered in 13 s and in 44 s
+ * minutes after two closes in a row), so a resend usually lands; two bound the cost.
+ */
+export const DEFAULT_PRE_HEADER_RETRIES = 2;
+
+/** Resends of an unbilled failure (upload/DNS, 429) and the waits before them. */
+export const UNBILLED_RETRY_DELAYS_MS = [2000, 5000];
+
+/**
+ * Run `work` for every item with at most `limit` in flight. Items are started in
  * order; `stop()` is checked before each start. `work` must not reject.
  */
-export async function runGated<T>(
+export async function runBounded<T>(
   items: T[],
   limit: number,
-  work: (item: T, started: () => void) => Promise<void>,
+  work: (item: T) => Promise<void>,
   stop: () => boolean = () => false,
 ): Promise<void> {
   const max = Math.max(1, Math.floor(Number.isFinite(limit) ? limit : 1));
   const running = new Set<Promise<void>>();
-  let notStarted = 0;
   let wake: (() => void) | null = null;
-  const signal = (): void => {
-    const resume = wake;
-    wake = null;
-    resume?.();
-  };
   for (const item of items) {
-    while (running.size >= max || notStarted > 0) {
+    while (running.size >= max) {
       await new Promise<void>((resolve) => { wake = resolve; });
     }
     if (stop()) break;
-    let marked = false;
-    notStarted += 1;
-    const started = (): void => {
-      if (marked) return;
-      marked = true;
-      notStarted -= 1;
-      signal();
-    };
     const task: Promise<void> = Promise.resolve()
-      .then(() => work(item, started))
+      .then(() => work(item))
       .catch(() => undefined)
       .finally(() => {
-        started();
         running.delete(task);
-        signal();
+        const resume = wake;
+        wake = null;
+        resume?.();
       });
     running.add(task);
   }
@@ -146,7 +148,7 @@ interface PreflightableModel {
 
 type CallOutcome =
   | { kind: "ok"; response: ModelCallResponse }
-  | { kind: "unknown"; errorClass: ErrorClass; message: string; partialText: string };
+  | { kind: "unknown"; errorClass: ErrorClass; message: string; partialText: string; preHeader?: boolean };
 
 function normalizeText(value: string | null | undefined): string | null {
   const trimmed = (value ?? "").trim();
@@ -274,13 +276,14 @@ export async function analyze(request: AnalysisRequest, deps: AnalysisDeps): Pro
       action: { label: "ustaw OMNI_MAX_FRAMES", kind: "fix_config" },
     });
   }
-  // One bound for every shell: a host's larger setting must not produce parts the
-  // provider closes before answering.
-  const maxFrames = effectiveMaxFramesPerPart(deps.model.modelName, configuredFrames);
   const concurrencySetting = Number(deps.config.partConcurrency?.() ?? DEFAULT_PART_CONCURRENCY);
   const partConcurrency = isNumber(concurrencySetting) && concurrencySetting >= 1
     ? Math.floor(concurrencySetting)
     : DEFAULT_PART_CONCURRENCY;
+  const retrySetting = Number(deps.config.preHeaderRetries?.() ?? DEFAULT_PRE_HEADER_RETRIES);
+  const preHeaderRetries = isNumber(retrySetting) && retrySetting >= 0
+    ? Math.min(3, Math.floor(retrySetting))
+    : DEFAULT_PRE_HEADER_RETRIES;
 
   // Fail on a missing key or endpoint before a download, an upload or a paid call.
   const preflight = (deps.model as ModelPort & PreflightableModel).preflight;
@@ -326,6 +329,10 @@ export async function analyze(request: AnalysisRequest, deps: AnalysisDeps): Pro
   });
   const info = await deps.source.prepare(sourceRef, { force: request.force });
 
+  // One bound for every shell: a host's larger setting must not produce parts the
+  // provider closes before answering. The film's length selects the long-film bound.
+  const maxFrames = effectiveMaxFramesPerPart(deps.model.modelName, configuredFrames, info.durationSeconds);
+
   emit("running", "split", {
     message: `dzielenie na czesci (limit ${maxFrames} klatek)`,
   });
@@ -354,7 +361,8 @@ export async function analyze(request: AnalysisRequest, deps: AnalysisDeps): Pro
     messages: ModelMessage[],
     mediaParts: MediaPart[],
     promptVersion: string,
-    onResponseStarted?: () => void,
+    // What callWithRetry will do with a failure of this send (see there).
+    resend: { preHeader: boolean; unbilled: boolean; afterClose: boolean } = { preHeader: false, unbilled: false, afterClose: false },
   ): Promise<CallOutcome> => {
     attemptCounter += 1;
     // A confirmed retry runs the same operation again. Give every paid call a new
@@ -438,7 +446,6 @@ export async function analyze(request: AnalysisRequest, deps: AnalysisDeps): Pro
       messages,
       mediaParts,
       language: request.language,
-      ...(onResponseStarted ? { onResponseStarted } : {}),
     };
 
     let response: ModelCallResponse;
@@ -447,10 +454,20 @@ export async function analyze(request: AnalysisRequest, deps: AnalysisDeps): Pro
     } catch (error) {
       const converted = toOmniWatchError(error, "provider_rejected");
       if (converted.errorClass === "outcome_unknown") {
-        await deps.attempts.unknown(attemptId, "outcome_unknown", converted.message);
-        return { kind: "unknown", errorClass: "outcome_unknown", message: converted.message, partialText: "" };
+        const preHeader = converted.transportPhase === "headers";
+        await deps.attempts.unknown(attemptId, "outcome_unknown", converted.message,
+          preHeader && resend.preHeader ? { deferOperationState: true } : undefined);
+        return {
+          kind: "unknown",
+          errorClass: "outcome_unknown",
+          message: converted.message,
+          partialText: "",
+          preHeader,
+        };
       }
-      await deps.attempts.failed(attemptId, converted.errorClass, converted.message);
+      const unbilled = converted.errorClass === "rate_limited" || converted.transportPhase === "not_sent";
+      await deps.attempts.failed(attemptId, converted.errorClass, converted.message,
+        (unbilled && resend.unbilled) || resend.afterClose ? { deferOperationState: true } : undefined);
       throw converted;
     }
 
@@ -464,6 +481,84 @@ export async function analyze(request: AnalysisRequest, deps: AnalysisDeps): Pro
 
     await deps.attempts.response(attemptId, response);
     return { kind: "ok", response };
+  };
+
+  // Paid calls of this run whose outcome is unknown, resent ones included: any of them
+  // may have been billed, so the run's cost cannot be known (R2-05).
+  let unknownCalls = 0;
+  let resentCalls = 0;
+  const wait = (ms: number): Promise<void> => new Promise((resolve) => { deps.clock.setTimeout(resolve, ms); });
+
+  /**
+   * runCall plus the bounded resend policy (LF2). Only two cases are resent:
+   *   - not billed for sure: the request never reached the provider (upload or DNS
+   *     failure, `transportPhase: "not_sent"`) or was refused with 429 - after a short
+   *     backoff, at most UNBILLED_RETRY_DELAYS_MS.length times;
+   *   - the provider closed the connection before any response header (its ~60 s
+   *     no-first-token limit; no token was generated for us) - at most
+   *     `preHeaderRetries` times, immediately. Whether the provider bills such a
+   *     closed request could not be verified with an API key (qa LF2-speed report),
+   *     so each one still counts as an unknown call and the run's cost is unknown.
+   * A stream that broke after headers, a 5xx, or our own timeout is never resent.
+   */
+  const callWithRetry = async (
+    partIndex: number,
+    messages: ModelMessage[],
+    mediaParts: MediaPart[],
+    promptVersion: string,
+  ): Promise<CallOutcome> => {
+    let unbilledRetries = 0;
+    let preHeaderResends = 0;
+    let closedMessage = "";
+    for (;;) {
+      let outcome: CallOutcome;
+      try {
+        outcome = await runCall(partIndex, messages, mediaParts, promptVersion, {
+          preHeader: preHeaderResends < preHeaderRetries,
+          unbilled: unbilledRetries < UNBILLED_RETRY_DELAYS_MS.length,
+          afterClose: closedMessage !== "",
+        });
+      } catch (error) {
+        const unbilled = isOmniWatchError(error) &&
+          (error.errorClass === "rate_limited" || error.transportPhase === "not_sent");
+        if (!unbilled || unbilledRetries >= UNBILLED_RETRY_DELAYS_MS.length) {
+          // An earlier send of this call was closed before headers and may have been
+          // billed: the call as a whole stays unknown (confirmed-retry path), not failed.
+          if (closedMessage) {
+            const detail = isOmniWatchError(error) ? error.message : String(error);
+            return { kind: "unknown", errorClass: "outcome_unknown", message: `${closedMessage} Ponowne wyslanie odrzucone: ${detail}`, partialText: "" };
+          }
+          throw error;
+        }
+        const delay = UNBILLED_RETRY_DELAYS_MS[unbilledRetries];
+        unbilledRetries += 1;
+        resentCalls += 1;
+        emit("running", "part_retry", {
+          itemIndex: partIndex,
+          itemCount: parts.length,
+          message: `czesc ${partIndex + 1}/${parts.length}: ponawiam niewyslane wywolanie (${(error as OmniWatchError).errorClass})`,
+        });
+        await wait(delay);
+        continue;
+      }
+      if (outcome.kind === "unknown") {
+        unknownCalls += 1;
+        if (outcome.preHeader && preHeaderResends < preHeaderRetries) {
+          closedMessage = outcome.message;
+          preHeaderResends += 1;
+          resentCalls += 1;
+          deps.logger.warn("omniwatch.analysis.pre_header_resend", { operationId, partIndex, resend: preHeaderResends });
+          emit("running", "part_retry", {
+            itemIndex: partIndex,
+            itemCount: parts.length,
+            errorClass: "outcome_unknown",
+            message: `czesc ${partIndex + 1}/${parts.length}: provider zamknal polaczenie przed odpowiedzia, wysylam ponownie`,
+          });
+          continue;
+        }
+      }
+      return outcome;
+    }
   };
 
   const notes: string[] = [];
@@ -483,7 +578,7 @@ export async function analyze(request: AnalysisRequest, deps: AnalysisDeps): Pro
       history: context.turns,
       today,
     });
-    const outcome = await runCall(0, prompt.messages, [parts[0]], prompt.version);
+    const outcome = await callWithRetry(0, prompt.messages, [parts[0]], prompt.version);
     if (outcome.kind === "ok") {
       responses.push(outcome.response);
       content = outcome.response.text;
@@ -495,7 +590,7 @@ export async function analyze(request: AnalysisRequest, deps: AnalysisDeps): Pro
       content = outcome.partialText;
     }
   } else {
-    // Every part is attempted, a few at a time (runGated). An unknown part does not
+    // Every part is attempted, several at a time (runBounded). An unknown part does not
     // stop the others: they are separate paid calls that the film needs anyway, and a
     // later confirmed retry reuses every committed part and pays only for the missing
     // ones. A definitive failure (4xx, missing config) stops new starts; calls already
@@ -505,10 +600,10 @@ export async function analyze(request: AnalysisRequest, deps: AnalysisDeps): Pro
     const unknownMessages = new Map<number, string>();
     let definitive: unknown = null;
     let definitiveSeen = false;
-    await runGated(
+    await runBounded(
       parts,
       partConcurrency,
-      async (part, started) => {
+      async (part) => {
         const prompt = buildPartNotesPrompt({
           mode: request.mode,
           language: request.language,
@@ -522,7 +617,7 @@ export async function analyze(request: AnalysisRequest, deps: AnalysisDeps): Pro
         });
         let outcome: CallOutcome;
         try {
-          outcome = await runCall(part.index, prompt.messages, [part], prompt.version, started);
+          outcome = await callWithRetry(part.index, prompt.messages, [part], prompt.version);
         } catch (error) {
           if (!definitiveSeen) {
             definitiveSeen = true;
@@ -578,7 +673,7 @@ export async function analyze(request: AnalysisRequest, deps: AnalysisDeps): Pro
         today,
       });
       emit("running", "merge", { itemCount: parts.length, message: "scalam notatki" });
-      const merged = await runCall(parts.length, mergePrompt.messages, [], mergePrompt.version);
+      const merged = await callWithRetry(parts.length, mergePrompt.messages, [], mergePrompt.version);
       if (merged.kind === "ok") {
         responses.push(merged.response);
         content = merged.response.text;
@@ -600,7 +695,7 @@ export async function analyze(request: AnalysisRequest, deps: AnalysisDeps): Pro
 
   if (incomplete) content = `${content}${INCOMPLETE_NOTE}`;
 
-  const usage = aggregateUsage(responses, unknownParts.length);
+  const usage = aggregateUsage(responses, Math.max(unknownCalls, unknownParts.length));
   const result: AnalysisOutcome = {
     analysisId,
     analysisKey,
@@ -648,6 +743,8 @@ export async function analyze(request: AnalysisRequest, deps: AnalysisDeps): Pro
     parts: parts.length,
     incomplete,
     unknownParts: unknownParts.length,
+    unknownCalls,
+    resentCalls,
     costKnown: usage.costKnown,
   });
   return result;
