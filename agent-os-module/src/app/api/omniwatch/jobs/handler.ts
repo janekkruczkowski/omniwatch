@@ -180,6 +180,13 @@ export interface DurableJobView extends Job {
   parentTurnId?: string | null;
   errorClass?: string | null;
   costKnown?: boolean;
+  /**
+   * R3-03: paid calls of this operation that were started but never confirmed, across
+   * all of its runs. A conscious retry reports the cost it confirmed; this says how
+   * many earlier calls may also have been charged, so the panel never shows a total as
+   * if it were the whole bill.
+   */
+  unknownCostCalls?: number;
   /** True only for an operation waiting for the user's retry decision. */
   retryable?: boolean;
   /** True for queued work without a consumer: re-sending the request runs it. */
@@ -302,6 +309,11 @@ export async function readDurableJob(
     turnId: buffer?.turnId ?? null,
     parentTurnId: buffer?.parentTurnId ?? null,
     costKnown: buffer?.usage?.costKnown ?? false,
+    // R3-03: the earlier unconfirmed calls travel with the result, so the card can say
+    // "+ N calls of unknown cost" beside a total that only covers what was confirmed.
+    ...(typeof buffer?.usage?.unknownCostCalls === "number" && buffer.usage.unknownCostCalls > 0
+      ? { unknownCostCalls: buffer.usage.unknownCostCalls }
+      : {}),
     progress: {
       stage: "answer",
       meta: { ...media, seconds, strip: media.strip.length > 0 ? media.strip : stripFor(seconds) },
@@ -587,6 +599,8 @@ export function createJobsHandler(deps: JobsHandlerDeps): JobsHandler {
       parentTurnId: durable.parentTurnId ?? null,
       errorClass: durable.errorClass ?? null,
       error: durable.error,
+      costKnown: durable.costKnown ?? false,
+      ...(durable.unknownCostCalls ? { unknownCostCalls: durable.unknownCostCalls } : {}),
       ...(durable.retryable ? { retryable: true, retryWarning: UNKNOWN_RETRY_WARNING } : {}),
       ...(durable.resubmit ? { resubmit: true } : {}),
     });

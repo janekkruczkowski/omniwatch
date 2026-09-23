@@ -139,6 +139,36 @@ export interface AnalysisOutcome extends AnalysisResult {
   outcomeMessage?: string;
 }
 
+/**
+ * Paid calls of this operation that were started but never confirmed, across every run.
+ *
+ * The engine only sees the calls it made, so the earlier runs are read back from the
+ * journal. An attempt counts as unconfirmed when it reached the provider and no
+ * `response` followed:
+ *
+ *   - `unknown` — the provider may or may not have billed it (a 5xx, a timeout, a
+ *     stream that ended without a completion marker);
+ *   - `started` — the process died mid-call, so nothing was ever written after it;
+ *   - `intent` is not counted: the request never left the process;
+ *   - `failed` is not counted: a definitive rejection that provably was not billed.
+ *
+ * An attempt confirmed by a later `response` is never counted, even if an earlier
+ * phase of it was `unknown`: that is the same call, now accounted for.
+ */
+export function countUnknownCostCalls(attempts: AttemptRecord[] | undefined): number {
+  // One attempt can appear more than once in a journal (intent, then started, then
+  // unknown); the LAST phase written for an id is what it ended as. The store already
+  // keeps one row per id, but a caller may hand over the raw journal, so the fold
+  // happens here rather than being assumed.
+  const finalPhase = new Map<string, AttemptRecord["phase"]>();
+  for (const attempt of attempts ?? []) finalPhase.set(attempt.id, attempt.phase);
+  let count = 0;
+  for (const phase of finalPhase.values()) {
+    if (phase === "unknown" || phase === "started") count += 1;
+  }
+  return count;
+}
+
 /** Optional provider hook so missing configuration fails before media work. */
 interface PreflightableModel {
   preflight?: () => void | Promise<void>;
@@ -176,8 +206,18 @@ export function extractHighlights(content: string, limit = 40): Highlight[] {
  * Sum the confirmed responses. `unknownCalls` counts paid calls of this run whose
  * outcome is unknown: they may have been billed, so the total cannot be known (R2-05:
  * a run with an unknown part used to report `costKnown: true`).
+ *
+ * `unconfirmedCalls` is the same count across the WHOLE operation, earlier runs
+ * included (R3-03). It does not change `costKnown`, which answers "is this result's
+ * total complete?"; it answers a different question the UI has to be able to ask —
+ * "was this operation ever charged for something that is not in that total?" — and is
+ * carried on the usage so the answer survives into the note and the panel.
  */
-export function aggregateUsage(responses: ModelCallResponse[], unknownCalls = 0): Usage {
+export function aggregateUsage(
+  responses: ModelCallResponse[],
+  unknownCalls = 0,
+  unconfirmedCalls = unknownCalls,
+): Usage {
   const inputs = responses.map((r) => r.usage?.inputTokens).filter(isNumber);
   const outputs = responses.map((r) => r.usage?.outputTokens).filter(isNumber);
   const costs = responses.map((r) => r.usage?.costUsd).filter(isNumber);
@@ -189,6 +229,9 @@ export function aggregateUsage(responses: ModelCallResponse[], unknownCalls = 0)
     outputTokens: outputs.length ? outputs.reduce((a, b) => a + b, 0) : null,
     costUsd: costKnown && costs.length ? costs.reduce((a, b) => a + b, 0) : null,
     costKnown,
+    // Only when there is something to report: a run that confirmed every call keeps
+    // the exact shape it had before this field existed.
+    ...(unconfirmedCalls > 0 ? { unknownCostCalls: unconfirmedCalls } : {}),
   };
 }
 
@@ -600,7 +643,11 @@ export async function analyze(request: AnalysisRequest, deps: AnalysisDeps): Pro
 
   if (incomplete) content = `${content}${INCOMPLETE_NOTE}`;
 
-  const usage = aggregateUsage(responses, unknownParts.length);
+  // R3-03: the earlier runs of this same operation are part of the picture. A
+  // conscious retry only sees the calls it made, so without the journal it reports a
+  // complete-looking total while an earlier attempt may also have been billed.
+  const unknownCostCalls = countUnknownCostCalls(deps.completedAttempts) + unknownParts.length;
+  const usage = aggregateUsage(responses, unknownParts.length, unknownCostCalls);
   const result: AnalysisOutcome = {
     analysisId,
     analysisKey,

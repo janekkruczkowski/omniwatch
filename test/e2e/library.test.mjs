@@ -492,3 +492,35 @@ test("FAIL-A UI: an outcome_unknown card offers a warned retry that sends the op
   assert.match(view, /\{card\.retry\.warning\}/, "the warning is visible on the card");
   assert.match(view, /fail\(d\.error \|\| "The run failed", d, started\.id\)/, "the poll passes retryability to the card");
 });
+
+/* ------------------------------------------------------------------ R3-03 --- */
+
+test("R3-03: the panel's job view carries the earlier unconfirmed calls of a retry", async () => {
+  const model = unknownOnceModel();
+  const h = createHarness({ model, durationSeconds: 16 });
+  const { handler } = jobsPanel(h);
+  const url = "https://youtu.be/SYNTHETIC01";
+
+  // First run: the paid call goes out and is never confirmed (outcome_unknown).
+  const first = await (await postJob(handler, { url, q: "rozbierz film", mode: "teardown" })).json();
+  await drain(h, [first.id]);
+  assert.equal(h.store.getOperation(first.id).state, "outcome_unknown");
+
+  // The user confirms the retry; the second run confirms its own call.
+  await postJob(handler, { retryOperation: first.id, confirmRetry: true });
+  await drain(h, [first.id]);
+  const done = await (await getJob(handler, first.id)).json();
+  assert.equal(done.state, "done");
+  // The retry's total is complete FOR WHAT IT BILLED, and it says so...
+  assert.equal(done.costKnown, true);
+  // ...while the earlier unconfirmed call is named, so the card cannot read the total as
+  // the whole bill (R3-03). One call: the first attempt never got a response.
+  assert.equal(done.unknownCostCalls, 1, "the earlier unconfirmed call travels with the result");
+
+  // A run that confirmed every call carries no such count at all.
+  const clean = await (await postJob(handler, { url, q: "inne pytanie", mode: "summary" })).json();
+  await drain(h, [clean.id]);
+  const cleanDone = await (await getJob(handler, clean.id)).json();
+  assert.equal(cleanDone.state, "done");
+  assert.equal(cleanDone.unknownCostCalls, undefined, "nothing to report, nothing sent");
+});

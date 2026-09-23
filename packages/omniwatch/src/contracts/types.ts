@@ -110,6 +110,16 @@ export interface Usage {
   /** Provider-reported cost when available. Never invent zero (D11). */
   costUsd?: number | null;
   costKnown: boolean;
+  /**
+   * Paid calls of this operation that were started but never confirmed, across all of
+   * its runs (R3-03). A conscious retry reports `costKnown: true` and the cost of the
+   * calls it confirmed — correct for what it bills, but it would read as the whole
+   * story. When this is present the UI says "+ N calls of unknown cost" next to the
+   * total, so a price is never presented as complete when an earlier run may also have
+   * been charged. Absent (not 0) when there is nothing to report, so a note written
+   * before this field existed serializes byte for byte as it did.
+   */
+  unknownCostCalls?: number;
 }
 
 export interface Highlight {

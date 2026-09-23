@@ -57,6 +57,8 @@ export interface HostConfig {
   model?: HostModelPort | null;
   /** Lazily resolved host model, e.g. the host's own model client. */
   modelFactory?: (() => HostModelPort | null) | null;
+  /** Where the memory adapter reports what it did (R3-02 diagnostics); optional. */
+  log?: (line: string) => void;
 }
 
 export type VaultRootSource = "explicit" | "config" | "env" | "default";
@@ -351,7 +353,12 @@ export function createOmniWatchHost(config: HostConfig = {}): OmniWatchHost {
   }
 
   const model = config.model ?? (config.modelFactory ? config.modelFactory() : null);
-  const memory = createVaultMemory({ root: resolved.root, analysesDir, model });
+  const memory = createVaultMemory({
+    root: resolved.root,
+    analysesDir,
+    model,
+    ...(config.log ? { log: config.log } : {}),
+  });
 
   function capabilities(): HostCapabilities {
     return inspectHostRoot(config);
