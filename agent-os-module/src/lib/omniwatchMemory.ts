@@ -61,6 +61,39 @@ export const ADAPTER_NAME = "agent-os-vault";
 /** Exact answer used when the library holds no evidence for a question. */
 export const NOT_FOUND_TEXT = "nie znalazłem tego w analizach";
 
+/**
+ * First sentence of the query-expansion system prompt (R2-02). A host that logs or
+ * counts model calls can tell the cheap keyword call apart from the grounded answer:
+ * `system.startsWith(QUERY_EXPANSION_SYSTEM)`.
+ */
+export const QUERY_EXPANSION_SYSTEM =
+  "Jestes filtrem zapytan biblioteki analiz OmniWatch i zamieniasz pytanie na slowa kluczowe.";
+
+/** Output cap of the expansion call: keywords are short, this stays cheap. */
+export const EXPANSION_MAX_OUTPUT_TOKENS = 120;
+
+/** Upper bound on the keywords taken from one expansion reply. */
+export const MAX_EXPANSION_TERMS = 8;
+
+/**
+ * Words that describe the *reply* rather than the topic ("slowa kluczowe: ..."). They
+ * carry no retrieval signal, so they never become search terms.
+ */
+const EXPANSION_NOISE = new Set([
+  "kluczowe",
+  "kluczowych",
+  "klucz",
+  "slowa",
+  "slowo",
+  "slowami",
+  "hasla",
+  "haslo",
+  "keyword",
+  "keywords",
+  "temat",
+  "tematy",
+]);
+
 const CONTENT_MARKER = "<!-- omniwatch:content -->\n";
 const FRONTMATTER_OPEN = "---\n";
 const FRONTMATTER_CLOSE = "\n---\n";
@@ -385,6 +418,34 @@ const STOP_WORDS = new Set([
   "tym", "tego", "tej", "ten", "tych", "ale", "nie", "tak", "jakie", "jaki", "jaka",
 ]);
 
+/** Polish letters that survive no English word, used to recognise a Polish question. */
+const POLISH_LETTERS = /[ąćęłńóśźż]/u;
+
+/**
+ * Polish function words and endings common enough to mark a Polish sentence. Only
+ * markers an English sentence cannot produce are listed: short words that English also
+ * uses ("do", "no", "a") and two-letter endings English words share ("music" ends in
+ * "ic") are deliberately absent, so an English question is never mistaken for Polish.
+ */
+const POLISH_MARKERS =
+  /(?:^|\s)(?:jaki|jaka|jakie|jakim|jakich|czy|kto|gdzie|kiedy|ile|dlaczego|jest|sie|oraz|ktory|ktora|ktore|ktorym|mowi|mowiono|mowia|podaje|podaja|opisuje|analizie|filmie|wideo)(?:\s|$)|(?:[a-z]{4,}(?:uje|ujesz|ujemy|aniem|owego|owych|ala|alo|ali|iono))(?:\s|$)/u;
+
+/**
+ * The language a question is written in, or null when it cannot be told. Only the
+ * distinction this adapter needs is drawn: Polish against everything else. Polish is
+ * recognised by its letters and by its function words, so a question without diacritics
+ * ("Jaki zakres kata ramion podaje instruktor...") is still Polish. English is only
+ * claimed when no Polish marker is present *and* the text is plainly Latin-script
+ * prose, so a language this adapter cannot judge returns null and never triggers an
+ * expansion on a guess.
+ */
+export function detectLanguage(text: string): string | null {
+  const value = typeof text === "string" ? text.toLowerCase() : "";
+  if (value.trim() === "") return null;
+  if (POLISH_LETTERS.test(value) || POLISH_MARKERS.test(value)) return "pl";
+  return /^[\x20-\x7e]+$/.test(value) && /[a-z]{3,}/.test(value) ? "en" : null;
+}
+
 /** Question terms: folded, deduplicated, short words and stop words dropped. */
 export function queryTerms(query: string): string[] {
   const folded = foldText(typeof query === "string" ? query : "");
@@ -396,38 +457,142 @@ export function queryTerms(query: string): string[] {
   return terms;
 }
 
+/** Tokens that describe the reply ("slowa kluczowe") and never the topic. */
+function isNoiseToken(token: string): boolean {
+  return STOP_WORDS.has(token) || EXPANSION_NOISE.has(token);
+}
+
 /**
- * Polish inflects, so an exact substring test misses "syntetycznym" against
- * "syntetyczny". Two tokens match when they share a prefix of at least four
- * characters; shorter tokens must be equal.
+ * Keywords parsed out of one expansion reply (R2-02). The reply is prose, so it is
+ * folded and tokenised exactly like a note: Polish diacritics survive folding, numbers
+ * and units such as `40-60°` become `40`/`60`, duplicates collapse and words that only
+ * describe the reply ("slowa kluczowe") are dropped.
  */
-function tokensMatch(left: string, right: string): boolean {
-  if (left === right) return true;
-  const shortest = Math.min(left.length, right.length);
-  if (shortest < 4) return false;
-  return left.slice(0, shortest) === right.slice(0, shortest);
+export function expansionKeywords(reply: string): string[] {
+  const terms: string[] = [];
+  for (const token of tokenize(reply)) {
+    if (token.length < 3 || isNoiseToken(token)) continue;
+    if (!terms.includes(token)) terms.push(token);
+  }
+  return terms.slice(0, MAX_EXPANSION_TERMS);
 }
 
-function tokenize(value: string): string[] {
-  return foldText(value).match(/[a-z0-9]+/g) ?? [];
+/**
+ * A Polish verb ending. Present-tense and infinitive forms are recognised by their
+ * ending (`podaje`/`podaja`/`podawac` share the stem `podaw`); the impersonal past
+ * (`mowiono`, `napisano`) needs at least six characters, so a short noun that merely
+ * ends the same way (`grono`) is not mistaken for one. A verb never names a topic, so
+ * it must not count toward the evidence gate — `podaje` must not be weighed like
+ * `instruktor` (R2-02).
+ */
+function isVerbLike(token: string): boolean {
+  if (/(ac|ic|yc|ec|owac|ywac|uje|ujesz|ujemy|uja|ales|al|ala|alo|ali|aja)$/.test(token)) return true;
+  // The short present-tense endings need a length guard: "kraje" is a plural noun, not
+  // a verb, while "podaje" is a verb.
+  if (token.length >= 6 && /(aje|asz|amy|acie)$/.test(token)) return true;
+  return token.length >= 6 && /(iono|ano|ono|eto|yto)$/.test(token);
 }
 
+/**
+ * A form that is neither a stop word nor a verb: nouns, adjectives and numbers, i.e.
+ * the terms that actually name a topic ("kat", "ramion", "instruktor", "40").
+ * `fuzja jądrowa w tokamaku` leaves `fuzja`, `jadrow`, `tokamak` — all content words.
+ */
+export function isContentTerm(term: string): boolean {
+  if (term.length < 3) return false;
+  if (isNoiseToken(term)) return false;
+  return !isVerbLike(term);
+}
+
+/**
+ * Retrieval units of one term: the term itself and its stem, deduplicated. Polish
+ * inflects, so a question term rarely equals a note token ("ramion" vs "ramiona");
+ * both sides are stemmed and matched by stem overlap instead of by shared prefix.
+ */
+function searchUnits(term: string): string[] {
+  const stem = stemToken(term);
+  return stem.length >= 3 && stem !== term ? [term, stem] : [term];
+}
+
+/**
+ * Score of a note against the question. `score` counts every matched term (title and
+ * body) and `contentScore` counts body matches only. The evidence gate compares
+ * `contentScore` against a threshold derived from the question's *content* terms (see
+ * `gateThreshold`), so a question's verbs and generic words raise the bar by nothing
+ * while a match on them still counts toward clearing it (R2-02).
+ */
 function scoreNote(terms: string[], title: string, content: string): { score: number; contentScore: number } {
   const titleTokens = tokenize(title);
   const contentTokens = tokenize(content);
+  const titleStems = titleTokens.map(stemToken);
+  const contentStems = contentTokens.map(stemToken);
   let score = 0;
   let contentScore = 0;
   for (const term of terms) {
-    const inTitle = titleTokens.some((token) => tokensMatch(term, token));
-    const inContent = contentTokens.some((token) => tokensMatch(term, token));
+    const units = searchUnits(term);
+    const inTitle = titleTokens.some((token, at) => termMatchesToken(units, token, titleStems[at]));
+    const inContent = contentTokens.some((token, at) => termMatchesToken(units, token, contentStems[at]));
     if (inTitle || inContent) score += 1;
     if (inContent) contentScore += 1;
   }
   return { score, contentScore };
 }
 
+function tokenize(value: string): string[] {
+  return foldText(value).match(/[a-z0-9]+/g) ?? [];
+}
+
+/* -- stemmer --------------------------------------------------------------------- */
+
+/**
+ * Inflectional endings dropped to form a stem, longest first. Polish dominates, but the
+ * English plural is here too, because the R2-02 notes are English: without it a keyword
+ * `degrees` would never meet the note's `degree`.
+ */
+const INFLECTIONS = [
+  "owanego", "owanemu", "owania", "owanie", "owaniem",
+  "ami", "ach", "ego", "emu", "owej", "owym", "ych", "ymi", "ami",
+  "es", "ie", "ia", "iu", "em", "om", "ow", "e", "a", "i", "y", "u", "s",
+];
+
+/**
+ * A crude stemmer: drop one inflectional ending, but never below three characters, so
+ * short words survive intact. `ramiona`/`ramion`/`ramieniu` all reduce to `ramion`,
+ * `kata`/`katem` to `kat`, `degrees`/`degree` to `degre`, and `instructor` is left
+ * unchanged (its ending is not in the list, which is what keeps it distinct from the
+ * Polish `instruktor` — the pair that caused R2-02).
+ */
+export function stemToken(token: string): string {
+  if (token.length < 4) return token;
+  for (const ending of INFLECTIONS) {
+    const cut = token.length - ending.length;
+    if (cut >= 3 && token.endsWith(ending)) return token.slice(0, cut);
+  }
+  return token;
+}
+
+/** True when a note token or its stem carries any of the term's retrieval units. */
+function termMatchesToken(units: string[], token: string, stem: string): boolean {
+  return units.some((unit) => unit === token || unit === stem);
+}
+
 /** Evidence per note handed to the host model (characters of note body). */
 export const EVIDENCE_CHARS_PER_NOTE = 1600;
+
+/**
+ * Share of the question's *content* terms a note body must carry to be evidence.
+ * Counting content terms only keeps a long question from diluting its own signal: a
+ * question with six content words needs three of them, not five out of eight tokens
+ * (R2-02: `instruktor` used to count against the threshold while `perfect` and `push`
+ * were the only matches).
+ */
+export const CONTENT_GATE_RATIO = 0.4;
+
+/** Evidence gate for one question: at least one content term must land in the body. */
+export function gateThreshold(terms: string[]): number {
+  const contentTerms = terms.filter(isContentTerm).length;
+  return Math.max(1, Math.ceil(contentTerms * CONTENT_GATE_RATIO));
+}
 
 /**
  * The note passages that carry the question's terms, in document order and bounded.
@@ -441,7 +606,11 @@ export function evidencePassage(terms: string[], content: string, maxChars = EVI
   const ranked = lines
     .map((line, index) => {
       const tokens = tokenize(line);
-      const hits = terms.filter((term) => tokens.some((token) => tokensMatch(term, token))).length;
+      const stems = tokens.map(stemToken);
+      const hits = terms.filter((term) => {
+        const units = searchUnits(term);
+        return tokens.some((token, at) => termMatchesToken(units, token, stems[at]));
+      }).length;
       return { line, index, hits };
     })
     .filter((item) => item.hits > 0)
@@ -472,7 +641,8 @@ function firstMatchOffset(terms: string[], content: string): number {
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(folded)) !== null) {
     const token = match[0];
-    if (terms.some((term) => tokensMatch(term, token))) return match.index;
+    const stem = stemToken(token);
+    if (terms.some((term) => termMatchesToken(searchUnits(term), token, stem))) return match.index;
   }
   return -1;
 }
@@ -538,19 +708,69 @@ export function createVaultMemory(options: VaultMemoryOptions): MemoryPort {
     return { path, bytes: readFileSync(path) };
   }
 
-  function searchInternal(query: string, limit: number): ScoredNote[] {
-    const terms = queryTerms(query);
-    if (terms.length === 0) return [];
+  /**
+   * The question's keywords in the notes' own language, from the host model (R2-02).
+   *
+   * This is a cheap text completion — no tools, no memory — and only the question
+   * reaches it, never note content. It runs *only* when the question's own words were
+   * not enough to reach the evidence gate and the library holds notes in another
+   * language, so a question the library can already answer costs no extra call.
+   *
+   * A failure here is thrown, not swallowed: the caller has already failed to find
+   * evidence, and answering NOT_FOUND on top of a broken model call would be a false
+   * "the library has nothing" when the truth is "the library could not be searched".
+   */
+  async function expansionTerms(query: string): Promise<string[]> {
+    if (!model) return [];
+    let reply: string;
+    try {
+      reply = await model.complete({
+        system: [
+          QUERY_EXPANSION_SYSTEM,
+          "Przetlumacz pytanie na slowa kluczowe w jezyku notatek (polski lub angielski).",
+          "Podaj 4-8 slow kluczowych i synonimow, po przecinku, bez zdan i bez wyjasnien.",
+        ].join(" "),
+        user: `Pytanie: ${query}`,
+        maxOutputTokens: EXPANSION_MAX_OUTPUT_TOKENS,
+      });
+    } catch (error) {
+      throw toOmniWatchError(error, "runtime_unavailable");
+    }
+    return expansionKeywords(reply);
+  }
+
+  /** Own terms first, then the expansion terms that are new, folded and deduplicated. */
+  function mergeTerms(own: string[], expanded: string[]): string[] {
+    const terms: string[] = [];
+    for (const term of [...own, ...expanded]) {
+      if (term.length < 3 || isNoiseToken(term) || terms.includes(term)) continue;
+      terms.push(term);
+    }
+    return terms;
+  }
+
+  /**
+   * One pass over the analyses directory: the notes that carry the terms, plus the set
+   * of languages those notes are written in. The languages come free from the parse the
+   * search already does, so deciding whether a question needs translating costs no
+   * second read of the Vault (R2-02).
+   */
+  function searchInternal(
+    terms: string[],
+    limit: number,
+    threshold: number,
+  ): { notes: ScoredNote[]; languages: Set<string> } {
+    const languages = new Set<string>();
+    if (terms.length === 0) return { notes: [], languages };
     let rootReal: string;
     try {
       rootReal = requireRootReal();
     } catch {
-      return [];
+      return { notes: [], languages };
     }
     const dir = resolve(rootReal, analysesDir);
-    if (!existsSync(dir) || !statSync(dir).isDirectory()) return [];
+    if (!existsSync(dir) || !statSync(dir).isDirectory()) return { notes: [], languages };
 
-    const threshold = Math.max(1, Math.ceil(terms.length * 0.6));
     const scored: ScoredNote[] = [];
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       // A symlinked note is skipped: search never follows a link out of the root.
@@ -569,6 +789,7 @@ export function createVaultMemory(options: VaultMemoryOptions): MemoryPort {
         continue;
       }
       if (!result) continue;
+      if (result.language !== "") languages.add(result.language.toLowerCase());
       const { score, contentScore } = scoreNote(terms, result.title, result.content);
       if (score === 0) continue;
       scored.push({
@@ -583,7 +804,7 @@ export function createVaultMemory(options: VaultMemoryOptions): MemoryPort {
       });
     }
     scored.sort((a, b) => b.score - a.score || a.relativePath.localeCompare(b.relativePath));
-    return scored.slice(0, Math.max(1, limit));
+    return { notes: scored.slice(0, Math.max(1, limit)), languages };
   }
 
   function toHit(note: ScoredNote): MemorySearchHit {
@@ -595,17 +816,34 @@ export function createVaultMemory(options: VaultMemoryOptions): MemoryPort {
     };
   }
 
-  async function evidenceFor(question: string, limit: number): Promise<ScoredNote[]> {
+  /**
+   * Evidence for one set of terms, plus the languages the library holds. A question is
+   * only worth translating when the library also holds notes in *another* language: a
+   * Polish question in a purely Polish library that found nothing found nothing because
+   * the topic is absent, and translating it would not change that (R2-02 keeps an
+   * absent topic free). A mixed library still expands, because the note the question is
+   * about may be the English one.
+   */
+  async function evidenceFor(
+    terms: string[],
+    limit: number,
+    threshold: number,
+  ): Promise<{ evidence: ScoredNote[]; languages: Set<string> }> {
+    const { notes, languages } = searchInternal(terms, Math.max(limit, 1) * 3, threshold);
     const evidence: ScoredNote[] = [];
-    for (const candidate of searchInternal(question, Math.max(limit, 1) * 3)) {
-      // Answers never rest on a title alone: the body must carry the evidence.
+    for (const candidate of notes) {
+      // Answers never rest on a title alone: the body must carry the evidence. The
+      // threshold is a share of the question's *content* terms (nouns, adjectives,
+      // numbers), so a question's verbs and generic words neither open nor close the
+      // gate (R2-02). A question about a nuclear fusion tokamak shares no content term
+      // with the notes, so it stays notFound.
       if (candidate.contentScore < candidate.threshold) continue;
       const found = await memory.readAnalysis(candidate.analysisId);
       if (!found || found.result.content.trim() === "") continue;
       evidence.push(candidate);
       if (evidence.length >= Math.max(limit, 1)) break;
     }
-    return evidence;
+    return { evidence, languages };
   }
 
   const memory: MemoryPort = {
@@ -655,15 +893,17 @@ export function createVaultMemory(options: VaultMemoryOptions): MemoryPort {
 
     async searchAnalyses(query: string, limit?: number): Promise<MemorySearchHit[]> {
       const size = limit && limit > 0 ? limit : searchLimitDefault;
-      return searchInternal(query, size).map(toHit);
+      // The panel's search box is a lexical lookup of the words the user typed: it is
+      // synchronous, free and never consults the host model (R2-02 keeps the model for
+      // answering only).
+      const terms = queryTerms(query);
+      return searchInternal(terms, size, gateThreshold(terms)).notes.map(toHit);
     },
 
     async answerFromAnalyses(question: string, opts?: { limit?: number }): Promise<MemoryAnswer> {
-      const limit = opts?.limit && opts.limit > 0 ? opts.limit : answerLimitDefault;
-      const evidence = await evidenceFor(question, limit);
-      if (evidence.length === 0) {
-        return { text: NOT_FOUND_TEXT, refs: [], notFound: true };
-      }
+      // No host model means no answer at all: without one the adapter could not expand
+      // a question into the notes' language, so an empty search would not prove the
+      // topic is absent — it would be a false "notFound" (R2-02). Fail loudly instead.
       if (!model) {
         throw new OmniWatchError(
           "missing_config",
@@ -672,7 +912,38 @@ export function createVaultMemory(options: VaultMemoryOptions): MemoryPort {
         );
       }
 
-      const terms = queryTerms(question);
+      const limit = opts?.limit && opts.limit > 0 ? opts.limit : answerLimitDefault;
+      const own = queryTerms(question);
+      const gate = gateThreshold(own);
+
+      // Pass 1: the question's own words. A question written in the notes' language
+      // reaches its evidence here and pays for no expansion call at all.
+      const first = await evidenceFor(own, limit, gate);
+      let evidence = first.evidence;
+      let terms = own;
+
+      // Pass 2: nothing was found and the library also holds notes in another language
+      // — the R2-02 case of a Polish question about an English analysis. Ask the cheap
+      // host model for keywords in the notes' language and search again. When every
+      // note is already in the question's language, an empty result means the topic is
+      // absent: translating would find nothing either, so it is skipped and the absent
+      // topic still costs no model call.
+      if (evidence.length === 0) {
+        const questionLanguage = detectLanguage(question);
+        const otherLanguageExists = [...first.languages].some((language) => language !== questionLanguage);
+        if (otherLanguageExists) {
+          const keywords = await expansionTerms(question);
+          if (keywords.length > 0) {
+            terms = mergeTerms(own, keywords);
+            evidence = (await evidenceFor(terms, limit, gate)).evidence;
+          }
+        }
+      }
+
+      if (evidence.length === 0) {
+        return { text: NOT_FOUND_TEXT, refs: [], notFound: true };
+      }
+
       const refs: MemoryRef[] = [];
       const passages: string[] = [];
       for (const note of evidence) {
