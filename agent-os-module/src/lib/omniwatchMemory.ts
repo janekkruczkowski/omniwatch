@@ -1159,8 +1159,20 @@ export function createVaultMemory(options: VaultMemoryOptions): MemoryPort {
       if (foldText(text).includes(foldText(NOT_FOUND_TEXT))) {
         return { text: NOT_FOUND_TEXT, refs: [], notFound: true };
       }
-      const body = text === "" ? fallbackAnswer(evidence) : text;
-      return { text: `${body}\n\n${sourcesFooter(evidence, refs)}`, refs, notFound: false };
+      if (text === "") {
+        return { text: `${fallbackAnswer(evidence)}\n\n${sourcesFooter(evidence, refs)}`, refs, notFound: false };
+      }
+      // R4: the sources are the notes the answer rests on, not every note that cleared
+      // the gate. Live, a keyword list with generic words (`video`, `screen`, `code`)
+      // let two unrelated notes over a gate of 3; the model cited only the right one,
+      // yet both were glued into `Źródła:` and `refs`. When the answer cites none of
+      // them, all evidence stays (the model was handed exactly those passages).
+      const cited = citedEvidence(text, evidence, refs);
+      return {
+        text: `${text}\n\n${sourcesFooter(cited.evidence, cited.refs)}`,
+        refs: cited.refs,
+        notFound: false,
+      };
     },
   };
 
@@ -1170,6 +1182,28 @@ export function createVaultMemory(options: VaultMemoryOptions): MemoryPort {
 /** Deterministic digest used only when the host model returns an empty answer. */
 function fallbackAnswer(evidence: ScoredNote[]): string {
   return evidence.map((note) => `- ${note.title}: ${note.excerpt}`).join("\n");
+}
+
+/**
+ * The evidence notes an answer cites by path (`[[OmniWatch/Analyses/<id>.md|…]]`), with
+ * their refs, in evidence order. An answer that cites none of them keeps them all: the
+ * sources then say what the model was given, which is still true.
+ */
+export function citedEvidence<N extends { analysisId: string; relativePath: string }, R extends { analysisId: string; relativePath: string }>(
+  text: string,
+  evidence: N[],
+  refs: R[],
+): { evidence: N[]; refs: R[] } {
+  // Only the wiki-link form the prompt asks for counts as a citation: a path that merely
+  // appears in the text (e.g. an echoed `sciezka:` line) is not the model citing it.
+  const cites = (path: string) => path !== "" && text.includes(`[[${path}`);
+  const kept = evidence.filter((note) => {
+    const ref = refs.find((candidate) => candidate.analysisId === note.analysisId);
+    return cites(note.relativePath) || (ref ? cites(ref.relativePath) : false);
+  });
+  if (kept.length === 0) return { evidence, refs };
+  const ids = new Set(kept.map((note) => note.analysisId));
+  return { evidence: kept, refs: refs.filter((ref) => ids.has(ref.analysisId)) };
 }
 
 /** Source attribution appended to every grounded answer (D7 explicit references). */

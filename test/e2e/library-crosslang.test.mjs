@@ -540,3 +540,59 @@ test("R3-02: the language named to the model comes from the library, not from th
   assert.equal(languageName("de"), "de");
   assert.equal(languageName(""), "notatek");
 });
+
+/* ------------------------------------------------ R4: sources the answer cites --- */
+
+/**
+ * R4 live (2026-09-23, final build, run api-opus-9): the model translated the question
+ * into `password,teaser,claude,opus,screen,video,reveal,code`, gate 3. Two unrelated
+ * notes carried `screen,video,reveal` and `screen,video,code` - three generic words -
+ * and cleared the gate. The answer cited only the teaser, yet `Źródła:` and `refs`
+ * listed all three. The fixtures below reproduce those word overlaps.
+ */
+const KANBAN_EN = makeResult({
+  analysisId: "omni_kanban",
+  title: "NEW Hermes Super Kanban Agent is SCARY GOOD!",
+  language: "en",
+  sourceId: "Xu0JinVn_Fg",
+  canonicalUrl: "https://www.youtube.com/watch?v=Xu0JinVn_Fg",
+  content: "The video shows a kanban board on screen, then a reveal of the agent moving cards.",
+});
+const PUSHUP_CODE_EN = makeResult({
+  analysisId: "omni_pushup2",
+  title: "The Perfect Push-Up",
+  language: "en",
+  sourceId: "c-lBErfxszs",
+  canonicalUrl: "https://www.youtube.com/watch?v=c-lBErfxszs",
+  content: "The video puts a form checklist on screen, like a code for the elbows at 40-60 degrees.",
+});
+const R4_KEYWORDS = '["password", "teaser", "claude", "opus", "screen", "video", "reveal", "code"]';
+
+test("R4: a note that clears the gate on generic words but is not cited is not a source", async () => {
+  const model = stubModel({ keywords: R4_KEYWORDS, answer: OPUS_ANSWER });
+  const { memory } = await library([OPUS_EN, KANBAN_EN, PUSHUP_CODE_EN], model);
+
+  const answer = await memory.answerFromAnalyses(OPUS_PL, { limit: 5 });
+  assert.equal(answer.notFound, false, answer.text);
+  // Precondition: the unrelated notes really were evidence (handed to the model), so
+  // this test fails without the citation filter rather than passing on the gate alone.
+  const handed = model.answerCalls()[0].user;
+  assert.match(handed, /Hermes Super Kanban/, "the kanban note cleared the gate");
+  assert.match(handed, /The Perfect Push-Up/, "the push-up note cleared the gate");
+  assert.deepEqual(answer.refs.map((ref) => ref.analysisId), ["omni_opus"]);
+  assert.match(answer.text, /Źródła:\n- \[\[OmniWatch\/Analyses\/omni_opus\.md\|Introducing Claude Opus 5\.5\]\]/);
+  assert.doesNotMatch(answer.text, /Kanban|Xu0JinVn_Fg|Push-Up|c-lBErfxszs/, "no uncited source is glued on");
+});
+
+test("R4: an answer that cites no note keeps every evidence note as a source", async () => {
+  const model = stubModel({ keywords: R4_KEYWORDS, answer: "Na ekranie pojawia się hasło „There's more to discover”." });
+  const { memory } = await library([OPUS_EN, KANBAN_EN, PUSHUP_CODE_EN], model);
+
+  const answer = await memory.answerFromAnalyses(OPUS_PL, { limit: 5 });
+  assert.equal(answer.notFound, false, answer.text);
+  assert.deepEqual(
+    answer.refs.map((ref) => ref.analysisId).sort(),
+    ["omni_kanban", "omni_opus", "omni_pushup2"],
+    "without citations the sources say what the model was given",
+  );
+});
