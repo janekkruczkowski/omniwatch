@@ -51,6 +51,8 @@ export interface ModelCallResponse {
   usage: Usage;
   /** True only when the provider protocol completed and the end marker was seen. */
   completed: boolean;
+  /** Safe transport diagnostics only; never a raw error message or request URL. */
+  failureDetail?: string;
 }
 
 /**

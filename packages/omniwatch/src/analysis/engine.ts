@@ -275,7 +275,9 @@ export async function analyze(request: AnalysisRequest, deps: AnalysisDeps): Pro
     }
 
     if (!response.completed) {
-      const message = "Odpowiedz modelu nie zakonczyla sie poprawnie (brak znacznika konca).";
+      const message = response.failureDetail
+        ? `Odpowiedz modelu nie zakonczyla sie poprawnie (${response.failureDetail}).`
+        : "Odpowiedz modelu nie zakonczyla sie poprawnie (brak znacznika konca).";
       await deps.attempts.unknown(attemptId, "outcome_unknown", message);
       return { kind: "unknown", errorClass: "outcome_unknown", message, partialText: response.text };
     }

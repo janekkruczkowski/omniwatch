@@ -84,6 +84,14 @@ function errorCodeOf(error: unknown): string {
   return "";
 }
 
+function transportDiagnostic(error: unknown, phase: "headers" | "stream", abortSource: string, elapsedMs: number): string {
+  const rawCode = errorCodeOf(error);
+  const code = /^[A-Z][A-Z0-9_]{0,39}$/.test(rawCode) ? rawCode : "none";
+  const name = error instanceof Error && ["AbortError", "TimeoutError", "TypeError"].includes(error.name)
+    ? error.name : "other";
+  return `phase=${phase} code=${code} name=${name} abort=${abortSource} elapsed_ms=${Math.max(0, Math.round(elapsedMs))}`;
+}
+
 /**
  * Codes that mean the bytes never left this machine in any form the provider could
  * have acted on. Everything else is treated as possibly delivered.
@@ -173,6 +181,8 @@ export function createOpenAiModelPort(options: OpenAiModelPortOptions): OpenAiMo
     if (!base) throw missingConfig("Brak adresu API modelu analizy.", "ustaw adres API");
 
     const controller = new AbortController();
+    const startedAt = Date.now();
+    let abortSource = "none";
     let deadline: unknown = null;
     let idle: unknown = null;
     const clearTimers = (): void => {
@@ -184,9 +194,9 @@ export function createOpenAiModelPort(options: OpenAiModelPortOptions): OpenAiMo
     const armIdle = (): void => {
       if (!idleTimeoutMs) return;
       if (idle) timers.clearTimeout(idle);
-      idle = timers.setTimeout(() => controller.abort(), idleTimeoutMs);
+      idle = timers.setTimeout(() => { abortSource = "idle"; controller.abort(); }, idleTimeoutMs);
     };
-    if (timeoutMs) deadline = timers.setTimeout(() => controller.abort(), timeoutMs);
+    if (timeoutMs) deadline = timers.setTimeout(() => { abortSource = "deadline"; controller.abort(); }, timeoutMs);
     armIdle();
 
     const body = {
@@ -219,7 +229,8 @@ export function createOpenAiModelPort(options: OpenAiModelPortOptions): OpenAiMo
           cause: error,
         });
       }
-      throw new OmniWatchError("outcome_unknown", "Polaczenie z modelem przerwane; nie wiadomo, czy wywolanie doszlo do skutku.", {
+      const detail = transportDiagnostic(error, "headers", abortSource, Date.now() - startedAt);
+      throw new OmniWatchError("outcome_unknown", `Polaczenie z modelem przerwane; nie wiadomo, czy wywolanie doszlo do skutku. (${detail})`, {
         action: { label: "sprawdz operacje", kind: "check_operation" },
         cause: error,
       });
@@ -258,6 +269,7 @@ export function createOpenAiModelPort(options: OpenAiModelPortOptions): OpenAiMo
     let usage: Usage = { inputTokens: null, outputTokens: null, costUsd: null, costKnown: false };
     let sawProtocolEnd = false;
     let aborted = false;
+    let streamFailure = "";
 
     try {
       for (;;) {
@@ -266,7 +278,7 @@ export function createOpenAiModelPort(options: OpenAiModelPortOptions): OpenAiMo
           chunk = await reader.read();
         } catch (error) {
           aborted = true;
-          void error;
+          streamFailure = transportDiagnostic(error, "stream", abortSource, Date.now() - startedAt);
           break;
         }
         if (chunk.done) break;
@@ -307,7 +319,7 @@ export function createOpenAiModelPort(options: OpenAiModelPortOptions): OpenAiMo
       }
     }
 
-    if (aborted) return { text, usage, completed: false };
+    if (aborted) return { text, usage, completed: false, failureDetail: streamFailure };
     return { text, usage, completed: sawProtocolEnd };
   }
 

@@ -172,9 +172,16 @@ test("a reset after send is an unknown outcome, a provably unsent request is not
   const resetProvider = makeProvider({ fetchError: reset });
   await assert.rejects(
     () => resetProvider.port.call(modelRequest(), makeSink()),
-    (error) => error.errorClass === "outcome_unknown",
+    (error) => error.errorClass === "outcome_unknown" &&
+      /phase=headers code=ECONNRESET name=TypeError abort=none elapsed_ms=\d+/.test(error.message),
   );
   assert.equal(resetProvider.fetches.length, 1);
+
+  const secret = "https://oss.example.invalid/private?signature=secret";
+  const hidden = makeProvider({ fetchError: Object.assign(new TypeError(secret), { cause: { code: "ECONNRESET", message: secret } }) });
+  await assert.rejects(() => hidden.port.call(modelRequest(), makeSink()), (error) =>
+    error.errorClass === "outcome_unknown" && !error.message.includes(secret),
+  );
 
   const unsent = Object.assign(new TypeError("fetch failed"), { cause: { code: "ENOTFOUND" } });
   const unsentProvider = makeProvider({ fetchError: unsent });
