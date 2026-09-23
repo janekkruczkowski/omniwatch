@@ -10,7 +10,7 @@
  * listing is billed and needs an explicit start, TikTok is a recent-items list.
  */
 
-import { OmniWatchError, toOmniWatchError } from "../contracts/errors.ts";
+import { OmniWatchError, isOmniWatchError, toOmniWatchError } from "../contracts/errors.ts";
 import type {
   ListingPage,
   MediaInfo,
@@ -24,6 +24,15 @@ import { evaluateUploadFreshness } from "./legacy.ts";
 import type { LegacyUploadEntry } from "./legacy.ts";
 import { splitParts } from "./media.ts";
 import { parseSourceUrl } from "./url.ts";
+import {
+  DEFAULT_CACHE_QUOTA_BYTES,
+  DEFAULT_MIN_FREE_BYTES,
+  MediaLeaseRegistry,
+  assertDiskSpace,
+  enforceMediaCacheQuota,
+  toDiskSpacePausedError,
+} from "./mediaCache.ts";
+import type { DiskSpacePort, MediaCachePort } from "./mediaCache.ts";
 
 export interface PreparedMedia {
   localPath: string;
@@ -71,6 +80,16 @@ export interface SourceAdapterBundle {
   /** Seconds since epoch; injectable so freshness tests are deterministic. */
   now?: () => number;
   defaultCacheHours?: number;
+  /** Media cache directory listing/removal (T18); omit to skip quota eviction entirely. */
+  mediaCache?: MediaCachePort;
+  /** Size budget for `mediaCache`; defaults to `DEFAULT_CACHE_QUOTA_BYTES`. */
+  cacheQuotaBytes?: number;
+  /** `statfs`-style free-space reader (T18); omit to skip the pre-fetch disk gate. */
+  diskSpace?: DiskSpacePort;
+  /** Directory a fetch writes into, for the disk-space gate. Required with `diskSpace`. */
+  cacheDir?: (source: SourceRef) => string | null;
+  /** Minimum free bytes required before a fetch; defaults to `DEFAULT_MIN_FREE_BYTES`. */
+  minFreeBytes?: number;
 }
 
 /** Honest, per-platform capability matrix (D8). */
@@ -147,6 +166,23 @@ function baseName(filePath: string): string {
 const DEFAULT_CACHE_HOURS = 48;
 
 export function createSourceRegistry(adapters: SourceAdapterBundle): SourcePort {
+  // Tracks the local path a `prepare()` is currently reading/writing, so a quota
+  // sweep triggered by another call in the same process never evicts it (T18).
+  const leases = new MediaLeaseRegistry();
+  const cacheQuotaBytes = adapters.cacheQuotaBytes ?? DEFAULT_CACHE_QUOTA_BYTES;
+  const minFreeBytes = adapters.minFreeBytes ?? DEFAULT_MIN_FREE_BYTES;
+
+  /** Best-effort quota sweep after a successful fetch; never throws into the caller. */
+  async function sweepCacheQuota(): Promise<void> {
+    if (!adapters.mediaCache) return;
+    try {
+      await enforceMediaCacheQuota(adapters.mediaCache, cacheQuotaBytes, leases);
+    } catch {
+      // Housekeeping failure must not fail the operation that just succeeded; the
+      // next successful fetch retries the sweep.
+    }
+  }
+
   const cacheHours = (): number => {
     const value = adapters.cacheHours?.();
     if (typeof value === "number" && Number.isFinite(value) && value > 0) return value;
@@ -207,11 +243,29 @@ export function createSourceRegistry(adapters: SourceAdapterBundle): SourcePort 
       try {
         if (!options?.force) {
           const cached = await adapters.media.cached(source);
-          if (cached) return await mediaInfoFor(source, cached);
+          if (cached) {
+            // Lease the cached path while reading it, so a concurrent quota sweep
+            // (triggered by another `prepare()` finishing at the same time) never
+            // evicts the file this call is actively returning (T18).
+            return await leases.withLease(cached.localPath, () => mediaInfoFor(source, cached));
+          }
         }
+
+        // Disk-space gate (T18): refuse to start a fetch that would write into a
+        // full disk. This runs before any paid call and never touches existing
+        // cache files; it only decides whether the fetch may start.
+        if (adapters.diskSpace) {
+          const dir = adapters.cacheDir?.(source) ?? null;
+          if (dir) await assertDiskSpace(adapters.diskSpace, dir, minFreeBytes);
+        }
+
         const fetched = await adapters.media.fetch(source);
-        return await mediaInfoFor(source, fetched);
+        const info = await leases.withLease(fetched.localPath, () => mediaInfoFor(source, fetched));
+        await sweepCacheQuota();
+        return info;
       } catch (error) {
+        const diskPaused = toDiskSpacePausedError(error);
+        if (diskPaused) throw diskPaused;
         throw toOmniWatchError(error, "source_unavailable");
       }
     },
@@ -261,7 +315,18 @@ export async function prepareMany(
     try {
       results.push({ ok: true, source: ref, info: await source.prepare(ref, options) });
     } catch (error) {
-      results.push({ ok: false, source: ref, error: toOmniWatchError(error, "source_unavailable") });
+      // An already-classified failure (e.g. registry.prepare's own budget_paused)
+      // is kept as-is. Otherwise, an out-of-disk-space failure — however the
+      // SourcePort implementation surfaces it — is a pause, not a per-item
+      // failure: it says nothing about this particular material and will not be
+      // fixed by moving on to the next one (T18). Every other error keeps the
+      // existing per-item fallback.
+      if (isOmniWatchError(error)) {
+        results.push({ ok: false, source: ref, error });
+        continue;
+      }
+      const diskPaused = toDiskSpacePausedError(error);
+      results.push({ ok: false, source: ref, error: diskPaused ?? toOmniWatchError(error, "source_unavailable") });
     }
   }
   return results;
