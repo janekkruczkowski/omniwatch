@@ -121,6 +121,22 @@ test("R2-08: a stream-copied part that starts on an earlier keyframe shifts note
   assert.deepEqual(bogus.map((part) => Math.round(part.startSeconds * 100) / 100), [0, 29.27]);
 });
 
+test("R3 M19: ranges are shifted to the film's clock and a clip overrun never passes the part's end", () => {
+  // Live R3 (c-lBErfxszs, 0:31, 2 parts): part 2 really starts at 11.93 s and the model
+  // wrote ranges, one of them past its 19 s clip. Unshifted, "[0:05–0:07]" became 0:04
+  // in a follow-up and "[0:21–0:25]" became 0:33 in a 0:31 film.
+  const offset = 11.93;
+  const length = 31 - offset;
+  assert.equal(shiftTimestamps("[0:05–0:07] dashed spine line", offset, length), "[0:16–0:18] dashed spine line");
+  assert.equal(shiftTimestamps("[0:05-0:07] ascii dash", offset, length), "[0:16–0:18] ascii dash");
+  assert.equal(shiftTimestamps("[0:08] one unit", offset, length), "[0:19] one unit");
+  assert.equal(shiftTimestamps("[0:21–0:25] knees", offset, length), "[0:31–0:31] knees");
+  assert.equal(shiftTimestamps("[0:22] rest", offset, length), "[0:31] rest");
+  // Clearly absolute positions (well past the clip) are still left alone.
+  assert.equal(shiftTimestamps("[9:00–9:05] recap", 0, 120), "[9:00–9:05] recap");
+  assert.equal(shiftTimestamps("[1:00:05] long", 3600, 300), "[1:00:05] long");
+});
+
 /* ----------------------------------------------------------- engine runs --- */
 
 function engineDeps({ duration = 600, model, completedAttempts = [], concurrency }) {

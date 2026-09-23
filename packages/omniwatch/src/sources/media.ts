@@ -120,10 +120,27 @@ export function formatTimestamp(seconds: number): string {
  * sometimes quotes the full video's clock) and is left alone - the beta's rule, kept.
  */
 export function shiftTimestamps(text: string, offset: number, length: number): string {
-  return text.replace(/\[(?:(\d+):)?(\d{1,2}):(\d{2})\]/g, (_match, h, m, s) => {
-    const seconds = Number(h || 0) * 3600 + Number(m) * 60 + Number(s);
-    return `[${formatDuration(seconds > length + 5 ? seconds : offset + seconds)}]`;
-  });
+  const partEnd = offset + length;
+  const toSeconds = (h: string | undefined, m: string, s: string): number =>
+    Number(h || 0) * 3600 + Number(m) * 60 + Number(s);
+  // A clip-relative position lands inside this part: a model that overruns the clip's
+  // own length (it sometimes quotes 0:25 in a 19 s clip) must not push the film's
+  // clock past the part's end - for the last part that is past the film (R3 M19).
+  const shift = (seconds: number): number => Math.min(offset + seconds, partEnd);
+  // Ranges (`[0:05–0:07]`, `[0:05-0:07]`) are shifted as a whole, decided by their
+  // start; the prompt asks for single timestamps, but the model does not always obey,
+  // and an unshifted range reads as a position near the start of the film.
+  return text.replace(
+    /\[(?:(\d+):)?(\d{1,2}):(\d{2})(?:\s*[-–—]\s*(?:(\d+):)?(\d{1,2}):(\d{2}))?\]/g,
+    (_match, h, m, s, h2, m2, s2) => {
+      const start = toSeconds(h, m, s);
+      const absolute = start > length + 5;
+      const first = formatDuration(absolute ? start : shift(start));
+      if (m2 === undefined) return `[${first}]`;
+      const end = toSeconds(h2, m2, s2);
+      return `[${first}–${formatDuration(absolute ? end : shift(end))}]`;
+    },
+  );
 }
 
 export interface PartPlan {
