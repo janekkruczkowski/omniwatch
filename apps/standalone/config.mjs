@@ -187,9 +187,9 @@ export function describeConfig(config) {
 export function runtimeConfigDocument(config) {
   // Qwen3.8-Omni-Flash permits a long video overall, but the provider-side
   // connection has closed before response headers twice at ~61 s for a 17-minute
-  // part. Its docs recommend <=4-minute segments for standard analysis and cap
-  // extracted frames at 2048. Keep the beta setting visible, but bound this
-  // model's actual request size so long videos can make progress per call.
+  // part. The docs cap extracted frames at 2048; four-minute parts are a
+  // conservative operational bound to get a response before that disconnect.
+  // Keep the beta setting visible, but bound this model's actual request size.
   const maxFramesPerPart = /^qwen3\.8-omni-flash(?:$|-)/i.test(config.model)
     ? Math.min(config.maxFrames, QWEN38_OMNI_MAX_FRAMES_PER_PART)
     : config.maxFrames;
