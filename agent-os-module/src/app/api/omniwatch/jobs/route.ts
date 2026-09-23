@@ -51,6 +51,11 @@ function handler(): Promise<JobsHandler> {
         isCached: (id) => panel.isCached(id),
         enqueue: (request) => enqueueAnalysis({ store: panel.store, request }),
         ensureWorker: (id) => panel.ensureWorker(id),
+        // R2-04: the panel owns its data directory and recovers orphans of a killed
+        // process (on start and on the first request that meets one).
+        recover: () => panel.recover(),
+        hasConsumer: (id) => panel.hasConsumer(id),
+        retryUnknown: (id) => panel.retryUnknown(id),
         lookupMedia: (ref) => panel.lookupMedia(ref),
         // The film modes keep their own implementation; only the id resolution is shared.
         legacyFilm: {

@@ -101,9 +101,18 @@ export interface JobsHandlerDeps {
   ensureWorker(operationId: string): Promise<void>;
   /**
    * Record the user's explicit decision to retry an `outcome_unknown` operation
-   * (back to `pending`). Defaults to the shared journal over `store`.
+   * (back to `pending`). Defaults to the shared journal over `store`. The panel decides
+   * it as the data-directory owner, after its recovery pass (R2-04).
    */
-  retryUnknown?(operationId: string): Operation;
+  retryUnknown?(operationId: string): Operation | Promise<Operation>;
+  /**
+   * R2-04: take the data directory when no live process holds it and settle what a
+   * dead process left behind (an unconfirmed call -> `outcome_unknown`). Never calls
+   * the model. Optional so a handler without a runtime owner keeps its old behaviour.
+   */
+  recover?(): Promise<void>;
+  /** R2-04: true when a live process (this one or the current owner) can still finish it. */
+  hasConsumer?(operationId: string): boolean;
   /** Free, cache-only metadata for the card; null when the video is not local yet. */
   lookupMedia(sourceRef: SourceRef): Promise<JobMeta | null>;
   /** The film modes keep their own path (no second analysis engine here). */
@@ -173,6 +182,8 @@ export interface DurableJobView extends Job {
   costKnown?: boolean;
   /** True only for an operation waiting for the user's retry decision. */
   retryable?: boolean;
+  /** True for queued work without a consumer: re-sending the request runs it. */
+  resubmit?: boolean;
 }
 
 function stageFor(operation: Operation): string {
@@ -199,6 +210,22 @@ function stateFor(operation: Operation): Job["state"] {
 function stripFor(seconds: number, count = 16): number[] {
   if (!Number.isFinite(seconds) || seconds <= 0) return [];
   return Array.from({ length: count }, (_, i) => Math.round((seconds * (i + 0.5)) / count));
+}
+
+/**
+ * R2-04: admitted work that no live process will execute (its process died before any
+ * call reached the model). Reported as a final state instead of an endless spinner;
+ * sending the same request again admits it to a consumer at no extra model cost.
+ */
+function stalledView(deps: JobsHandlerDeps, operation: Operation): DurableJobView {
+  return {
+    ...runningView(deps, operation),
+    state: "error",
+    errorClass: "runtime_unavailable",
+    error:
+      "Zlecenie czeka w kolejce, ale zaden proces go nie wykonuje (model nie zostal jeszcze wywolany). Wyslij je ponownie.",
+    resubmit: true,
+  };
 }
 
 /** How the durable operation looks while it is still queued or running. */
@@ -228,7 +255,12 @@ export async function readDurableJob(
   if (!operation) return null;
 
   const state = stateFor(operation);
-  if (state === "running") return runningView(deps, operation);
+  if (state === "running") {
+    if (operation.state === "pending" && deps.hasConsumer && !deps.hasConsumer(operation.id)) {
+      return stalledView(deps, operation);
+    }
+    return runningView(deps, operation);
+  }
 
   const buffer = deps.store.getBuffer(operation.id)?.result ?? null;
   const delivery = deps.store.getDeliveryForOperation(operation.id);
@@ -388,6 +420,10 @@ export function createJobsHandler(deps: JobsHandlerDeps): JobsHandler {
 
     let enqueued: { operation: Operation; created: boolean };
     try {
+      // Settle interrupted work before admission (as the worker and standalone do): a
+      // call a dead process left `running` becomes outcome_unknown here, so claiming
+      // the same key answers with the retry decision instead of a phantom "running".
+      await deps.recover?.();
       enqueued = deps.enqueue(analysisRequest);
     } catch (error) {
       const failure = error instanceof OmniWatchError ? error : null;
@@ -417,9 +453,13 @@ export function createJobsHandler(deps: JobsHandlerDeps): JobsHandler {
       );
     }
 
+    // The same request already being executed by a live process: answer with its id,
+    // never start a second consumer of the same operation.
+    const alreadyRunning =
+      enqueued.operation.state === "running" && deps.hasConsumer?.(enqueued.operation.id) === true;
     try {
       // Admission never runs the analysis; it only makes sure a consumer exists (D5).
-      await deps.ensureWorker(enqueued.operation.id);
+      if (!alreadyRunning) await deps.ensureWorker(enqueued.operation.id);
     } catch (error) {
       // A worker that could not be started leaves the operation pending with a visible
       // reason — never a fake "running" (D5).
@@ -479,7 +519,7 @@ export function createJobsHandler(deps: JobsHandlerDeps): JobsHandler {
       );
     }
     try {
-      if (deps.retryUnknown) deps.retryUnknown(operationId);
+      if (deps.retryUnknown) await deps.retryUnknown(operationId);
       else new OperationJournal({ store: deps.store }).resolveUnknownOutcome(operationId, "retry");
     } catch (error) {
       const failure = error instanceof OmniWatchError ? error : null;
@@ -519,6 +559,21 @@ export function createJobsHandler(deps: JobsHandlerDeps): JobsHandler {
       return json({ state: ram.state, ...(ram.progress ?? {}), ...(ram.result ?? {}), error: ram.error });
     }
 
+    // R2-04: a non-final operation nobody alive is executing may be an orphan of a
+    // killed process. Recovery settles it (no model call); the poll never starts work.
+    const current = deps.recover ? deps.store.getOperation(id) : null;
+    if (
+      current &&
+      (current.state === "pending" || current.state === "running") &&
+      !(deps.hasConsumer?.(id) ?? false)
+    ) {
+      try {
+        await deps.recover?.();
+      } catch {
+        // The poll still answers from the durable record; recovery is retried next poll.
+      }
+    }
+
     const durable = await readDurableJob(deps, id);
     if (!durable) return json({ state: "gone" }, 404);
     return json({
@@ -533,6 +588,7 @@ export function createJobsHandler(deps: JobsHandlerDeps): JobsHandler {
       errorClass: durable.errorClass ?? null,
       error: durable.error,
       ...(durable.retryable ? { retryable: true, retryWarning: UNKNOWN_RETRY_WARNING } : {}),
+      ...(durable.resubmit ? { resubmit: true } : {}),
     });
   }
 
