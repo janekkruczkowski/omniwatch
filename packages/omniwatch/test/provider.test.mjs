@@ -1,11 +1,13 @@
 /**
  * T06: provider transport + the engine's attempt/usage contract.
  *
- * Every test uses a stub fetch or a stub ModelPort. No network, no API key, no ffmpeg.
+ * Every test uses a stub fetch, a stub ModelPort or a loopback HTTP/SSE stub. No external
+ * network, no API key, no ffmpeg.
  */
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import http from "node:http";
 
 import { ANALYSIS_VERSION, OmniWatchError, computeAnalysisKey } from "../src/contracts/index.ts";
 import { analyze } from "../src/analysis/engine.ts";
@@ -557,4 +559,115 @@ test("engine: missing config is visible before any media or model work", async (
   assert.equal(sourceStub.calls.prepare, 0);
   assert.equal(sourceStub.calls.split, 0);
   assert.equal(model.state.count, 0);
+});
+
+/*
+ * QA 2026-09-23 ISSUE-010 transport: real sockets against a local HTTP/SSE stub, with
+ * scaled-down timers (same code path as the 600 s / 120 s production defaults).
+ */
+
+async function sseStub(t, handler) {
+  const hits = [];
+  const server = http.createServer((req, res) => {
+    hits.push(req.url);
+    req.resume();
+    handler(req, res);
+  });
+  try {
+    await new Promise((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+  } catch (error) {
+    if (error?.code === "EPERM" || error?.code === "EACCES") {
+      t.skip(`binding a local socket is not permitted here (${error.code})`);
+      return null;
+    }
+    throw error;
+  }
+  t.after(() => {
+    server.closeAllConnections();
+    server.close();
+  });
+  return { hits, base: `http://127.0.0.1:${server.address().port}/v1` };
+}
+
+const sseEvent = (payload) => `data: ${JSON.stringify(payload)}\n\n`;
+
+function stubPort(base, timing) {
+  return createOpenAiModelPort({
+    config: { modelName: "stub-sse", apiKey: () => "k", apiBaseUrl: () => base },
+    ...timing,
+  });
+}
+
+const PLAIN_REQUEST = { messages: [{ role: "user", text: "hi" }], mediaParts: [] };
+
+test("a stream that keeps making progress is not cut by the start-up deadline", async (t) => {
+  const stub = await sseStub(t, (req, res) => {
+    res.writeHead(200, { "content-type": "text/event-stream" });
+    let n = 0;
+    const tick = setInterval(() => {
+      n += 1;
+      res.write(sseEvent({ choices: [{ delta: { content: "." } }] }));
+      if (n === 12) {
+        clearInterval(tick);
+        res.end(sseEvent({ choices: [{ delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 1, completion_tokens: 12 } }));
+      }
+    }, 50);
+  });
+  if (!stub) return;
+  // 12 x 50 ms = ~600 ms of active streaming, well past a 250 ms deadline.
+  const result = await stubPort(stub.base, { timeoutMs: 250, idleTimeoutMs: 200 }).call(PLAIN_REQUEST, {});
+  assert.equal(result.completed, true, result.failureDetail);
+  assert.equal(result.text, "............");
+  assert.equal(stub.hits.length, 1);
+});
+
+test("a stream that stalls after headers ends on the idle limit as an unknown outcome", async (t) => {
+  const stub = await sseStub(t, (req, res) => {
+    res.writeHead(200, { "content-type": "text/event-stream" });
+    res.write(sseEvent({ choices: [{ delta: { content: "czesc" } }] }));
+    // ...and then silence, connection left open.
+  });
+  if (!stub) return;
+  const result = await stubPort(stub.base, { timeoutMs: 0, idleTimeoutMs: 150 }).call(PLAIN_REQUEST, {});
+  assert.equal(result.completed, false);
+  assert.equal(result.text, "czesc", "partial text is kept");
+  assert.match(result.failureDetail, /phase=stream .*abort=idle/);
+  assert.equal(stub.hits.length, 1, "no retry inside the transport");
+});
+
+test("slow response headers still hit the start-up deadline", async (t) => {
+  const stub = await sseStub(t, () => { /* never answers */ });
+  if (!stub) return;
+  await assert.rejects(
+    () => stubPort(stub.base, { timeoutMs: 150, idleTimeoutMs: 0 }).call(PLAIN_REQUEST, {}),
+    (error) => error.errorClass === "outcome_unknown" && /phase=headers .*abort=deadline/.test(error.message),
+  );
+  assert.equal(stub.hits.length, 1);
+});
+
+test("the provider closing the socket before headers is UND_ERR_SOCKET, unknown, sent once", async (t) => {
+  // The live 60.5 s failure had exactly this signature (abort=none): the peer closed,
+  // not one of our timers. Reproduced here after 100 ms instead of 60 s.
+  const stub = await sseStub(t, (req) => setTimeout(() => req.socket.destroy(), 100));
+  if (!stub) return;
+  await assert.rejects(
+    () => stubPort(stub.base, { timeoutMs: 5000, idleTimeoutMs: 5000 }).call(PLAIN_REQUEST, {}),
+    (error) => error.errorClass === "outcome_unknown" && /phase=headers code=UND_ERR_SOCKET .*abort=none/.test(error.message),
+  );
+  assert.equal(stub.hits.length, 1, "an uncertain paid call is never retried blindly");
+});
+
+test("a peer that ends the stream without a marker is EOF marker=missing, not success", async (t) => {
+  const stub = await sseStub(t, (req, res) => {
+    res.writeHead(200, { "content-type": "text/event-stream" });
+    for (let i = 0; i < 384; i += 1) res.write(sseEvent({ choices: [{ delta: { reasoning_content: "x" } }] }));
+    res.end();
+  });
+  if (!stub) return;
+  const result = await stubPort(stub.base, { timeoutMs: 5000, idleTimeoutMs: 5000 }).call(PLAIN_REQUEST, {});
+  assert.equal(result.completed, false);
+  assert.equal(result.failureDetail, "phase=stream code=EOF data_events=384 marker=missing");
 });

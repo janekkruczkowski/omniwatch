@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 
 import { ANALYSIS_VERSION, OmniWatchError, computeAnalysisKey } from "../src/contracts/index.ts";
 import { analyze } from "../src/analysis/engine.ts";
-import { buildConversationContext, estimateTokens } from "../src/analysis/context.ts";
+import { buildConversationContext, conversationIdForSource, estimateTokens } from "../src/analysis/context.ts";
 import { capabilitiesFor, parseSourceUrl } from "../src/sources/index.ts";
 
 const SOURCE = parseSourceUrl("https://example.test/video/alpha");
@@ -347,4 +347,25 @@ test("context keys are stable for the same turns and change when the answer chan
     budget: { inputBudgetTokens: 12000 },
   });
   assert.notEqual(base.contextKey, changed.contextKey);
+});
+
+test("a question without conversationId or parent starts a new thread: stable key, no inherited answer", async () => {
+  // QA 2026-09-23 M09: the same form question paid twice because it silently picked up
+  // "the newest answer" of the source-derived conversation, which changed in between.
+  const derivedId = conversationIdForSource(SOURCE);
+  const derived = CHAIN_TURNS.map((entry) => ({ ...entry, conversationId: derivedId }));
+  const later = [...derived, turn({ turnId: "t-a2", conversationId: derivedId, role: "assistant", text: "NOWSZA ODPOWIEDZ", createdAt: "2026-01-01T11:00:00.000Z" })];
+  const request = requestFor(SOURCE, { question: "rozstaw dloni" });
+
+  const before = makeBundle(SOURCE, derived);
+  const a = await analyze(request, before.deps);
+  const after = makeBundle(SOURCE, later);
+  const b = await analyze(request, after.deps);
+  assert.equal(a.analysisKey, b.analysisKey, "identical undeclared request -> identical key");
+  assert.doesNotMatch(promptOf(after.model), /NOWSZA ODPOWIEDZ|Drugi punkt/);
+
+  // Declaring the conversation keeps the documented continuation behaviour.
+  const declared = makeBundle(SOURCE, later);
+  await analyze({ ...request, conversationId: derivedId }, declared.deps);
+  assert.match(promptOf(declared.model), /NOWSZA ODPOWIEDZ/);
 });

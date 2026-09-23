@@ -1189,3 +1189,115 @@ test("a prompt-template bump never re-pays for a film already analysed under the
   assert.match(done.text, /stary wynik/);
   assert.deepEqual(calls, [0], "no new paid call after the template version changed");
 });
+
+/*
+ * QA 2026-09-23 M09 / ISSUE-012: resubmitting an IDENTICAL form request (same URL,
+ * topic, mode, language) after other questions about the same film paid again. The
+ * form sends no conversation/parent, yet the core treated the question as an implicit
+ * continuation of the newest answer in the source-derived conversation, so every new
+ * answer changed contextKey -> analysisKey. Evidence: state.sqlite of the QA run,
+ * op_3c2789ae (2 turns in context) vs op_252af0dc (16 turns), identical request_json.
+ */
+function countingModel() {
+  const calls = [];
+  return {
+    modelName: "stub-counting",
+    calls,
+    async call(request) {
+      calls.push(request.operationId);
+      return {
+        text: `## Odpowiedz\n- [0:05] odpowiedz ${calls.length}`,
+        usage: { inputTokens: 10, outputTokens: 5, costUsd: 0.001, costKnown: true },
+        completed: true,
+      };
+    },
+  };
+}
+
+test("M09: an identical form question after other questions reads the saved answer, no new paid call", async () => {
+  const { appRoot, dataDir, cacheDir } = watchShell();
+  const model = countingModel();
+  const app = createStandaloneServer({
+    appRoot, dataDir, cacheDir, model,
+    source: createFixtureSource({ durationSeconds: 16 }),
+    env: { OMNIWATCH_APP_ROOT: appRoot, OMNIWATCH_DATA_DIR: dataDir },
+  });
+  try {
+    const url = "https://youtu.be/SYNTHETIC01";
+    const first = await driveWatch(app, { url, q: "rozstaw dłoni", mode: "summary" });
+    assert.ok(sseData(first.body, "done"), first.body);
+    const firstOp = sseData(first.body, "operation")?.operationId;
+    assert.equal(model.calls.length, 1);
+
+    // Other questions about the same film write more turns into its conversation.
+    await driveWatch(app, { url, q: "dieta i suplementacja", mode: "summary" });
+    await driveWatch(app, { url, mode: "teardown" });
+    assert.equal(model.calls.length, 3);
+
+    const again = await driveWatch(app, { url, q: "rozstaw dłoni", mode: "summary" });
+    assert.ok(sseData(again.body, "done"), again.body);
+    assert.equal(sseData(again.body, "operation")?.operationId, firstOp, "same request -> same operation");
+    assert.equal(sseData(again.body, "turn")?.reused, true, "the saved answer is shown");
+    assert.equal(model.calls.length, 3, "no second paid call for an identical request");
+
+    // Language is part of the key: the same topic in another language is new work.
+    await driveWatch(app, { url, q: "rozstaw dłoni", mode: "summary", lang: "en" });
+    assert.equal(model.calls.length, 4);
+  } finally {
+    await app.close();
+  }
+});
+
+test("M07/M09: an identical request submitted while the first is running is not paid twice", async () => {
+  const { appRoot, dataDir, cacheDir } = watchShell();
+  const model = gatedModel();
+  const app = createStandaloneServer({
+    appRoot, dataDir, cacheDir, model,
+    source: createFixtureSource({ durationSeconds: 16 }),
+    env: { OMNIWATCH_APP_ROOT: appRoot, OMNIWATCH_DATA_DIR: dataDir },
+  });
+  try {
+    const url = "https://youtu.be/SYNTHETIC01";
+    const first = driveWatch(app, { url, q: "jaki jest kat lokci", mode: "summary" });
+    for (let i = 0; i < 200 && model.calls.length === 0; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.equal(model.calls.length, 1);
+    const second = driveWatch(app, { url, q: "jaki jest kat lokci", mode: "summary" });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    model.release();
+    const [a, b] = await Promise.all([first, second]);
+    assert.match(a.body, /event: done/);
+    assert.match(b.body, /event: done/, b.body);
+    assert.equal(model.calls.length, 1, "the refresh-and-resubmit waits for and reuses the first answer");
+    assert.equal(sseData(b.body, "operation")?.operationId, sseData(a.body, "operation")?.operationId);
+  } finally {
+    model.release();
+    await app.close();
+  }
+});
+
+test("an explicit follow-up (conversation + parent) still uses history and is its own analysis", async () => {
+  const { appRoot, dataDir, cacheDir } = watchShell();
+  const model = countingModel();
+  const app = createStandaloneServer({
+    appRoot, dataDir, cacheDir, model,
+    source: createFixtureSource({ durationSeconds: 16 }),
+    env: { OMNIWATCH_APP_ROOT: appRoot, OMNIWATCH_DATA_DIR: dataDir },
+  });
+  try {
+    const url = "https://youtu.be/SYNTHETIC01";
+    const first = await driveWatch(app, { url, mode: "summary" });
+    const turn = sseData(first.body, "turn");
+    assert.ok(turn?.conversationId && turn?.turnId);
+    const query = new URLSearchParams({ url, q: "rozwin punkt 2", lang: "pl", mode: "summary", conversation: turn.conversationId, parent: turn.turnId });
+    let body = "";
+    const res = { headersSent: false, writeHead() { return res; }, write(c) { body += String(c); return true; }, end(c) { if (c) body += String(c); return res; } };
+    await app.handle({ method: "GET", url: `/api/watch?${query}`, headers: { host: "127.0.0.1" } }, res);
+    assert.match(body, /event: done/, body);
+    assert.equal(sseData(body, "turn")?.parentTurnId, turn.turnId);
+    assert.equal(model.calls.length, 2);
+  } finally {
+    await app.close();
+  }
+});

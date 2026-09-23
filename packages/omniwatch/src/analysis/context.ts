@@ -52,6 +52,30 @@ export interface BuildContextInput {
   /** Turns already read for this conversation; may contain other conversations. */
   turns: ConversationTurn[];
   budget: ContextBudget;
+  /**
+   * False when the caller did not name a conversation (no conversationId and no
+   * parentTurnId) and the id was only derived from the source. Such a request starts
+   * a new thread: it never inherits "the newest answer", so repeating the same
+   * question keeps the same analysisKey. Default true (explicit conversation).
+   */
+  declared?: boolean;
+}
+
+/**
+ * The conversation a request belongs to and whether the caller declared it. The
+ * engine, the queue and the worker must all use this, otherwise the key claimed at
+ * admission and the key computed at execution drift apart.
+ */
+export function conversationScopeFor(request: {
+  sourceRef: SourceRef;
+  conversationId?: string | null;
+  parentTurnId?: string | null;
+}): { conversationId: string; declared: boolean } {
+  const explicit = (request.conversationId ?? "").trim();
+  return {
+    conversationId: explicit || conversationIdForSource(request.sourceRef),
+    declared: explicit !== "" || Boolean(request.parentTurnId),
+  };
 }
 
 const DEFAULT_MAX_HISTORY = 20;
@@ -89,7 +113,10 @@ export function buildConversationContext(input: BuildContextInput): Conversation
   const estimate = input.budget.estimateTokens ?? estimateTokens;
   const maxHistory = input.budget.maxHistoryTurns ?? DEFAULT_MAX_HISTORY;
 
-  const sameConversation = input.turns.filter((turn) => turn.conversationId === input.conversationId);
+  // An undeclared conversation (a fresh form submission, a first CLI question) has no
+  // history at all; only an explicit conversation or parent turn continues a thread.
+  const visibleTurns = input.declared === false && !input.parentTurnId ? [] : input.turns;
+  const sameConversation = visibleTurns.filter((turn) => turn.conversationId === input.conversationId);
   const byId = new Map(sameConversation.map((turn) => [turn.turnId, turn]));
   const question = (input.question ?? "").trim();
   /**
@@ -103,7 +130,7 @@ export function buildConversationContext(input: BuildContextInput): Conversation
   const required: ConversationTurn[] = [];
   if (input.parentTurnId) {
     if (!byId.has(input.parentTurnId)) {
-      const elsewhere = input.turns.some((turn) => turn.turnId === input.parentTurnId);
+      const elsewhere = visibleTurns.some((turn) => turn.turnId === input.parentTurnId);
       throw contextUnavailable(
         elsewhere
           ? "Odpowiedz, do ktorej sie odnosisz, nalezy do rozmowy o innym materiale."

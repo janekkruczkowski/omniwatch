@@ -7,7 +7,7 @@
  * exists.
  */
 
-import { buildContextFromStore, conversationIdForSource, estimateTokens } from "../analysis/context.ts";
+import { buildContextFromStore, conversationScopeFor, estimateTokens } from "../analysis/context.ts";
 import { DEFAULT_CONVERSATION_BUDGET_TOKENS } from "../analysis/engine.ts";
 import { OmniWatchError } from "../contracts/errors.ts";
 import { computeAnalysisKey } from "../contracts/keys.ts";
@@ -20,7 +20,7 @@ import { OperationJournal } from "../storage/operations.ts";
  * what makes deduplication exact instead of "looks like the same title".
  */
 export function analysisKeyForRequest(store: StorePort, request: AnalysisRequest): string {
-  const conversationId = request.conversationId ?? conversationIdForSource(request.sourceRef);
+  const { conversationId, declared } = conversationScopeFor(request);
   const context = buildContextFromStore(
     { listTurns: (id, limit) => store.listTurns(id, limit), getTurn: (id) => store.getTurn(id) },
     {
@@ -28,6 +28,7 @@ export function analysisKeyForRequest(store: StorePort, request: AnalysisRequest
       conversationId,
       question: request.question ?? null,
       parentTurnId: request.parentTurnId ?? null,
+      declared,
       budget: { inputBudgetTokens: DEFAULT_CONVERSATION_BUDGET_TOKENS, estimateTokens },
     },
   );
