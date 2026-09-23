@@ -23,6 +23,8 @@ export const DEFAULT_LANG = "en";
 export const DEFAULT_CACHE_HOURS = 48;
 export const DEFAULT_MAX_FRAMES = 2400;
 export const MIN_MAX_FRAMES = 300;
+/** Four minutes at the long-video sampling rate of 2 fps. */
+export const QWEN38_OMNI_MAX_FRAMES_PER_PART = 480;
 export const DEFAULT_PORT = 8765;
 
 export const ENV_FILE_NAME = ".env";
@@ -183,13 +185,21 @@ export function describeConfig(config) {
  * carrying the secret, so the file is safe to print and to keep next to the data.
  */
 export function runtimeConfigDocument(config) {
+  // Qwen3.8-Omni-Flash permits a long video overall, but the provider-side
+  // connection has closed before response headers twice at ~61 s for a 17-minute
+  // part. Its docs recommend <=4-minute segments for standard analysis and cap
+  // extracted frames at 2048. Keep the beta setting visible, but bound this
+  // model's actual request size so long videos can make progress per call.
+  const maxFramesPerPart = /^qwen3\.8-omni-flash(?:$|-)/i.test(config.model)
+    ? Math.min(config.maxFrames, QWEN38_OMNI_MAX_FRAMES_PER_PART)
+    : config.maxFrames;
   return {
     protocol: "omniwatch.runtime-config.v1",
     dataDir: config.dataDir,
     memoryRoot: config.memoryRoot,
     language: config.language,
     modelName: config.model,
-    maxFramesPerPart: config.maxFrames,
+    maxFramesPerPart,
     cacheHours: config.cacheHours,
     apiKeyEnv: API_KEY_ENV,
     apiBaseUrlEnv: API_BASE_ENV,

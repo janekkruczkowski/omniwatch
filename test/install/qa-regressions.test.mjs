@@ -26,12 +26,25 @@ import {
 import { OmniWatchError } from "../../packages/omniwatch/src/contracts/errors.ts";
 import { loadStandaloneConfig, runtimeConfigDocument } from "../../apps/standalone/config.mjs";
 import { createFixtureSource, createRuntimeWiring } from "../../packages/omniwatch/src/runtime/poc.ts";
+import { partPlan } from "../../packages/omniwatch/src/sources/media.ts";
 import { createStandaloneServer } from "../../apps/standalone/server.mjs";
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const fixtures = path.join(repo, "test/fixtures/beta");
 const pageHtml = fs.readFileSync(path.join(repo, "apps/standalone/static/index.html"), "utf8");
 const pageI18n = fs.readFileSync(path.join(repo, "apps/standalone/static/i18n.json"), "utf8");
+
+test("long Qwen3.8-Omni film uses short calls within the provider frame budget", () => {
+  const config = loadStandaloneConfig({ appRoot: fs.mkdtempSync(path.join(os.tmpdir(), "omni-long-")), env: {} });
+  assert.equal(config.maxFrames, 2400, "legacy setting remains visible");
+  const effective = runtimeConfigDocument(config).maxFramesPerPart;
+  assert.equal(effective, 480);
+  const plan = partPlan(2061, { maxFramesPerPart: effective });
+  assert.equal(plan.length, 9);
+  assert.ok(plan.every((part) => part.endSeconds - part.startSeconds <= 240));
+  assert.ok(plan.every((part) => (part.endSeconds - part.startSeconds) * 2 < 2048));
+  assert.equal(runtimeConfigDocument({ ...config, model: "other-model" }).maxFramesPerPart, 2400);
+});
 
 test("ISSUE-004: a key without an explicit base reaches the documented default endpoint", () => {
   const appRoot = fs.mkdtempSync(path.join(os.tmpdir(), "omni-ep-"));
