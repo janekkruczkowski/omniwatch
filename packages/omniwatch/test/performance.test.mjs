@@ -24,7 +24,8 @@ import { openSqliteStore } from "../src/storage/index.ts";
 import { enqueueAnalysis } from "../src/runtime/queue.ts";
 import { DEFAULT_PAGE_SIZE, enumerateListing } from "../src/collections/listing.ts";
 import { createLocalMemory, createFixtureSource } from "../src/runtime/poc.ts";
-import { prepareMany } from "../src/sources/registry.ts";
+import { createSourceRegistry, prepareMany } from "../src/sources/registry.ts";
+import { MediaLeaseRegistry, enforceMediaCacheQuota } from "../src/sources/mediaCache.ts";
 
 const tempDirs = [];
 
@@ -333,57 +334,90 @@ test("T18: polling status has a bounded payload and never starts new work", () =
 });
 
 /**
- * T18 gap: "cache quota + aktywny plik nie jest kasowany" has no implementation
- * to test. Searched `packages/omniwatch/src`, `agent-os-module/src` and
- * `apps/standalone` for any quota/eviction concept (`quota`, `evict`,
- * `cacheBytes`, `diskUsage`, `freeSpace`) and found none: `cacheHours` /
- * `cacheHours()` (packages/omniwatch/src/sources/legacy.ts,
- * evaluateUploadFreshness) is strictly a *time*-based TTL on the remote upload
- * URL a beta cache entry points at (D8's `oss.json` freshness), not a local
- * media-cache size budget, and there is no eviction routine anywhere that could
- * protect "the active file" from being removed while it is in use.
- *
- * This is marked `todo` per the task instructions rather than silently
- * skipped or invented against: the assertions below describe the behaviour a
- * cache quota + active-file protection would need, and they fail today because
- * the feature does not exist. See I-test-gaps/REPORT.md for the full
- * reproduction and the exact files searched.
+ * T18 gap closed: "cache quota + aktywny plik nie jest kasowany" now has a real
+ * implementation — `packages/omniwatch/src/sources/mediaCache.ts` — exercised
+ * here with a stub cache port (no real files, only sizes and timestamps) and a
+ * `MediaLeaseRegistry` standing in for "an operation is actively using this
+ * file". See that module's header for the policy (oldest-unused-first eviction,
+ * a leased path is never evicted) and REPORT.md in this task's QA folder for the
+ * original reproduction.
  */
-test(
-  "T18: cache quota evicts old media but never the file an active operation is using",
-  { todo: "no cache-quota/eviction implementation exists in packages/omniwatch/src or apps/standalone (T18 gap, see I-test-gaps/REPORT.md)" },
-  () => {
-    assert.fail(
-      "no quota/eviction API exists to exercise (grep for quota|evict|cacheBytes|diskUsage " +
-        "under packages/omniwatch/src, agent-os-module/src and apps/standalone: zero matches)",
-    );
-  },
-);
+test("T18: cache quota evicts old media but never the file an active operation is using", async () => {
+  const entries = [
+    { path: "/cache/oldest-idle.mp4", sizeBytes: 40 * 1024 * 1024, lastUsedAt: 1000 },
+    { path: "/cache/oldest-active.mp4", sizeBytes: 40 * 1024 * 1024, lastUsedAt: 1001 },
+    { path: "/cache/mid.mp4", sizeBytes: 30 * 1024 * 1024, lastUsedAt: 2000 },
+    { path: "/cache/newest.mp4", sizeBytes: 20 * 1024 * 1024, lastUsedAt: 3000 },
+  ];
+  // 30 MiB quota is smaller than any single entry, so hitting it requires evicting
+  // every unleased entry — proving eviction does not stop at the first protected
+  // file, it keeps going, and only stops short because nothing left is evictable.
+  const quotaBytes = 30 * 1024 * 1024; // total is 130 MiB
+  const leases = new MediaLeaseRegistry();
+
+  // "oldest-active" is the file an in-flight operation is reading right now, even
+  // though it is the second-oldest entry and would otherwise be evicted next.
+  leases.acquire("/cache/oldest-active.mp4");
+  assert.equal(leases.isLeased("/cache/oldest-active.mp4"), true);
+  assert.equal(leases.isLeased("/cache/oldest-idle.mp4"), false);
+
+  const removed = [];
+  const cache = {
+    list: () => entries,
+    remove: (path) => {
+      removed.push(path);
+      const index = entries.findIndex((entry) => entry.path === path);
+      if (index >= 0) entries.splice(index, 1);
+    },
+  };
+
+  const plan = await enforceMediaCacheQuota(cache, quotaBytes, leases);
+
+  // Every unleased entry is evicted, oldest first; the leased one is kept no
+  // matter how old it is, even though the cache stays over its 30 MiB quota as a
+  // result — quota eviction never removes the file an active operation is using.
+  assert.deepEqual(removed, ["/cache/oldest-idle.mp4", "/cache/mid.mp4", "/cache/newest.mp4"]);
+  assert.deepEqual(plan.evict, ["/cache/oldest-idle.mp4", "/cache/mid.mp4", "/cache/newest.mp4"]);
+  assert.deepEqual(plan.keep, ["/cache/oldest-active.mp4"], "only the leased file survives the sweep");
+  assert.equal(plan.totalBytesBefore, 130 * 1024 * 1024);
+  assert.equal(
+    plan.totalBytesAfter,
+    40 * 1024 * 1024,
+    "still over the 30 MiB quota because the active file alone is 40 MiB and could not be evicted",
+  );
+  assert.deepEqual(entries.map((entry) => entry.path), ["/cache/oldest-active.mp4"], "the cache port only lost the evicted paths");
+
+  // Once the operation finishes and releases its lease, a later sweep is free to
+  // evict the previously-protected file too.
+  leases.release("/cache/oldest-active.mp4");
+  assert.equal(leases.isLeased("/cache/oldest-active.mp4"), false);
+  const secondPlan = await enforceMediaCacheQuota(cache, quotaBytes, leases);
+  assert.deepEqual(secondPlan.evict, ["/cache/oldest-active.mp4"]);
+  assert.equal(secondPlan.totalBytesAfter, 0, "the cache is now fully swept once nothing is leased");
+});
 
 /**
- * T18 gap: "duży lokalny film (bez faktycznie dużego pliku - sparse/stub) →
- * pauza przy braku miejsca" also has no matching product behaviour.
+ * T18 gap closed: "duży lokalny film (bez faktycznie dużego pliku - sparse/stub)
+ * → pauza przy braku miejsca" now has matching product behaviour.
  *
- * `SourceRegistry.prepare` (packages/omniwatch/src/sources/registry.ts) wraps
- * *any* error the media tool's `fetch()` throws — including Node's own ENOSPC
- * for "no space left on device" — as a flat `source_unavailable`. There is no
- * distinct pause state for running out of disk space: no `budget_paused` (that
- * errorClass exists only for the T13 cost-budget scan gate, see
- * packages/omniwatch/src/runtime/queue.ts) and nothing that later resumes once
- * space frees up. A large-download-hits-ENOSPC failure today looks exactly like
- * "this one video's cache/network failed" (T05's per-item failure, which does
- * not stop the rest of a batch) — which is a reasonable *fallback*, but it is
- * not the "pauza, dane nienaruszone" behaviour item 4 of the task asks for.
+ * `prepareMany` (packages/omniwatch/src/sources/registry.ts) now recognises an
+ * ENOSPC-shaped failure from any `SourcePort.prepare()` — whatever adapter
+ * produced it — and reclassifies it as `budget_paused` instead of the flat
+ * per-item `source_unavailable` fallback (see `toDiskSpacePausedError` in
+ * packages/omniwatch/src/sources/mediaCache.ts). `registry.ts`'s own
+ * `createSourceRegistry().prepare()` additionally checks free disk space with an
+ * injected `DiskSpacePort` before starting a fetch, so a real out-of-space
+ * condition is caught even earlier, without a paid call. `budget_paused` already
+ * resumes cleanly (`storage/sqlite-store.ts`'s `budget_paused -> pending/running`
+ * transition), so no new resume path was needed.
  *
  * The reproduction below uses a real sparse (mostly-empty, near-zero-actual-bytes)
  * file to simulate "a large local video" without writing gigabytes to CI disk,
  * and a media stub that raises ENOSPC the way a real download hitting a full
- * disk would. It is marked `todo`: the assertion documents the desired pause
- * behaviour, which does not exist yet.
+ * disk would.
  */
 test(
   "T18: a large local video that runs out of disk space pauses instead of failing, and nothing is lost",
-  { todo: "no disk-space pause exists; ENOSPC during fetch becomes a flat source_unavailable (T18 gap, see I-test-gaps/REPORT.md)" },
   async () => {
     const dir = tempDir();
     // A sparse stand-in for "a large local video": seek far out and write one byte,
@@ -420,3 +454,52 @@ test(
     assert.equal(statSync(sparsePath).size, size, "the active/partial local file must not be touched by the failed prepare");
   },
 );
+
+/**
+ * T18: the proactive half of the disk-space gate — `createSourceRegistry`'s own
+ * `prepare()` checks free space via an injected `DiskSpacePort` (a `statfs`
+ * stub here, not a real filesystem call) *before* calling the media tool's
+ * `fetch()` at all, so a foreseeably-full disk never reaches a paid/network call
+ * in the first place. Once space frees up (the stub's free-byte count goes back
+ * up, standing in for the user clearing disk space), the exact same `prepare()`
+ * call succeeds — the "wznowienie po zwolnieniu miejsca" half of the task.
+ */
+test("T18: prepare() refuses to start a fetch when statfs reports too little free space, and resumes once space frees up", async () => {
+  let freeBytes = 100 * 1024 * 1024; // 100 MiB free: below the 1 GiB default minimum
+  let fetchCalls = 0;
+
+  const registry = createSourceRegistry({
+    media: {
+      cached: async () => null,
+      fetch: async () => {
+        fetchCalls += 1;
+        return {
+          localPath: "/cache/statfs-gate.mp4",
+          title: "Statfs gate fixture",
+          durationSeconds: 120,
+          extractor: "fixture",
+        };
+      },
+      slice: async (request) => `${request.localPath}#part${request.index}`,
+    },
+    diskSpace: { freeBytes: () => freeBytes },
+    cacheDir: () => "/cache",
+  });
+
+  const ref = youtubeRefT18("STATFSGATE");
+
+  await assert.rejects(
+    () => registry.prepare(ref),
+    (error) => {
+      assert.equal(error.errorClass, "budget_paused", "too little free space pauses instead of failing");
+      return true;
+    },
+  );
+  assert.equal(fetchCalls, 0, "the disk-space gate runs before any fetch/paid call, not after one fails");
+
+  // The user frees up space; the same request now goes through.
+  freeBytes = 5 * 1024 * 1024 * 1024; // 5 GiB free
+  const info = await registry.prepare(ref);
+  assert.equal(info.localPath, "/cache/statfs-gate.mp4");
+  assert.equal(fetchCalls, 1, "prepare() resumed and fetched exactly once space was available");
+});
