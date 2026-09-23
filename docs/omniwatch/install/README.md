@@ -7,7 +7,9 @@ go wywoluje.
 
 Zakres tego wydania jest celowo waski:
 
-- instalujemy **jeden, ten sam artefakt** biblioteki (`@omniwatch/core`) w obu powlokach,
+- instalujemy **jeden, ten sam artefakt** biblioteki (`@omniwatch/core`) w obu powlokach;
+  ten sam tarball niesie tez pliki powlok (`shells/agent-os/…`, `shells/standalone/…`),
+  wiec instalator nigdy nie czyta plikow powloki z checkoutu,
 - rejestrujemy nawigacje OmniWatcha (zakladka OmniWatch i Scout),
 - rejestrujemy **link z Astrosa do OmniWatcha (SPEC F12)**: czwarty chip akcji przy
   temacie Astrosa otwiera `/omniwatch?url=<film>` dla tego konkretnego filmu, wiec
@@ -45,6 +47,9 @@ zawiera to wymaganie w polu `node.requirement` oraz liste przetestowanych linii
 
 Jesli `node` nie jest w `PATH`, ustaw pelna sciezke: `OMNIWATCH_NODE=/sciezka/node`.
 
+Launchery standalone (`app.py`, `omniwatch.py`, `cli.mjs`) sprawdzaja obie granice tego
+zakresu: Node 23 i 25+ sa odrzucane z instrukcja instalacji tak samo jak zbyt stary Node.
+
 Wymagane narzedzia (preflight przerywa instalacje, gdy ich brak): `node` oraz `python3`
 (rejestracja nawigacji w Agent OS, launcher samodzielnej aplikacji). Narzedzia
 opcjonalne (`ffmpeg`, `ffprobe`, `yt-dlp`) sa raportowane z informacja, jaka zdolnosc
@@ -53,16 +58,32 @@ blokuje instalacji samej biblioteki — robi to dopiero powloka, ktora z nich ko
 
 ## Instalacja w Agent OS
 
+Jedna komenda (ta sama w `QA-HANDOFF-OMNIWATCH.md`); `<agent-os>` to katalog, ktory
+**zawiera** `source/`:
+
 ```bash
 # 1. Zbuduj artefakt raz (tsc + npm pack + manifest)
 node scripts/release/build-core.mjs
 
-# 2. Zainstaluj w kopii Agent OS
-./agent-os-module/install.sh ~/Documents/agent-os
+# 2. Preflight bez zmian, potem instalacja
+node scripts/release/install.mjs --target agent-os --root <agent-os> --check
+node scripts/release/install.mjs --target agent-os --root <agent-os>
 ```
 
-Domyślny cel to `~/Documents/agent-os`. Argumenty po sciezce sa przekazywane do
-instalatora Node, np. `--check`, `--json`, `--rollback`, `--data-dir <katalog>`.
+`./agent-os-module/install.sh <agent-os>` robi to samo (domyslny cel
+`~/Documents/agent-os`; kolejne argumenty ida do instalatora, np. `--check`, `--json`,
+`--rollback`, `--data-dir <katalog>`).
+
+Wskazanie samej aplikacji Next (`--root <agent-os>/source`) oraz starszy zapis
+`--host <agent-os>/source` (bez `--target`) sa akceptowane: cel domyslnie `agent-os`,
+a sciezka `…/source` jest normalizowana do `<agent-os>` i raportowana w
+`rootNormalizedFrom`. Nie ma juz szukania `source/source/…`.
+
+Pliki integracji (trasy, UI, biblioteki panelu) pochodza z **artefaktu**
+(`shells/agent-os/source/…` w tarballu). Kazdy plik jest przed zapisem porownany
+z sha256 z `manifest.shellIntegration.files`; niezgodnosc (albo manifest ze starszego
+buildu bez `artifactPrefix`) konczy instalacje kodem 2 bez zadnego zapisu. Plik
+zmieniony w checkoutcie po buildzie nie ma wplywu na instalacje.
 
 Wymagany uklad powloki (preflight sprawdza go i konczy sie jasnym bledem, jesli plikow
 jeszcze nie ma — instalator nigdy nie udaje sukcesu):
@@ -85,16 +106,54 @@ Co powstaje w katalogu docelowym:
 
 ## Instalacja samodzielnej aplikacji
 
-Powloka standalone (T7) jest budowana w pozniejszej fali; instalator obsluguje ten sam
-artefakt i ten sam kontrakt:
-
 ```bash
 node scripts/release/install.mjs --target standalone --root ~/omniwatch-app
+cd ~/omniwatch-app && uv run app.py          # http://127.0.0.1:8765
+cd ~/omniwatch-app && uv run omniwatch.py <url> [-q "pytanie"] [--lang pl] [--teardown]
 ```
 
-Wymagany uklad: `app.py`, `omniwatch.py` i katalog `static/` w katalogu docelowym.
-Biblioteka trafia do `<root>/vendor/omniwatch/` (ten sam uklad `releases/`, `current`,
+Cel moze byc pustym katalogiem albo jeszcze nie istniec (tworzony, gdy istnieje katalog
+nadrzedny). Instalator zapisuje z artefaktu cala powloke: `app.py` i `omniwatch.py`
+(cienkie launchery Pythona, bez wlasnej analizy), `server.mjs`, `cli.mjs`, `config.mjs`,
+`legacy.mjs`, `core.mjs` oraz `static/index.html` i `static/i18n.json`. Biblioteka
+trafia do `<root>/vendor/omniwatch/` (ten sam uklad `releases/`, `current`,
 `install-manifest.json`, `backups/`). Dla standalone nie ma nawigacji do rejestracji.
+
+Zainstalowana aplikacja laduje rdzen z paczki, nie z checkoutu: `core.mjs` czyta
+wskaznik `vendor/omniwatch/current` i importuje zbudowany JavaScript
+(`releases/<wersja>-<sha>/dist/…`), wiec uzytkownik niczego nie kompiluje. Kolejnosc:
+`OMNIWATCH_CORE_ROOT` (jawny katalog rdzenia, np. przy `--install-subdir`) →
+`vendor/omniwatch/current` → `../../packages/omniwatch` (tylko w checkoutcie, dla
+programisty). Brak rdzenia to czytelny blad z instrukcja, bez awaryjnego silnika Pythona.
+
+Launchery i CLI przyjmuja `OMNIWATCH_APP_ROOT` (katalog `.env`, danych bety i domyslnego
+`data/`) tak samo jak serwer; rdzen zawsze pochodzi z katalogu, w ktorym lezy powloka.
+
+### Migracja bety (katalog wydanej bety Pythona)
+
+```bash
+node scripts/release/install.mjs --target standalone --root <katalog-bety> --check   # plan: betaMigration=true
+node scripts/release/install.mjs --target standalone --root <katalog-bety>
+cd <katalog-bety> && uv run app.py                                                  # te same komendy i port 8765
+```
+
+Katalog z ukladem bety (`app.py` **i** `omniwatch.py`, bez wczesniejszej instalacji
+OmniWatcha) jest rozpoznawany jako migracja (decyzja D2):
+
+- `app.py`, `omniwatch.py` i `static/` bety sa kopiowane do
+  `vendor/omniwatch/backups/<id>/` i zastepowane plikami z artefaktu; komendy
+  `uv run app.py` / `uv run omniwatch.py <url>` oraz adres `127.0.0.1:8765` zostaja,
+- `.env` (klucz i ustawienia), `summaries/`, `.cache/` i kazdy inny plik bety pozostaja
+  **bajt w bajt**; nowy runtime czyta je przez adapter legacy, a swoje dane (baze
+  operacji, nowe analizy, wygenerowane klatki) zapisuje do `<root>/data`,
+- migracja nie pobiera filmow i nie wywoluje modelu,
+- `--rollback` przywraca powloke bety bajt w bajt i usuwa pliki dodane przez instalacje
+  (katalog `data/` nowego runtime zostaje - to dane uzytkownika).
+
+Po migracji powloka nalezy do instalatora (`install-manifest.json` → `shellFiles`):
+kolejna instalacja aktualizuje ja bez pytan, a plik zmieniony przez uzytkownika jest
+konfliktem (kod 3). Plik w miejscu powloki w katalogu **bez** ukladu bety (np. obcy
+`server.mjs`) tez jest konfliktem - instalator go nie nadpisze.
 
 ## Preflight: co jest sprawdzane przed jakimkolwiek zapisem
 
@@ -105,8 +164,10 @@ Biblioteka trafia do `<root>/vendor/omniwatch/` (ten sam uklad `releases/`, `cur
 3. **Wersja Node** wg `node.requirement` z manifestu.
 4. **Wymagane narzedzia** (domyslnie `node`, `python3`; nadpisywalne `--required-tools`)
    oraz raport narzedzi opcjonalnych.
-5. **Sanity miejsca instalacji**: katalog istnieje, powloka ma wymagane pliki, a cel nie
-   jest drzewem zrodlowym repozytorium.
+5. **Sanity miejsca instalacji**: dla Agent OS katalog istnieje i ma `source/src/components/
+   Sidebar.tsx`/`TopBar.tsx`; dla standalone katalog istnieje albo moze zostac utworzony;
+   cel nie jest drzewem zrodlowym repozytorium. Pliki powlok z artefaktu musza miec
+   sha256 z manifestu.
 6. **Bramka pracy w toku (D5)**: odczyt `state.sqlite` tylko do odczytu. Wszystkie
    niezakończone i wstrzymane operacje (`pending`, `running`, `result_ready`,
    `outcome_unknown`, `failed`, `budget_paused`) maja zapisany `analysisVersion`.
@@ -115,9 +176,17 @@ Biblioteka trafia do `<root>/vendor/omniwatch/` (ten sam uklad `releases/`, `cur
    (kod wyjscia 4) — nie podstawiamy nowych promptow pod stary snapshot. Dokoncz albo
    jawnie zamknij te operacje i uruchom instalacje ponownie.
 
-Katalog danych wybierany jest tak: `--data-dir <katalog>`, inaczej
-`<root>/.omniwatch-data`, inaczej `<root>/data/omniwatch`. Brak `state.sqlite` oznacza,
-ze nie ma pracy w toku (raportowane jawnie jako `inFlight.decision = "no-state"`).
+Katalogi danych: `--data-dir <katalog>` wskazuje dokladnie jeden. Bez niego bramka
+sprawdza **kazdy** katalog, ktorego powloka naprawde uzywa, i ktory ma `state.sqlite`:
+
+- standalone: `OMNIWATCH_DATA_DIR` (srodowisko albo `.env` aplikacji), domyslnie
+  `<root>/data`,
+- Agent OS: `OMNIWATCH_DATA_DIR`, domyslnie `~/.agentic-os/omniwatch/data` (katalog
+  panelu),
+- oraz starsze `<root>/.omniwatch-data` i `<root>/data/omniwatch`.
+
+Raport `inFlight.dataDirs` wymienia sprawdzone katalogi. Brak `state.sqlite` we wszystkich
+oznacza, ze nie ma pracy w toku (`inFlight.decision = "no-state"`).
 
 ## Konflikty: plik zmieniony przez uzytkownika
 
@@ -127,14 +196,15 @@ Instalator zna pliki, ktore sam zainstalowal (`install-manifest.json`). Przy akt
   konflikt** i instalacja konczy sie przed jakimkolwiek zapisem (kod wyjscia 3),
 - to samo dotyczy plikow nawigacji (`Sidebar.tsx`, `TopBar.tsx`, `hermes/page.tsx`)
   zmienionych poza instalatorem,
-- nic nie jest nadpisywane po cichu; `--skip-nav` aktualizuje sama biblioteke i zostawia
-  nawigacje bez zmian.
+- nic nie jest nadpisywane po cichu. Gdy konflikt dotyczy pliku nawigacji, `--skip-nav`
+  aktualizuje sama biblioteke i zostawia nawigacje bez zmian; innych konfliktow (plik
+  powloki, integracji, rdzenia) `--skip-nav` nie omija - instalator mowi to wprost.
 
 ## Aktualizacja
 
 ```bash
 node scripts/release/build-core.mjs          # nowe wydanie
-./agent-os-module/install.sh ~/Documents/agent-os
+node scripts/release/install.mjs --target agent-os --root <agent-os>
 ```
 
 Przebieg: preflight (w tym bramka pracy w toku) → kopia zapasowa plikow do zastapienia →
@@ -147,17 +217,18 @@ nie tylko do konca procesu, ale i dla wstrzymanych operacji zaleznnych od starej
 ## Cofanie (rollback)
 
 ```bash
-./agent-os-module/install.sh ~/Documents/agent-os --rollback
+node scripts/release/install.mjs --target agent-os --root <agent-os> --rollback
 # albo konkretna kopia:
-node scripts/release/install.mjs --target agent-os --root ~/Documents/agent-os \
-  --rollback --backup 20260922160510
+node scripts/release/install.mjs --target agent-os --root <agent-os> --rollback --backup 20260922160510
 ```
 
-Rollback przywraca pliki z najnowszej (lub wskazanej) kopii: `current`, manifest i pliki
-nawigacji, a pliki utworzone przez cofnieta instalacje usuwa. **Nie dotyka katalogu
-danych OmniWatcha** — analizy, notatki, cache i baza operacji pozostaja na miejscu.
-Dla pierwszej instalacji rollback przywraca stan sprzed instalacji (brak wskaznika
-`current`).
+Rollback przywraca pliki z najnowszej (lub wskazanej) kopii: `current`, manifest, pliki
+nawigacji i powloki, a pliki utworzone przez cofnieta instalacje usuwa (komunikat podaje
+obie liczby). **Nie dotyka katalogu danych OmniWatcha** — analizy, notatki, cache i baza
+operacji pozostaja na miejscu. Dla pierwszej instalacji rollback przywraca stan sprzed
+instalacji: brak wskaznika `current` i brak `install-manifest.json`, wiec nastepna
+instalacja jest znow pierwsza. Id kopii sa unikalne (sufiks `-01`, `-02` przy kilku
+instalacjach w tej samej sekundzie).
 
 ## Konfiguracja
 
@@ -217,13 +288,14 @@ nie ma pliku `index.ts`). Manifest nigdy nie zawiera sekretow: build odrzuca pli
 
 | Flaga | Dzialanie |
 |---|---|
-| `--target agent-os\|standalone` | powloka docelowa (wymagane) |
-| `--root <katalog>` | katalog docelowej powloki (wymagane) |
+| `--target agent-os\|standalone` | powloka docelowa (wymagane, poza `--host`) |
+| `--root <katalog>` | katalog docelowej powloki (wymagane); dla Agent OS `…/source` jest normalizowane |
+| `--host <agent-os>/source` | alias `--target agent-os --root <agent-os>` (zgodnosc ze starszym handoffem) |
 | `--check` / `--dry-run` | preflight i plan bez zadnych zmian |
 | `--json` | wynik maszynowy na stdout (komunikaty czlowieka na stderr) |
 | `--rollback [--backup <id>]` | cofniecie najnowszej lub wskazanej kopii |
 | `--skip-nav` | aktualizacja samej biblioteki, bez rejestracji nawigacji |
-| `--data-dir <katalog>` | katalog danych do bramki pracy w toku |
+| `--data-dir <katalog>` | jedyny katalog danych do bramki pracy w toku (bez niej: domyslne katalogi powloki) |
 | `--tarball`, `--manifest`, `--release-dir` | wskazanie artefaktu (domyslnie `dist/release`) |
 | `--install-subdir <rel>` | miejsce instalacji (domyslnie `omniwatch` / `vendor/omniwatch`) |
 | `--required-tools a,b` | nadpisanie listy wymaganych narzedzi (CI/testy preflight) |
@@ -242,7 +314,7 @@ nie ma pliku `index.ts`). Manifest nigdy nie zawiera sekretow: build odrzuca pli
 ## Testy instalacyjne
 
 ```bash
-node --test test/install/release.test.mjs
+npm run test:install
 ```
 
 Testy tworza syntetyczne kopie obu powlok w katalogu tymczasowym systemu i uzywaja

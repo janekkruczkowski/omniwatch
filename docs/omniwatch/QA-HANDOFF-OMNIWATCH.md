@@ -42,19 +42,42 @@ Zweryfikowane tutaj (macOS, 2026-09-22): start wypisuje
   jest zamierzone, nie atrapa sukcesu.
 - Aby zobaczyć realną analizę, ustaw `DASHSCOPE_API_KEY` w `.env` (nie w argv) i podaj URL.
 
+Zainstalowana aplikacja (bez checkoutu obok, rdzeń z paczki w `vendor/omniwatch/current`):
+
+```bash
+cd <checkout>
+node scripts/release/build-core.mjs
+node scripts/release/install.mjs --target standalone --root ~/omniwatch-app   # czysty katalog albo kopia bety
+cd ~/omniwatch-app && uv run app.py            # http://127.0.0.1:8765
+cd ~/omniwatch-app && uv run omniwatch.py <url>
+```
+
+Na kopii wydanej bety (katalog z `app.py` + `omniwatch.py`) ta sama komenda wykonuje
+migrację: powłoka Pythona zostaje zastąpiona cienkimi launcherami (kopia w
+`vendor/omniwatch/backups/`), `.env`, `.cache/` i `summaries/` zostają; `--rollback`
+przywraca betę bajt w bajt. Szczegóły: `install/README.md`, „Migracja bety”.
+
 ### 2. Agent OS (integracja) — root przygotowuje środowisko
 
 Host: `/Users/janek/Documents/agent-os/source` (Next, `npm run dev` → `127.0.0.1:3000`).
 Nie instalować w żywym hoście; użyć kopii roboczej i odizolowanego `dataDir`:
 
+Jedna komenda instalacji (ta sama w `install/README.md`): `--target agent-os --root <katalog
+Agent OS>`, gdzie katalog Agent OS to ten, który **zawiera** `source/`.
+
 ```bash
 cp -R /Users/janek/Documents/agent-os /tmp/agent-os-qa
 cd <checkout>
-node scripts/release/install.mjs --check --host /tmp/agent-os-qa/source   # preflight, bez zmian
-node scripts/release/install.mjs --host /tmp/agent-os-qa/source \
-     --release-dir dist/release --data-dir /tmp/omniwatch-qa-data
+node scripts/release/build-core.mjs                                   # jedna paczka + manifest
+node scripts/release/install.mjs --target agent-os --root /tmp/agent-os-qa --release-dir dist/release --data-dir /tmp/omniwatch-qa-data --check   # preflight, bez zmian
+node scripts/release/install.mjs --target agent-os --root /tmp/agent-os-qa --release-dir dist/release --data-dir /tmp/omniwatch-qa-data
 cd /tmp/agent-os-qa/source && npm run dev
 ```
+
+Starszy zapis z poprzedniej wersji tego dokumentu (`--host /tmp/agent-os-qa/source`, bez
+`--target`) nadal działa jako alias: cel domyślnie `agent-os`, a ścieżka `…/source`
+jest normalizowana do katalogu Agent OS (instalator wypisuje tę normalizację). Nowe
+instrukcje używają wyłącznie komendy powyżej.
 
 - Panel: `http://127.0.0.1:3000/omniwatch` (zakładka OmniWatch).
 - Worker niezależny od panelu (D5) — działa na **prawdziwym** grafie hosta:
