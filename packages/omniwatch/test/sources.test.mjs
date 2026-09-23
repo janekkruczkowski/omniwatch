@@ -77,6 +77,8 @@ test("platform detection keeps provider ids where the platform exposes one", () 
   assert.equal(tiktok.platform, "tiktok");
   assert.equal(tiktok.sourceId, "7412345678901234567");
   assert.equal(tiktok.legacyId, legacyHashId(tiktok.canonicalUrl));
+  assert.equal(tiktok.canonicalUrl, "https://www.tiktok.com/@someone/video/7412345678901234567");
+  assert.equal(new URL(tiktok.canonicalUrl).hostname, "www.tiktok.com");
 
   const instagram = parseSourceUrl("https://www.instagram.com/reel/CxYz_123/?igsh=abc");
   assert.equal(instagram.platform, "instagram");
@@ -91,6 +93,78 @@ test("platform detection keeps provider ids where the platform exposes one", () 
   assert.equal(ad.platform, "meta-ads");
   assert.equal(ad.sourceId, "1234567890");
   assert.equal(ad.canonicalUrl, "https://www.facebook.com/ads/library/?id=1234567890");
+});
+
+test("every platform's canonical URL is a real, correctly-hosted URL", () => {
+  const samples = [
+    "https://www.youtube.com/watch?v=SYNTHETIC01",
+    "https://www.tiktok.com/@someone/video/7412345678901234567",
+    "https://www.instagram.com/reel/CxYz_123/?igsh=abc",
+    "https://twitter.com/someone/status/1800000000000000000?s=20",
+    "https://www.facebook.com/ads/library/?id=1234567890",
+    "https://example.test/video/alpha",
+  ];
+  for (const raw of samples) {
+    const ref = parseSourceUrl(raw);
+    // A malformed concatenation (e.g. missing "/" before a "@handle") folds the
+    // path into the host/userinfo and new URL() would throw or silently change
+    // the hostname - this is exactly the class of bug this test guards against.
+    const canonical = new URL(ref.canonicalUrl);
+    assert.equal(canonical.protocol, "https:", raw);
+    assert.ok(canonical.hostname.length > 0, raw);
+    assert.doesNotMatch(canonical.hostname, /@/, `hostname must not contain '@': ${raw}`);
+  }
+});
+
+/**
+ * Regression for the TikTok canonical-URL bug: `tiktokCanonical` used to build
+ * `https://www.tiktok.com${handle}/...` where `handle` is `@someone` (no leading
+ * slash captured by the regex), producing `https://www.tiktok.com@someone/...`.
+ * The WHATWG URL parser (and yt-dlp) reads `www.tiktok.com@someone` as userinfo
+ * "www.tiktok.com" at host "someone", so the real host became "someone" - which
+ * does not resolve in DNS ("nodename nor servname provided"). This test fails on
+ * the old code because the hostname resolves to the handle instead of tiktok.com.
+ */
+test("TikTok canonical URL always has www.tiktok.com as its host, for every URL shape", () => {
+  const cases = [
+    {
+      raw: "https://www.tiktok.com/@tiktok/video/7681695065927912735",
+      expected: "https://www.tiktok.com/@tiktok/video/7681695065927912735",
+    },
+    {
+      raw: "https://www.tiktok.com/@tiktok/photo/7681695065927912735",
+      expected: "https://www.tiktok.com/@tiktok/photo/7681695065927912735",
+    },
+    {
+      // Handle containing a dot and a hyphen.
+      raw: "https://www.tiktok.com/@some.handle-name/video/7681695065927912735?is_from_webapp=1",
+      expected: "https://www.tiktok.com/@some.handle-name/video/7681695065927912735",
+    },
+    {
+      // No handle in the path at all, still a valid /video/<id> shape.
+      raw: "https://www.tiktok.com/video/7681695065927912735",
+      expected: "https://www.tiktok.com/video/7681695065927912735",
+    },
+  ];
+
+  for (const { raw, expected } of cases) {
+    const ref = parseSourceUrl(raw);
+    assert.equal(ref.platform, "tiktok", raw);
+    assert.equal(ref.canonicalUrl, expected, raw);
+    const hostname = new URL(ref.canonicalUrl).hostname;
+    assert.equal(hostname, "www.tiktok.com", `${raw} -> host was "${hostname}"`);
+  }
+});
+
+test("TikTok short links without a resolvable id fall back to a valid, correctly-hosted URL", () => {
+  const shortLinks = ["https://vm.tiktok.com/ZMabcdEFG/", "https://www.tiktok.com/t/ZTabcdEFG/"];
+  for (const raw of shortLinks) {
+    const ref = parseSourceUrl(raw);
+    assert.equal(ref.platform, "tiktok", raw);
+    const hostname = new URL(ref.canonicalUrl).hostname;
+    assert.doesNotMatch(hostname, /@/, raw);
+    assert.match(hostname, /tiktok\.com$/, `${raw} -> host was "${hostname}"`);
+  }
 });
 
 test("unsafe, malformed and oversized input is rejected without starting any work", async () => {
