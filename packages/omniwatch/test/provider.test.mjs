@@ -148,6 +148,15 @@ test("provider maps host pricing to a known cost", async () => {
   assert.equal(response.usage.costUsd, 0.0002);
 });
 
+test("Qwen3.8 Omni requests low reasoning effort to avoid a long pre-header wait", async () => {
+  const qwen = makeProvider({ configOverrides: { modelName: "qwen3.8-omni-flash" } });
+  await qwen.port.call(modelRequest(), makeSink());
+  assert.equal(qwen.fetches[0].body.reasoning_effort, "low");
+  const other = makeProvider();
+  await other.port.call(modelRequest(), makeSink());
+  assert.equal("reasoning_effort" in other.fetches[0].body, false);
+});
+
 test("provider classifies 4xx, 429 and 5xx without retrying", async () => {
   const cases = [
     { status: 400, expected: "provider_rejected" },

@@ -201,6 +201,10 @@ export function createOpenAiModelPort(options: OpenAiModelPortOptions): OpenAiMo
 
     const body = {
       model: config.modelName,
+      // Qwen3.8-Omni-Flash defaults to xhigh thinking. On video parts that can
+      // leave the first response byte behind the provider's ~60 s idle close.
+      // The documented low setting keeps reasoning while shortening that wait.
+      ...(/^qwen3\.8-omni-flash(?:$|-)/i.test(config.modelName) ? { reasoning_effort: "low" } : {}),
       messages: await contentPayload(request),
       modalities: ["text"],
       stream: true,

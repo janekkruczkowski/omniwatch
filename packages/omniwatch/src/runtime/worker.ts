@@ -162,7 +162,7 @@ export async function runOperation(
   deps: RuntimeDeps,
   journal: OperationJournal,
   operationId: string,
-  options: { onProgress?: (event: ProgressEvent) => void } = {},
+  options: { onProgress?: (event: ProgressEvent) => void; legacyCheckpointAttemptId?: string | null } = {},
 ): Promise<WorkerOperationSummary> {
   const started = journal.start(operationId);
   const request = started.request;
@@ -212,6 +212,7 @@ export async function runOperation(
       model: deps.model,
       attempts: journal.sinkFor(operationId, deps.model.modelName),
       completedAttempts: deps.store.listAttempts(operationId),
+      legacyCheckpointAttemptId: options.legacyCheckpointAttemptId,
       turns,
       progress: options.onProgress,
       operationId,

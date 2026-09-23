@@ -559,6 +559,7 @@ export async function runWatchPipeline(options) {
     }
 
     summary = await runOperation(wiring.deps, journal, enqueued.operation.id, {
+      legacyCheckpointAttemptId: retryId ? config.effectiveEnv?.OMNIWATCH_LEGACY_CHECKPOINT_ATTEMPT ?? null : null,
       onProgress: (event) => {
         const mapped = progressToEvent(event);
         if (mapped) emit(mapped.name, mapped.data);

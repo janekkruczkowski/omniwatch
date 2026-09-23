@@ -57,6 +57,8 @@ export interface AnalysisDeps {
   attempts: AttemptSink;
   /** Durable responses from an earlier run of this same operation. */
   completedAttempts?: AttemptRecord[];
+  /** One explicitly approved pre-fingerprint response from this operation. */
+  legacyCheckpointAttemptId?: string | null;
   /** Conversation turns for this source; omit when the caller has no history yet. */
   turns?: ConversationTurnSource;
   /** Receives every progress event, in order. */
@@ -228,21 +230,44 @@ export async function analyze(request: AnalysisRequest, deps: AnalysisDeps): Pro
     // A confirmed retry runs the same operation again. Give every paid call a new
     // journal identity so its old unknown/response evidence remains immutable.
     const attemptId = `att_${operationId}_${attemptCounter}_${randomUUID()}`;
-    const requestSummary = JSON.stringify({
+    const summaryBase = {
       model: deps.model.modelName,
       promptVersion,
       partIndex,
       parts: parts.length,
       mediaParts: mediaParts.map((part) => part.index),
       characters: messages.reduce((sum, message) => sum + message.text.length, 0),
+    };
+    const requestSummary = JSON.stringify({
+      schema: 2,
+      ...summaryBase,
+      contentHash: sha256Hex(JSON.stringify({
+        sourceRef,
+        messages,
+        mediaParts: mediaParts.map((part) => ({
+          index: part.index,
+          startSeconds: part.startSeconds,
+          endSeconds: part.endSeconds,
+          localPath: part.localPath,
+        })),
+      })),
     });
     // A confirmed retry may follow an unknown later part. Reuse only a committed
-    // response whose complete request shape matches this call; a changed split,
-    // model, or prompt must be paid for afresh, never silently grafted together.
-    const committed = deps.completedAttempts?.findLast((attempt) =>
+    // response with the same versioned content fingerprint. Legacy summaries
+    // without a digest are deliberately ineligible for automatic reuse.
+    const committedV2 = deps.completedAttempts?.findLast((attempt) =>
       attempt.phase === "response" && attempt.partIndex === partIndex &&
       attempt.requestSummary === requestSummary && typeof attempt.responseSummary === "string",
     );
+    // An operator can approve ONE old response after inspecting the saved
+    // operation and its media. This does not turn the legacy length-only summary
+    // into a general cache key; all new responses require the v2 content digest.
+    const committedLegacy = deps.legacyCheckpointAttemptId && deps.completedAttempts?.find((attempt) =>
+      attempt.id === deps.legacyCheckpointAttemptId && attempt.operationId === operationId &&
+      attempt.phase === "response" && attempt.partIndex === partIndex &&
+      attempt.requestSummary === JSON.stringify(summaryBase) && typeof attempt.responseSummary === "string",
+    );
+    const committed = committedV2 ?? committedLegacy;
     if (committed) {
       emit("running", "call_reused", {
         itemIndex: partIndex,
