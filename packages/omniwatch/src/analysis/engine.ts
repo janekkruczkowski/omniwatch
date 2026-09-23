@@ -40,7 +40,7 @@ import type {
   ModelPort,
   SourcePort,
 } from "../contracts/ports.ts";
-import { buildConversationContext, conversationIdForSource, estimateTokens } from "./context.ts";
+import { buildConversationContext, conversationScopeFor, estimateTokens } from "./context.ts";
 import type { ConversationContext, ConversationTurnSource } from "./context.ts";
 import { buildMergePrompt, buildPartNotesPrompt, buildWholePrompt } from "./prompt.ts";
 import { parseTimestamp, shiftTimestamps } from "../sources/media.ts";
@@ -170,7 +170,7 @@ export async function analyze(request: AnalysisRequest, deps: AnalysisDeps): Pro
     }
   }
 
-  const conversationId = request.conversationId ?? conversationIdForSource(sourceRef);
+  const { conversationId, declared } = conversationScopeFor({ ...request, sourceRef });
   const question = normalizeText(request.question);
   let context: ConversationContext;
   try {
@@ -179,6 +179,7 @@ export async function analyze(request: AnalysisRequest, deps: AnalysisDeps): Pro
       conversationId,
       question,
       parentTurnId: request.parentTurnId ?? null,
+      declared,
       turns: deps.turns ? deps.turns.listTurns(conversationId, 200) : [],
       budget: {
         inputBudgetTokens: deps.conversationBudgetTokens ?? DEFAULT_CONVERSATION_BUDGET_TOKENS,

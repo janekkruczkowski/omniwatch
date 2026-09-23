@@ -14,7 +14,7 @@
 import { randomUUID } from "node:crypto";
 
 import { analyze } from "../analysis/engine.ts";
-import { buildContextFromStore, conversationIdForSource, estimateTokens } from "../analysis/context.ts";
+import { buildContextFromStore, conversationScopeFor, estimateTokens } from "../analysis/context.ts";
 import { DEFAULT_CONVERSATION_BUDGET_TOKENS } from "../analysis/engine.ts";
 import { OmniWatchError, toOmniWatchError } from "../contracts/errors.ts";
 import { computeAnalysisKey } from "../contracts/keys.ts";
@@ -173,12 +173,13 @@ export async function runOperation(
 
   // The key must match the one the operation was claimed with, so compute the same
   // conversation context the engine will compute.
-  const conversationId = request.conversationId ?? conversationIdForSource(request.sourceRef);
+  const { conversationId, declared } = conversationScopeFor(request);
   const context = buildContextFromStore(turns, {
     sourceRef: request.sourceRef,
     conversationId,
     question: request.question ?? null,
     parentTurnId: request.parentTurnId ?? null,
+    declared,
     budget: { inputBudgetTokens: DEFAULT_CONVERSATION_BUDGET_TOKENS, estimateTokens },
   });
   const analysisKey = computeAnalysisKey(request, context.contextKey);

@@ -38,9 +38,14 @@ export interface OpenAiModelPortOptions {
   config: ConfigPort;
   /** Injectable for tests; defaults to global fetch. */
   fetchImpl?: typeof fetch;
-  /** Overall request budget in ms. 0 disables the deadline. Default 600000. */
+  /**
+   * Budget in ms for the provider to START answering (response headers). It is
+   * cleared as soon as headers arrive: a stream that keeps delivering bytes is never
+   * cut by a wall-clock limit, only `idleTimeoutMs` ends a stalled one. 0 disables.
+   * Default 600000.
+   */
   timeoutMs?: number;
-  /** No bytes for this long means the stream stalled. 0 disables. Default 120000. */
+  /** No bytes for this long (before or after headers) means a stall. 0 disables. Default 120000. */
   idleTimeoutMs?: number;
   /** Timer source; defaults to the global timers. */
   timers?: TimerPort;
@@ -238,6 +243,13 @@ export function createOpenAiModelPort(options: OpenAiModelPortOptions): OpenAiMo
         action: { label: "sprawdz operacje", kind: "check_operation" },
         cause: error,
       });
+    }
+
+    // Headers arrived: from here on only inactivity ends the call. A long answer
+    // that is still streaming must not be cut by the start-up budget (QA 2026-09-23).
+    if (deadline) {
+      timers.clearTimeout(deadline);
+      deadline = null;
     }
 
     if (!response.ok) {
