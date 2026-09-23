@@ -81,12 +81,20 @@ export async function runHostWorker(options: HostWorkerOptions): Promise<HostWor
     ...(options.ownerStaleAfterMs !== undefined ? { ownerStaleAfterMs: options.ownerStaleAfterMs } : {}),
   });
 
+  // The host resolves its key asynchronously (env, Hermes profile .env, then
+  // ~/.agentic-os/config.json), but the provider's ConfigPort.apiKey() is synchronous.
+  // Resolve it once, here: handing over the Promise sent `Bearer [object Promise]`
+  // (or failed on `key.trim`) whenever DASHSCOPE_API_KEY was not in the env (LF §7).
+  const envKey = typeof env.DASHSCOPE_API_KEY === "string" ? env.DASHSCOPE_API_KEY.trim() : "";
+  const hostKey = envKey !== "" ? envKey : ((await hostEngine.apiKey?.()) ?? null);
+  const resolvedKey: string | null = typeof hostKey === "string" && hostKey.trim() !== "" ? hostKey.trim() : null;
+
   const configPort = {
     dataDir,
     memoryRoot: vaultRoot,
     language,
     modelName: omniSettings.model ?? "qwen3.8-omni-flash",
-    apiKey: () => env.DASHSCOPE_API_KEY ?? hostEngine.apiKey?.() ?? null,
+    apiKey: (): string | null => resolvedKey,
     apiBaseUrl: () => env.DASHSCOPE_API ?? hostSettings.dashscopeApi ?? null,
     maxFramesPerPart: () => maxFramesPerPart,
     cacheHours: () => cacheHours,
@@ -159,7 +167,7 @@ export async function runHostWorker(options: HostWorkerOptions): Promise<HostWor
     resolveMediaUrl: async (part: MediaPart, resolveOptions?: { refresh?: boolean }) => {
       // The second argument is the API key (the upload authenticates with it); this
       // used to pass a file label, which could never authenticate.
-      const key = await configPort.apiKey();
+      const key = configPort.apiKey();
       if (!key) throw new Error("Brak klucza API dla uploadu materialu.");
       const uploaded = await hostEngine.upload(part.localPath, key, resolveOptions);
       return uploaded.url;
