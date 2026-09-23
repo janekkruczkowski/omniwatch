@@ -400,6 +400,7 @@ function fail(problem) {
         if (!failedRequest) return;
         retry.disabled = true;
         failedCard.classList.add('old');
+        failedCard.style.display = 'none';
         ask(failedRequest.question, {
           snapshot: failedRequest,
           retryOperationId: paidRetry ? operationId : null,

@@ -55,6 +55,8 @@ export interface AnalysisDeps {
   source: SourcePort;
   model: ModelPort;
   attempts: AttemptSink;
+  /** Durable responses from an earlier run of this same operation. */
+  completedAttempts?: AttemptRecord[];
   /** Conversation turns for this source; omit when the caller has no history yet. */
   turns?: ConversationTurnSource;
   /** Receives every progress event, in order. */
@@ -234,6 +236,25 @@ export async function analyze(request: AnalysisRequest, deps: AnalysisDeps): Pro
       mediaParts: mediaParts.map((part) => part.index),
       characters: messages.reduce((sum, message) => sum + message.text.length, 0),
     });
+    // A confirmed retry may follow an unknown later part. Reuse only a committed
+    // response whose complete request shape matches this call; a changed split,
+    // model, or prompt must be paid for afresh, never silently grafted together.
+    const committed = deps.completedAttempts?.findLast((attempt) =>
+      attempt.phase === "response" && attempt.partIndex === partIndex &&
+      attempt.requestSummary === requestSummary && typeof attempt.responseSummary === "string",
+    );
+    if (committed) {
+      emit("running", "call_reused", {
+        itemIndex: partIndex,
+        itemCount: parts.length,
+        message: `zapisana odpowiedz modelu ${partIndex + 1}/${parts.length}`,
+      });
+      return { kind: "ok", response: {
+        text: committed.responseSummary!,
+        usage: committed.usage ?? { inputTokens: null, outputTokens: null, costUsd: null, costKnown: false },
+        completed: true,
+      } };
+    }
     const intent: Omit<AttemptRecord, "createdAt"> = {
       id: attemptId,
       operationId,

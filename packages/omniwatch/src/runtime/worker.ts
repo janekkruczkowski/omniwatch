@@ -211,6 +211,7 @@ export async function runOperation(
       source: deps.source,
       model: deps.model,
       attempts: journal.sinkFor(operationId, deps.model.modelName),
+      completedAttempts: deps.store.listAttempts(operationId),
       turns,
       progress: options.onProgress,
       operationId,

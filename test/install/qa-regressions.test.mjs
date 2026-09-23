@@ -776,6 +776,53 @@ test("ISSUE-010: unknown outcome needs explicit same-operation retry and never a
   }
 });
 
+test("a confirmed retry reuses committed earlier parts and pays only for unfinished parts", async () => {
+  const { appRoot, dataDir, cacheDir } = watchShell();
+  const calls = [];
+  let failedOnce = false;
+  const model = {
+    modelName: "stub-checkpoint",
+    async call(request) {
+      calls.push(request.partIndex);
+      if (request.partIndex === 1 && !failedOnce) {
+        failedOnce = true;
+        throw new OmniWatchError("outcome_unknown", "Przerwano druga czesc.");
+      }
+      return {
+        text: `Potwierdzona odpowiedz ${request.partIndex}`,
+        usage: { inputTokens: 10, outputTokens: 5, costUsd: 0.001, costKnown: true },
+        completed: true,
+      };
+    },
+  };
+  const app = createStandaloneServer({
+    appRoot, dataDir, cacheDir, model,
+    source: createFixtureSource({ durationSeconds: 240 }),
+    env: { OMNIWATCH_APP_ROOT: appRoot, OMNIWATCH_DATA_DIR: dataDir, OMNI_MAX_FRAMES: "300" },
+  });
+  const url = "https://youtu.be/SYNTHETIC01";
+  const first = await driveWatch(app, { url, mode: "teardown" });
+  const operationId = sseData(first.body, "operation")?.operationId;
+  assert.ok(operationId);
+  assert.equal(sseData(first.body, "error")?.error, "outcome_unknown");
+  assert.deepEqual(calls, [0, 1]);
+
+  const retry = await driveWatch(app, { url, retryOperation: operationId, confirmRetry: true });
+  assert.ok(sseData(retry.body, "done"), retry.body);
+  assert.deepEqual(calls, [0, 1, 1, 2], "part 0 is reused; only uncertain part 1 and merge call are paid");
+  const wiring = createRuntimeWiring({
+    dataDir, config: runtimeConfigDocument(loadStandaloneConfig({ appRoot, env: {} })), environment: {},
+  });
+  try {
+    const attempts = wiring.store.listAttempts(operationId);
+    assert.equal(attempts.filter((attempt) => attempt.partIndex === 0 && attempt.phase === "response").length, 1);
+    assert.equal(attempts.filter((attempt) => attempt.partIndex === 1 && attempt.phase === "unknown").length, 1);
+    assert.equal(attempts.filter((attempt) => attempt.partIndex === 1 && attempt.phase === "response").length, 1);
+  } finally {
+    wiring.close();
+  }
+});
+
 test("ISSUE-007: a live request keeps ownership, so a concurrent run is not a takeover", async (t) => {
   const { appRoot, dataDir, cacheDir } = watchShell();
   const model = gatedModel();
