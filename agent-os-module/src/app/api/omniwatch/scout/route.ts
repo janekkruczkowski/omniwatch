@@ -9,13 +9,11 @@ export const dynamic = "force-dynamic";
 // GET  /api/omniwatch/scout              → config, last run, and what still needs setting up
 // GET  /api/omniwatch/scout?job=<id>     → poll a manual scan
 // GET  /api/omniwatch/scout?report=<run> → read one run's durable report (report --run)
-// POST /api/omniwatch/scout {action:"scan"|"config"|"remember"}
+// POST /api/omniwatch/scout {action:"config", config:{channels}} | {action:"scan", channelId?}
 //
 // Hermes does not call this route: it runs the shared CLI (`scan --collection <id>` /
 // `report --run <id>`), which is the same `runScan` this route uses for the manual
 // button. The manual button and the cron therefore cannot drift apart.
-
-export type { Candidate } from "@/lib/omniwatchScout";
 
 type ScoutHandler = ReturnType<typeof createScoutHandler>;
 
@@ -34,14 +32,12 @@ function handler(): Promise<ScoutHandler> {
         readRunReport: (runId) => panel.readRunReport(runId),
         readConfig: () => host.scout.readConfig(),
         writeConfig: (config) => host.scout.writeConfig(config as never),
-        readLatest: () => host.scout.readLatest(),
         toolsPresent: () => host.omniwatch.toolsPresent(),
         apiKeyPresent: async () => Boolean(await host.omniwatch.apiKey()),
-        apifyReady: () => host.scout.apifyReady(),
-        needsApify: (sources) => host.scout.needsApify(sources as never),
-        saveCollection: ({ collectionId, sources }) =>
+        // The channel's saved goal (summary by default) — never a hard-coded teardown.
+        saveCollection: ({ collectionId, sources, settings }) =>
           saveCollection(panel.store, {
-            settings: {
+            settings: settings ?? {
               collectionId,
               mode: "summary",
               focus: null,
@@ -53,7 +49,18 @@ function handler(): Promise<ScoutHandler> {
             sources,
           }),
         accountRef: (platform, handle) => accountSourceRef({ platform, handle }),
-        saveRun: (run) => host.scout.saveRun(run as never),
+        listChannel: async (source) => {
+          if (!panel.source.list) return [];
+          const ids: string[] = [];
+          let cursor: string | null | undefined = null;
+          for (let page = 0; page < 200; page += 1) {
+            const listed = await panel.source.list(source, { cursor, limit: 50 });
+            for (const item of listed.items) ids.push(item.sourceRef.sourceId);
+            cursor = listed.cursor;
+            if (!cursor) break;
+          }
+          return ids;
+        },
       });
     })();
   }

@@ -65,7 +65,7 @@ function jobsPanel(h, overrides = {}) {
 }
 
 function scoutPanel(h, sources, overrides = {}) {
-  const config = { collectionId: "scout-collection", sources: [], topic: "ai", teardowns: 3, days: 14, maxMinutes: 10 };
+  const config = { collectionId: "scout-collection", channels: [] };
   for (const collectionId of ["scout-collection", "hermes-collection"]) {
     saveCollection(h.store, {
       settings: { collectionId, mode: "summary", focus: null, question: null, language: "en", maxNewItems: null, budgetUsd: null },
@@ -96,7 +96,7 @@ function scoutPanel(h, sources, overrides = {}) {
     needsApify: (sources) => sources.some((s) => s.platform !== "youtube"),
     saveCollection: ({ collectionId, sources }) =>
       saveCollection(h.store, {
-        settings: { collectionId, mode: "summary", focus: config.topic, question: null, language: "en", maxNewItems: null, budgetUsd: null },
+        settings: { collectionId, mode: "summary", focus: null, question: null, language: "en", maxNewItems: null, budgetUsd: null },
         sources,
       }),
     accountRef: (platform, handle) => accountSourceRef({ platform, handle }),
@@ -221,8 +221,8 @@ test("T13: zero new material produces no report and no notification", async () =
   const firstView = await awaitScoutJob(scout.handler, first.id);
   assert.equal(firstView.outcome.analysed, 1);
   assert.ok(firstView.outcome.report, "new material is reported");
-  assert.equal(firstView.run.teardowns.length, 1, "the Scout tab's own run shape still carries the answers");
-  assert.match(firstView.run.teardowns[0].text, /punkt pierwszy/);
+  assert.equal(firstView.run.analyses.length, 1, "the Scout run view still carries the answers");
+  assert.match(firstView.run.analyses[0].text, /punkt pierwszy/);
   assert.equal(h.model.calls.length, 1);
 
   // Same collection, same goal, nothing new: silence.

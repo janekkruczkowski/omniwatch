@@ -17,7 +17,10 @@ dependency on the panel being open:
     omniwatch report --run <runId> --json          (manual re-read)
 
 The collection id comes from Hermes (`--collection`, or OMNIWATCH_COLLECTION), never
-from a prompt typed into a chat. Zero new material prints nothing: a cron that cries
+from a prompt typed into a chat. Without one, the script scans every channel the
+Scout tab saved with a schedule (daily / weekly) — each with its OWN saved goal
+(summary by default; teardown only if the user chose it), incrementally and within
+the channel's batch size and cost ceiling, all enforced by the shared scan. Zero new material prints nothing: a cron that cries
 wolf every morning gets muted, and then it is useless on the day it matters.
 
 Set OMNIWATCH_CLI if the runtime is not in the default place, and OMNIWATCH_DATA_DIR /
@@ -214,6 +217,61 @@ def scan(collection_id):
     return 0 if emit_report(current, "OmniWatch Scout") else 1
 
 
+def scout_root():
+    explicit = os.environ.get("OMNIWATCH_SCOUT_DIR")
+    if explicit:
+        return Path(explicit)
+    return Path.home() / ".agentic-os" / "omniwatch" / "scout"
+
+
+def scheduled_channels(now=None):
+    """Channels the Scout tab saved with a schedule that is due now.
+
+    daily = every run of this job; weekly = at most once in ~7 days. The goal is not
+    read here: it lives on the channel's collection, where the shared scan reads it.
+    """
+    now = now or datetime.now()
+    root = scout_root()
+    try:
+        config = json.loads((root / "config.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    try:
+        state = json.loads((root / "schedule-state.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        state = {}
+    due = []
+    for channel in config.get("channels") or []:
+        collection = channel.get("collectionId")
+        every = channel.get("schedule") or "off"
+        if not collection or every not in ("daily", "weekly"):
+            continue
+        last = state.get(collection)
+        if every == "weekly" and last:
+            try:
+                if (now - datetime.fromisoformat(last)).total_seconds() < 6.5 * 86400:
+                    continue
+            except ValueError:
+                pass
+        due.append(collection)
+    return due
+
+
+def mark_scheduled(collection, now=None):
+    root = scout_root()
+    path = root / "schedule-state.json"
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        state = {}
+    state[collection] = (now or datetime.now()).isoformat(timespec="seconds")
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    except OSError:
+        pass
+
+
 def main():
     parser = argparse.ArgumentParser(description="Thin Hermes launcher for the shared OmniWatch scan")
     parser.add_argument(
@@ -241,11 +299,16 @@ def main():
         return 0
 
     if not args.collection:
-        print(
-            "OmniWatch Scout: no collection id. Pass --collection <id> or set OMNIWATCH_COLLECTION.",
-            file=sys.stderr,
-        )
-        return 2
+        collections = scheduled_channels()
+        if not deliver_previous():
+            return 1
+        status = 0
+        for collection in collections:
+            result = scan(collection)
+            if result == 0:
+                mark_scheduled(collection)
+            status = status or result
+        return status
 
     if not deliver_previous():
         return 1

@@ -1,4 +1,9 @@
-// Scout — the automatic half of OmniWatch.
+// LEGACY. Scout is now the ordinary OmniWatch channel scan run on a schedule (see
+// app/api/omniwatch/scout/handler.ts): watched channels, a saved goal (summary by
+// default), incremental. The ranking/Apify code below is kept only for the Apify setup
+// route and old installs; nothing in the Scout scan calls it.
+//
+// (Original note) Scout — the automatic half of OmniWatch.
 //
 // You name the accounts and hashtags worth watching in your niche. Hermes scrapes
 // them through its Apify plugin, Scout ranks what actually outperformed, and the
@@ -37,6 +42,8 @@ export interface Source {
 }
 
 export interface ScoutConfig {
+  /** Watched channels with their saved goal (handler.ts ScoutChannel). */
+  channels?: unknown[];
   sources: Source[];
   /** what your own videos are about — used for the adapted script in each teardown */
   topic: string;
@@ -83,7 +90,7 @@ export interface ScoutRun {
   note?: string;
 }
 
-export const DEFAULT_CONFIG: ScoutConfig = { sources: [], topic: "", teardowns: 3, days: 14, maxMinutes: 10 };
+export const DEFAULT_CONFIG: ScoutConfig = { channels: [], sources: [], topic: "", teardowns: 0, days: 14, maxMinutes: 10 };
 
 export async function readConfig(): Promise<ScoutConfig> {
   try { return { ...DEFAULT_CONFIG, ...JSON.parse(await readFile(CONFIG, "utf8")) }; }
