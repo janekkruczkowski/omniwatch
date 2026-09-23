@@ -1138,3 +1138,54 @@ test("ISSUE-007 queue: two tabs complete distinct requests without orphaned work
     await app.close();
   }
 });
+
+test("a prompt-template bump never re-pays for a film already analysed under the old prompt", async () => {
+  const { appRoot, dataDir, cacheDir } = watchShell();
+  const calls = [];
+  const model = {
+    modelName: "stub-prompt-bump",
+    async call(request) {
+      calls.push(request.partIndex);
+      return {
+        text: "## W skrocie\n- [0:05] stary wynik",
+        usage: { inputTokens: 10, outputTokens: 5, costUsd: 0.001, costKnown: true },
+        completed: true,
+      };
+    },
+  };
+  const options = {
+    appRoot, dataDir, cacheDir, model,
+    source: createFixtureSource({ durationSeconds: 16 }),
+    env: { OMNIWATCH_APP_ROOT: appRoot, OMNIWATCH_DATA_DIR: dataDir },
+  };
+  const url = "https://youtu.be/SYNTHETIC01";
+  const first = await driveWatch(createStandaloneServer(options), { url });
+  const operationId = sseData(first.body, "operation")?.operationId;
+  assert.ok(sseData(first.body, "done"), first.body);
+  assert.deepEqual(calls, [0]);
+
+  // Make the stored evidence look exactly like a result written by the previous
+  // template version (prompt-v1, before the current-date rule existed).
+  const wiring = createRuntimeWiring({
+    dataDir, config: runtimeConfigDocument(loadStandaloneConfig({ appRoot, env: {} })), environment: {},
+  });
+  try {
+    for (const attempt of wiring.store.listAttempts(operationId)) {
+      if (!attempt.requestSummary) continue;
+      wiring.store.recordAttempt({
+        ...attempt, requestSummary: attempt.requestSummary.replace(/prompt-v\d+\//g, "prompt-v1/"),
+      });
+    }
+    assert.ok(wiring.store.listAttempts(operationId).some((a) => /prompt-v1\//.test(a.requestSummary ?? "")));
+  } finally {
+    wiring.close();
+  }
+
+  // Pasting the same URL again on a fresh server process reads the saved result.
+  const again = await driveWatch(createStandaloneServer(options), { url });
+  const done = sseData(again.body, "done");
+  assert.ok(done, again.body);
+  assert.equal(done.usage.reused, true, "the saved result is returned, not recomputed");
+  assert.match(done.text, /stary wynik/);
+  assert.deepEqual(calls, [0], "no new paid call after the template version changed");
+});

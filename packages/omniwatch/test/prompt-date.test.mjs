@@ -266,3 +266,10 @@ test("attempts of another operation never set the date", () => {
   assert.equal(promptDateFor(records, "op_mine", "2026-09-23T10:00:00.000Z"), "2026-09-23");
   assert.equal(promptDateFor(undefined, "op_mine", "2026-09-23T10:00:00.000Z"), "2026-09-23");
 });
+
+test("the analysis key does not depend on the prompt template version, so saved results stay reachable", async () => {
+  const { canonicalRequestKey } = await import("../src/contracts/keys.ts");
+  const key = canonicalRequestKey(request());
+  assert.doesNotMatch(key, /prompt-v\d/);
+  assert.doesNotMatch(key, new RegExp(PROMPT_TEMPLATE_VERSION));
+});
