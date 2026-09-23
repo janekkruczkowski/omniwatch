@@ -34,13 +34,13 @@ import {
   runScan,
 } from "../../../packages/omniwatch/src/collections/index.ts";
 import type { ScanOutcome } from "../../../packages/omniwatch/src/collections/scan.ts";
-import { createLogger, createLocalMemory, systemClock } from "../../../packages/omniwatch/src/runtime/poc.ts";
+import { createLogger, systemClock } from "../../../packages/omniwatch/src/runtime/poc.ts";
 import { spawnWorkerProcess } from "../../../packages/omniwatch/src/runtime/spawn.ts";
 import { runOperation } from "../../../packages/omniwatch/src/runtime/worker.ts";
 import { OperationJournal } from "../../../packages/omniwatch/src/storage/operations.ts";
 import { createSourceRegistry } from "../../../packages/omniwatch/src/sources/index.ts";
 import { openSqliteStore } from "../../../packages/omniwatch/src/storage/index.ts";
-import { createOmniWatchHost } from "./omniwatchHost.ts";
+import { createOmniWatchHost, type OmniWatchHost } from "./omniwatchHost.ts";
 import type { HostModelPort } from "./omniwatchMemory.ts";
 import { registerDurableJobReader } from "./omniwatchJobs.ts";
 import { startJob } from "./omniwatchJobs.ts";
@@ -54,6 +54,15 @@ export function panelDataDir(env: NodeJS.ProcessEnv = process.env): string {
 export function panelConfigPath(env: NodeJS.ProcessEnv = process.env): string | null {
   const explicit = env.OMNIWATCH_CONFIG;
   return explicit && explicit.trim() !== "" ? resolve(explicit) : null;
+}
+
+/** One Vault selection path for the panel and its offline regression tests. */
+export function createPanelHostMemory(env: NodeJS.ProcessEnv = process.env): OmniWatchHost {
+  return createOmniWatchHost({
+    env,
+    configPath: env.AGENTIC_OS_CONFIG,
+    model: hostAnswerModel(env),
+  });
 }
 
 /**
@@ -150,6 +159,11 @@ export function createPanelRuntime(options: { env?: NodeJS.ProcessEnv } = {}): P
   const env = options.env ?? process.env;
   const dataDir = panelDataDir(env);
   const configPath = panelConfigPath(env);
+  // Resolve the host Vault before creating state or admitting work. A bad explicit
+  // location must stop the request; local-memory fallback could spend on an analysis
+  // and then deliver its result to a different library.
+  const hostMemory = createPanelHostMemory(env);
+  const memory: MemoryPort = hostMemory.memory;
   mkdirSync(dataDir, { recursive: true });
 
   const clock = systemClock();
@@ -157,19 +171,9 @@ export function createPanelRuntime(options: { env?: NodeJS.ProcessEnv } = {}): P
   const store = openSqliteStore({ path: join(dataDir, "state.sqlite") });
   store.migrate();
 
-  // Knowledge library: the configured Vault (D7). A Vault that is not configured is
-  // reported; the panel falls back to a local library so analysis still works.
-  let memory: MemoryPort;
-  try {
-    memory = createOmniWatchHost({ model: hostAnswerModel(env) }).memory;
-  } catch (error) {
-    logger.warn("omniwatch.panel.memory_fallback", { message: String(error) });
-    memory = createLocalMemory({ root: join(dataDir, "knowledge") });
-  }
-
   const config: ConfigPort = {
     dataDir,
-    memoryRoot: dataDir,
+    memoryRoot: hostMemory.vaultRoot,
     language: env.OMNI_LANG || "en",
     modelName: env.OMNI_MODEL || "qwen3.8-omni-flash",
     apiKey: () => env.DASHSCOPE_API_KEY || env.OMNIWATCH_API_KEY || null,
@@ -242,8 +246,10 @@ export function createPanelRuntime(options: { env?: NodeJS.ProcessEnv } = {}): P
     // import them — so the panel executes the admitted operation itself, in a job that
     // outlives the request. The durable operation stays the record either way.
     if (env.OMNIWATCH_WORKER === "cli") {
-      // src/lib -> src -> agent-os-module -> repo root, then the shared CLI entry.
-      const entry = new URL("../../../packages/omniwatch/src/runtime/cli.ts", import.meta.url).pathname;
+      // Use the host worker entry, which validates the same Vault configuration as
+      // this panel before announcing readiness. The generic core CLI would write to
+      // its local-memory adapter instead of the Agent OS Vault.
+      const entry = new URL("../../omniwatch-host-worker.mjs", import.meta.url).pathname;
       const spawned = spawnWorkerProcess({
         entry,
         args: [
@@ -251,7 +257,6 @@ export function createPanelRuntime(options: { env?: NodeJS.ProcessEnv } = {}): P
           operationId,
           "--data-dir",
           dataDir,
-          ...(configPath ? ["--config", configPath] : []),
         ],
         env,
         detached: true,

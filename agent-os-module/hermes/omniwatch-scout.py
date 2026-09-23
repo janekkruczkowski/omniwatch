@@ -22,19 +22,21 @@ wolf every morning gets muted, and then it is useless on the day it matters.
 
 Set OMNIWATCH_CLI if the runtime is not in the default place, and OMNIWATCH_DATA_DIR /
 OMNIWATCH_CONFIG for a non-default data directory.
+
+Reports printed today remain handed_off until a later invocation sees the
+completed Hermes execution and its durable output. A failed or interrupted
+Hermes delivery leaves the same report retryable without another analysis.
 """
 import argparse
+from datetime import datetime
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-STATE_FILE = Path(
-    os.environ.get("OMNIWATCH_STATE", Path.home() / ".agentic-os" / "omniwatch" / "scout-last-run")
-)
-
 
 def cli_entry():
     """Locate the shared CLI: explicit, then the release layout, then this checkout."""
@@ -95,59 +97,104 @@ def run_cli(argv):
     return None
 
 
-def last_run_id():
-    try:
-        return STATE_FILE.read_text(encoding="utf-8").strip() or None
-    except OSError:
-        return None
-
-
-def remember_run(run_id):
-    if not run_id:
-        return
-    try:
-        STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        STATE_FILE.write_text(run_id, encoding="utf-8")
-    except OSError:
-        pass  # losing the marker only repeats a message, never an analysis
-
-
 def describe(report):
     if not report:
         return ""
-    return (
+    return report.get("summary") or (
         f"{report.get('newAnalyses', 0)} nowych analiz, "
         f"{report.get('failedItems', 0)} bledow, {report.get('pendingItems', 0)} oczekuje\n"
-        f"{report.get('summary', '')}"
     )
 
 
-def deliver_previous():
-    """D8: read what a previous run produced before requesting new work.
+def hermes_home():
+    return Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes"))
 
-    A report finished after the launcher gave up still arrives here — at the latest on
-    the next active cron run. Repeating a message is allowed; repeating an analysis is
-    not, which is why this path never scans.
+
+def delivered_by_hermes(report_id):
+    """Reconcile a previous handoff against Hermes' terminal execution ledger.
+
+    A write to this script's stdout is not delivery: Hermes may die before saving
+    the output or sending it. Only a completed execution with a persisted output
+    containing this report's identity can close it. Unknown or failed executions
+    remain retryable. Hermes retains the output and ledger in its own profile.
     """
-    run_id = last_run_id()
-    if not run_id:
-        return
-    payload = run_cli(["report", "--run", run_id])
-    if not payload:
-        return
+    home = hermes_home()
+    ledger = home / "cron" / "executions.db"
+    if not ledger.is_file():
+        return False
+    try:
+        jobs = json.loads((home / "cron" / "jobs.json").read_text(encoding="utf-8"))
+        delivery_targets = {
+            job.get("id"): job.get("deliver")
+            for job in jobs.get("jobs", [])
+            if job.get("no_agent") and job.get("script") == Path(__file__).name
+        }
+        with sqlite3.connect(f"file:{ledger}?mode=ro", uri=True) as db:
+            executions = db.execute(
+                "SELECT job_id, started_at, finished_at, delivery_outcome FROM executions "
+                "WHERE status = 'completed' ORDER BY finished_at DESC LIMIT 1000"
+            ).fetchall()
+        marker = f"OmniWatch reportId: {report_id}\n"
+        for job_id, started, finished, outcome in executions:
+            target = delivery_targets.get(job_id)
+            if not target or not started or not finished:
+                continue
+            if outcome != ("suppressed" if target == "local" else "delivered"):
+                continue
+            # 'suppressed' is the expected outcome of --deliver local: Hermes
+            # persists the output file instead of sending an external message.
+            job_dir = home / "cron" / "output" / job_id
+            if not job_dir.is_dir():
+                continue
+            beginning = datetime.fromisoformat(started).timestamp()
+            ending = datetime.fromisoformat(finished).timestamp()
+            for output in job_dir.glob("*.md"):
+                mtime = output.stat().st_mtime
+                if beginning <= mtime <= ending and marker in output.read_text(encoding="utf-8"):
+                    return True
+    except (OSError, sqlite3.Error, ValueError, TypeError):
+        pass
+    return False
+
+
+def emit_report(report, heading):
+    """Hand a report to Hermes; confirmation waits for the next execution."""
+    report_id = report.get("reportId") or report.get("id")
+    if not report_id:
+        print("OmniWatch: report has no durable id; leaving it pending", file=sys.stderr)
+        return False
+    text = describe(report)
+    if not text:
+        return True
+    try:
+        print(f"{heading}\nOmniWatch reportId: {report_id}\n{text}\n")
+        sys.stdout.flush()
+    except BrokenPipeError:
+        return False
+    return run_cli(["report", "--handoff", report_id]) is not None
+
+
+def deliver_previous():
+    """Read ALL undelivered reports from SQLite, never a single last-run marker."""
+    payload = run_cli(["report", "--pending"])
+    if payload is None:
+        return False
     for report in payload.get("reports") or []:
-        if report.get("state") == "confirmed":
+        report_id = report.get("reportId") or report.get("id")
+        if report_id and delivered_by_hermes(report_id):
+            if run_cli(["report", "--confirm", report_id]) is None:
+                return False
             continue
-        text = describe(report)
-        if text:
-            print(f"OmniWatch Scout — raport z poprzedniego przebiegu {run_id}\n{text}\n")
+        run_id = report.get("runId") or "?"
+        if not emit_report(report, f"OmniWatch Scout — raport z poprzedniego przebiegu {run_id}"):
+            return False
+    return True
 
 
 def scan(collection_id):
     payload = run_cli(["scan", "--collection", collection_id, "--trigger", "schedule"])
     if payload is None:
         return 1
-    remember_run(payload.get("runId"))
     if payload.get("state") == "failed":
         reason = payload.get("errorMessage") or "nieznany blad"
         print(f"OmniWatch Scout — skan nie doszedl do skutku: {reason}")
@@ -156,14 +203,15 @@ def scan(collection_id):
     if not report:
         # Zero new material, nothing failed, nothing waiting: silence (D8).
         return 0
-    # The scan payload carries the counts; the report carries the durable summary.
-    text = (
-        f"{payload.get('analysed', 0)} nowych analiz, "
-        f"{payload.get('failedItems', 0)} bledow, {payload.get('pendingItems', 0)} oczekuje"
-    )
-    summary = report.get("summary") if isinstance(report, dict) else None
-    print(f"OmniWatch Scout — {text}" + (f"\n{summary}" if summary else ""))
-    return 0
+    # The durable report carries the counts and identity; the same record is used
+    # by the retry path after a process interruption.
+    current = {
+        **report,
+        "newAnalyses": payload.get("analysed", 0),
+        "failedItems": payload.get("failedItems", 0),
+        "pendingItems": payload.get("pendingItems", 0),
+    }
+    return 0 if emit_report(current, "OmniWatch Scout") else 1
 
 
 def main():
@@ -199,7 +247,8 @@ def main():
         )
         return 2
 
-    deliver_previous()
+    if not deliver_previous():
+        return 1
     return scan(args.collection)
 
 

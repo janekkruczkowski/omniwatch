@@ -14,7 +14,7 @@ import { pathToFileURL } from "node:url";
 import { OmniWatchError, toOmniWatchError } from "../contracts/errors.ts";
 import { ANALYSIS_VERSION } from "../contracts/types.ts";
 import type { AnalysisRequest, Mode } from "../contracts/types.ts";
-import { readRunReport, reportPayload, runScan, scanPayload } from "../collections/index.ts";
+import { confirmRunReport, handOffRunReport, readRunReport, reportPayload, reportsToHandOff, runScan, scanPayload } from "../collections/index.ts";
 import { deliverOperation } from "../storage/delivery.ts";
 import { OperationJournal } from "../storage/operations.ts";
 import { parseSourceUrl } from "../sources/url.ts";
@@ -65,6 +65,7 @@ const BOOLEAN_FLAGS = new Set([
   "force",
   "help",
   "quiet",
+  "pending",
 ]);
 
 export function parseArgs(argv: string[]): ParsedArgs {
@@ -130,8 +131,8 @@ export function validateInvocation(parsed: ParsedArgs): void {
   if ((parsed.command === "pause" || parsed.command === "cancel") && parsed.positionals.length === 0) {
     throw new OmniWatchError("invalid_input", `Komenda ${parsed.command} wymaga identyfikatora operacji.`);
   }
-  if (parsed.command === "report" && !parsed.flags.get("run") && parsed.positionals.length === 0) {
-    throw new OmniWatchError("invalid_input", "Podaj przebieg: omniwatch report --run <id>");
+  if (parsed.command === "report" && !parsed.flags.get("run") && !parsed.flags.get("pending") && !parsed.flags.get("handoff") && !parsed.flags.get("confirm") && parsed.positionals.length === 0) {
+    throw new OmniWatchError("invalid_input", "Podaj --run <id>, --pending, --handoff albo --confirm <reportId>.");
   }
   if (parsed.command === "scan" && !parsed.flags.get("collection")) {
     throw new OmniWatchError("invalid_input", "Podaj kolekcje: omniwatch scan --collection <id>");
@@ -454,6 +455,23 @@ function commandStatus(wiring: RuntimeWiring, io: CliIo, json: boolean): number 
 }
 
 function commandReport(parsed: ParsedArgs, wiring: RuntimeWiring, io: CliIo, json: boolean): number {
+  if (parsed.flags.get("pending") === true) {
+    const reports = reportsToHandOff(wiring.store).map(reportPayload);
+    print({ protocol: "omniwatch.runtime.v1", reports }, json, reports.map((report) => String(report.reportId)).join("\n"));
+    return EXIT_CODES.ok;
+  }
+  const handoffId = stringFlag(parsed, "handoff");
+  if (handoffId) {
+    const report = handOffRunReport(wiring.store, handoffId);
+    print({ protocol: "omniwatch.runtime.v1", report: reportPayload(report) }, json, `przekazano ${report.id}`);
+    return EXIT_CODES.ok;
+  }
+  const confirmId = stringFlag(parsed, "confirm");
+  if (confirmId) {
+    const report = confirmRunReport(wiring.store, confirmId);
+    print({ protocol: "omniwatch.runtime.v1", report: reportPayload(report) }, json, `potwierdzono ${report.id}`);
+    return EXIT_CODES.ok;
+  }
   const runId = stringFlag(parsed, "run") ?? parsed.positionals[0];
   if (!runId) throw new OmniWatchError("invalid_input", "Podaj przebieg: omniwatch report --run <id>");
   const reports = wiring.store.listReports({ runId, limit: 50 });

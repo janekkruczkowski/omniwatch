@@ -38,6 +38,7 @@ import {
   inspectHostRoot,
   resolveVaultRoot,
 } from "../../agent-os-module/src/lib/omniwatchHost.ts";
+import { createPanelHostMemory, createPanelRuntime } from "../../agent-os-module/src/lib/omniwatchPanelRuntime.ts";
 import { OmniWatchError } from "../../packages/omniwatch/src/contracts/errors.ts";
 import { ANALYSIS_VERSION } from "../../packages/omniwatch/src/contracts/index.ts";
 
@@ -384,4 +385,48 @@ test("T15: the host adapter follows the injected directory convention, not a pri
     () => createOmniWatchHost({ homeDir: emptyHome, env: {} }),
     (error) => error instanceof OmniWatchError && error.errorClass === "missing_config",
   );
+});
+
+test("ISSUE-008: explicit Agent OS env/config wins over a different default Vault", async () => {
+  const dir = tempDir("omni-vault-isolation-");
+  const home = join(dir, "home");
+  const defaultVault = join(dir, "default-vault");
+  const selectedVault = join(dir, "selected-vault");
+  const envVault = join(dir, "env-vault");
+  for (const root of [join(home, ".agentic-os"), defaultVault, selectedVault, envVault]) {
+    mkdirSync(root, { recursive: true });
+  }
+  writeFileSync(join(home, ".agentic-os", "config.json"), JSON.stringify({ vaultRoot: defaultVault }));
+  const selectedConfig = join(dir, "qa-config.json");
+  writeFileSync(selectedConfig, JSON.stringify({ vaultRoot: selectedVault }));
+
+  const env = { AGENTIC_OS_CONFIG: selectedConfig, AGENTIC_OS_VAULT: envVault };
+  const resolved = resolveVaultRoot({ homeDir: home, env });
+  assert.equal(resolved.root, envVault);
+  assert.equal(resolved.source, "env");
+  const panel = createPanelHostMemory(env);
+  assert.equal(panel.vaultRoot, envVault, "the panel passes the explicit host environment");
+  await panel.memory.writeAnalysis({ ...NOTE_A, analysisId: "omni_env_only" });
+  assert.ok(existsSync(join(envVault, "OmniWatch", "Analyses", "omni_env_only.md")));
+  assert.equal(existsSync(join(defaultVault, "OmniWatch")), false);
+  assert.equal(existsSync(join(selectedVault, "OmniWatch")), false);
+
+  const byConfig = resolveVaultRoot({ homeDir: home, env: { AGENTIC_OS_CONFIG: selectedConfig } });
+  assert.equal(byConfig.root, selectedVault);
+  assert.equal(byConfig.source, "config");
+  assert.throws(
+    () => createPanelHostMemory({ AGENTIC_OS_CONFIG: selectedConfig, AGENTIC_OS_VAULT: join(dir, "missing") }),
+    (error) => error instanceof OmniWatchError && error.errorClass === "missing_config",
+  );
+  assert.throws(
+    () => resolveVaultRoot({ homeDir: home, env: { AGENTIC_OS_CONFIG: join(dir, "missing-config.json") } }),
+    (error) => error instanceof OmniWatchError && error.errorClass === "missing_config",
+  );
+  const dataDir = join(dir, "must-not-create-state");
+  assert.throws(
+    () => createPanelRuntime({ env: { OMNIWATCH_DATA_DIR: dataDir, AGENTIC_OS_CONFIG: join(dir, "missing-config.json") } }),
+    (error) => error instanceof OmniWatchError && error.errorClass === "missing_config",
+  );
+  assert.equal(existsSync(dataDir), false, "invalid host config fails before state/admission");
+  assert.equal(existsSync(join(defaultVault, "OmniWatch")), false, "the default Vault received no note");
 });

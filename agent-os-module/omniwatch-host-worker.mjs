@@ -36,8 +36,6 @@ function parse(argv) {
 
 const args = parse(process.argv.slice(2));
 
-process.stdout.write(`${JSON.stringify({ protocol: "omniwatch.runtime.v1", event: "ready", pid: process.pid })}\n`);
-
 const dataDir = args.dataDir ?? process.env.OMNIWATCH_DATA_DIR;
 if (!dataDir) {
   process.stderr.write("missing_config: podaj --data-dir albo OMNIWATCH_DATA_DIR\n");
@@ -52,6 +50,7 @@ if (!dataDir) {
       operationIds: args.operations.length > 0 ? args.operations : null,
       maxOperations: args.max,
       language: args.language ?? undefined,
+      onReady: () => process.stdout.write(`${JSON.stringify({ protocol: "omniwatch.runtime.v1", event: "ready", pid: process.pid })}\n`),
       log: (line) => process.stdout.write(`${line}\n`),
     });
     process.stdout.write(`${JSON.stringify({ protocol: "omniwatch.runtime.v1", event: "done", result })}\n`);

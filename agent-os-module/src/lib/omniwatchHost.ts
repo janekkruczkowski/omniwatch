@@ -4,7 +4,7 @@
  * Everything the adapter needs comes from injected configuration, so a stock Agent OS
  * host with its own directory convention works without patching this module:
  *
- *   vaultRoot      -> explicit option, then the host config file, then env, then the
+ *   vaultRoot      -> explicit option, then explicit env, then the selected config file, then the
  *                     conventional Vault locations under the injected home directory;
  *   analysesDir    -> explicit option or the host config file (default
  *                     `OmniWatch/Analyses`);
@@ -113,13 +113,23 @@ function nonEmpty(value: unknown): string | null {
   return trimmed === "" ? null : trimmed;
 }
 
-function readHostConfigFile(path: string): HostConfigFile | null {
-  try {
-    const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
-    return parsed && typeof parsed === "object" ? (parsed as HostConfigFile) : null;
-  } catch {
+function readHostConfigFile(path: string, required = false): HostConfigFile | null {
+  if (!existsSync(path)) {
+    if (required) throw new OmniWatchError("missing_config", `Jawny plik konfiguracji Agent OS nie istnieje: ${path}.`);
     return null;
   }
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("oczekiwano obiektu JSON");
+    return parsed as HostConfigFile;
+  } catch {
+    throw new OmniWatchError("missing_config", `Nie mozna odczytac konfiguracji Agent OS: ${path}.`);
+  }
+}
+
+function selectedConfigPath(config: HostConfig, env: Record<string, string | undefined>): string | null {
+  const chosen = nonEmpty(config.configPath) ?? nonEmpty(env.AGENTIC_OS_CONFIG);
+  return chosen ? resolve(chosen) : null;
 }
 
 function canWrite(path: string): boolean {
@@ -165,10 +175,24 @@ export function resolveVaultRoot(config: HostConfig = {}): ResolvedVaultRoot {
     return { root: resolve(explicit), source: "explicit", candidates };
   }
 
-  const configPath = resolve(
-    nonEmpty(config.configPath) ?? join(home, DEFAULT_CONFIG_PATH),
-  );
-  const file = existsSync(configPath) ? readHostConfigFile(configPath) : null;
+  const requestedConfigPath = selectedConfigPath(config, env);
+  const requestedFile = requestedConfigPath ? readHostConfigFile(requestedConfigPath, true) : null;
+  const envVarName = nonEmpty(config.envVarName) ?? nonEmpty(requestedFile?.vaultEnvVar) ?? DEFAULT_VAULT_ENV;
+  const fromEnv = nonEmpty(env[envVarName]);
+  if (fromEnv) {
+    candidates.push(fromEnv);
+    if (!existsSync(fromEnv)) {
+      throw new OmniWatchError(
+        "missing_config",
+        `${envVarName} wskazuje nieistniejacy katalog pamieci: ${fromEnv}. Nie podstawiamy innego katalogu pamieci.`,
+        { action: { label: "popraw vaultRoot", kind: "fix_config" } },
+      );
+    }
+    return { root: resolve(fromEnv), source: "env", candidates };
+  }
+
+  const configPath = requestedConfigPath ?? resolve(join(home, DEFAULT_CONFIG_PATH));
+  const file = requestedFile ?? readHostConfigFile(configPath);
   const configured = nonEmpty(file?.vaultRoot);
   if (configured) {
     candidates.push(configured);
@@ -181,19 +205,8 @@ export function resolveVaultRoot(config: HostConfig = {}): ResolvedVaultRoot {
     }
     return { root: resolve(configured), source: "config", candidates };
   }
-
-  const envVarName = nonEmpty(config.envVarName) ?? nonEmpty(file?.vaultEnvVar) ?? DEFAULT_VAULT_ENV;
-  const fromEnv = nonEmpty(env[envVarName]);
-  if (fromEnv) {
-    candidates.push(fromEnv);
-    if (!existsSync(fromEnv)) {
-      throw new OmniWatchError(
-        "missing_config",
-        `${envVarName} wskazuje nieistniejacy katalog pamieci: ${fromEnv}.`,
-        { action: { label: "popraw vaultRoot", kind: "fix_config" } },
-      );
-    }
-    return { root: resolve(fromEnv), source: "env", candidates };
+  if (requestedConfigPath) {
+    throw new OmniWatchError("missing_config", `Jawna konfiguracja ${configPath} nie zawiera vaultRoot.`);
   }
 
   const defaults = [
@@ -218,8 +231,14 @@ export function resolveAnalysesDir(config: HostConfig = {}): string {
   const explicit = nonEmpty(config.analysesDir);
   if (explicit) return normalizeAnalysesDir(explicit);
   const home = nonEmpty(config.homeDir) ?? homedir();
-  const configPath = resolve(nonEmpty(config.configPath) ?? join(home, DEFAULT_CONFIG_PATH));
-  const file = existsSync(configPath) ? readHostConfigFile(configPath) : null;
+  const env = config.env ?? process.env;
+  const requestedConfigPath = selectedConfigPath(config, env);
+  const configPath = requestedConfigPath ?? resolve(join(home, DEFAULT_CONFIG_PATH));
+  const file = requestedConfigPath
+    ? readHostConfigFile(configPath, true)
+    : nonEmpty(env[nonEmpty(config.envVarName) ?? DEFAULT_VAULT_ENV])
+      ? null
+      : readHostConfigFile(configPath);
   const fromFile = nonEmpty(file?.omniwatchAnalysesDir) ?? nonEmpty(file?.analysesDir);
   return normalizeAnalysesDir(fromFile ?? DEFAULT_ANALYSES_DIR);
 }

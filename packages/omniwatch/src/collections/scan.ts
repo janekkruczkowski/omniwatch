@@ -332,6 +332,8 @@ function sameGoal(request: AnalysisRequest, settings: ScanSettings): boolean {
 
 interface ScanCandidate {
   sourceRef: SourceRef;
+  /** Account/channel that listed this video; distinct from the video's sourceId. */
+  listingSourceId: string | null;
   canonicalUrl: string;
   title: string | null;
   ordinal: number | null;
@@ -474,7 +476,7 @@ export async function runScan(options: ScanOptions): Promise<ScanOutcome> {
   let hardFailure: OmniWatchError | null = null;
   let stopped = false;
 
-  const materialize: ListingMaterialize = (item, ordinal) => {
+  const materialize = (item: Parameters<ListingMaterialize>[0], ordinal: number | null, listingSourceId: string) => {
     const { plan, operation } = classifyScanItem(store, collectionId, settings, item);
     let resolved = operation;
     let runItemState: RunItemState;
@@ -504,6 +506,7 @@ export async function runScan(options: ScanOptions): Promise<ScanOutcome> {
     if (!resolved) return null;
     const candidate: ScanCandidate = {
       sourceRef: item.sourceRef,
+      listingSourceId,
       canonicalUrl: item.sourceRef.canonicalUrl,
       title: item.title ?? null,
       ordinal,
@@ -524,7 +527,7 @@ export async function runScan(options: ScanOptions): Promise<ScanOutcome> {
         port: deps.source,
         sourceRef,
         runId,
-        materialize,
+        materialize: (item, ordinal) => materialize(item, ordinal, sourceRef.sourceId),
         confirmPaidListing: request.confirmPaidListing,
         pageSize: request.pageSize,
         maxPages: request.maxPagesPerSource ?? null,
@@ -707,12 +710,14 @@ export async function runScan(options: ScanOptions): Promise<ScanOutcome> {
             settings.language,
           );
           analysed += 1;
-          analysedBySource.set(candidate.sourceRef.sourceId, (analysedBySource.get(candidate.sourceRef.sourceId) ?? 0) + 1);
+          const summarySourceId = candidate.listingSourceId ?? candidate.sourceRef.sourceId;
+          analysedBySource.set(summarySourceId, (analysedBySource.get(summarySourceId) ?? 0) + 1);
           if (!links.includes(candidate.canonicalUrl)) links.push(candidate.canonicalUrl);
         } else if (summary.state === "failed") {
           markItem("failed");
           failedItems += 1;
-          failedBySource.set(candidate.sourceRef.sourceId, (failedBySource.get(candidate.sourceRef.sourceId) ?? 0) + 1);
+          const summarySourceId = candidate.listingSourceId ?? candidate.sourceRef.sourceId;
+          failedBySource.set(summarySourceId, (failedBySource.get(summarySourceId) ?? 0) + 1);
           pushNote(`${candidate.sourceRef.sourceId}: ${summary.message ?? "blad analizy"}`);
         } else if (summary.state === "budget_paused") {
           markItem("pending");
@@ -761,11 +766,11 @@ export async function runScan(options: ScanOptions): Promise<ScanOutcome> {
     fullChannel: listing.fullChannel,
     pagesRead: listing.pagesRead,
     newItems: candidates.filter(
-      (candidate) => candidate.sourceRef.sourceId === listing.sourceRef.sourceId && candidate.needsWork,
+      (candidate) => candidate.listingSourceId === listing.sourceRef.sourceId && candidate.needsWork,
     ).length,
     analysed: analysedBySource.get(listing.sourceRef.sourceId) ?? 0,
     failed: failedBySource.get(listing.sourceRef.sourceId) ?? 0,
-    pending: deferred.filter((candidate) => candidate.sourceRef.sourceId === listing.sourceRef.sourceId).length,
+    pending: deferred.filter((candidate) => candidate.listingSourceId === listing.sourceRef.sourceId).length,
     errors: listing.errors,
   }));
   const spent = readSpentCost(store, operations);
@@ -877,6 +882,7 @@ function collectBacklog(
       if (!sameGoal(operation.request, settings)) continue;
       found.push({
         sourceRef: operation.request.sourceRef,
+        listingSourceId: null,
         canonicalUrl: operation.request.sourceRef.canonicalUrl,
         title: null,
         ordinal: null,

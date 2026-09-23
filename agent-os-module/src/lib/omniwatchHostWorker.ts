@@ -11,6 +11,7 @@
  * Secrets stay in the environment: the entry passes env-var NAMES, never values.
  */
 
+import { mkdirSync } from "node:fs";
 import path from "node:path";
 import type { MediaInfo, MediaPart, SourceRef } from "../../../packages/omniwatch/src/contracts/types.ts";
 
@@ -25,6 +26,8 @@ export interface HostWorkerOptions {
   language?: string;
   maxFramesPerPart?: number;
   cacheHours?: number;
+  env?: NodeJS.ProcessEnv;
+  onReady?: () => void;
   log?: (line: string) => void;
 }
 
@@ -46,24 +49,32 @@ export async function runHostWorker(options: HostWorkerOptions): Promise<HostWor
   const core = await import(options.corePath);
   const hostConfig = await import("@/lib/config");
   const hostEngine = await import("@/lib/omniwatch");
-  const memoryModule = await import("@/lib/omniwatchMemory");
+  const hostMemoryModule = await import("@/lib/omniwatchHost");
+  const env = options.env ?? process.env;
 
   const hostSettings = (hostConfig.config ?? {}) as typeof hostConfig.config & {
     omniwatch?: { language?: string; maxFrames?: number; cacheHours?: number; model?: string };
     dashscopeApi?: string;
   };
-  const vaultRoot = hostSettings.vaultRoot ?? options.memoryRoot ?? null;
-  if (typeof vaultRoot !== "string" || vaultRoot.trim() === "") {
-    throw new core.OmniWatchError("missing_config", "Agent OS nie ma skonfigurowanego vaultRoot; ustaw go przed analiza.", {
-      action: { label: "ustaw vaultRoot w ~/.agentic-os/config.json", kind: "fix_config" },
-    });
-  }
-
   const omniSettings = hostSettings.omniwatch ?? {};
   const language = options.language ?? omniSettings.language ?? "pl";
   const maxFramesPerPart = options.maxFramesPerPart ?? omniSettings.maxFrames ?? 2400;
   const cacheHours = options.cacheHours ?? omniSettings.cacheHours ?? 48;
   const dataDir = path.resolve(options.dataDir);
+  const hostMemory = hostMemoryModule.createOmniWatchHost({
+    vaultRoot: options.memoryRoot,
+    configPath: env.AGENTIC_OS_CONFIG,
+    env,
+    model: {
+      modelName: omniSettings.model ?? "qwen3.8-omni-flash",
+      complete: async ({ system, user }: { system: string; user: string }) => {
+        const answer = await hostEngine.run("model", ["--prompt", `${system}\n\n${user}`]);
+        return String(answer);
+      },
+    },
+  });
+  const vaultRoot = hostMemory.vaultRoot;
+  mkdirSync(dataDir, { recursive: true });
 
   const store = core.openSqliteStore({
     path: path.join(dataDir, "state.sqlite"),
@@ -75,8 +86,8 @@ export async function runHostWorker(options: HostWorkerOptions): Promise<HostWor
     memoryRoot: vaultRoot,
     language,
     modelName: omniSettings.model ?? "qwen3.8-omni-flash",
-    apiKey: () => process.env.DASHSCOPE_API_KEY ?? hostEngine.apiKey?.() ?? null,
-    apiBaseUrl: () => process.env.DASHSCOPE_API ?? hostSettings.dashscopeApi ?? null,
+    apiKey: () => env.DASHSCOPE_API_KEY ?? hostEngine.apiKey?.() ?? null,
+    apiBaseUrl: () => env.DASHSCOPE_API ?? hostSettings.dashscopeApi ?? null,
     maxFramesPerPart: () => maxFramesPerPart,
     cacheHours: () => cacheHours,
   };
@@ -131,16 +142,7 @@ export async function runHostWorker(options: HostWorkerOptions): Promise<HostWor
     },
   });
 
-  const memory = memoryModule.createVaultMemory({
-    root: vaultRoot,
-    model: {
-      modelName: configPort.modelName,
-      complete: async ({ system, user }: { system: string; user: string }) => {
-        const answer = await hostEngine.run("model", ["--prompt", `${system}\n\n${user}`]);
-        return String(answer);
-      },
-    },
-  });
+  const memory = hostMemory.memory;
 
   const deps = {
     clock: core.systemClock(),
@@ -153,6 +155,7 @@ export async function runHostWorker(options: HostWorkerOptions): Promise<HostWor
   };
 
   try {
+    options.onReady?.();
     const result = await core.runWorker({
       deps,
       operationIds: options.operationIds ?? null,
