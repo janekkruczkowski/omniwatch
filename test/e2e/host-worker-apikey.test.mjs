@@ -163,3 +163,56 @@ test("LF §7: the host worker resolves the host's async API key before the provi
   }
   assert.equal(operation?.state, "delivered", why);
 });
+
+/* R3: the integration must work with the host's protected two-argument uploader. */
+
+test("R3: a refresh upload goes through the host's two-argument upload and forgets only the refused URL", async (t) => {
+  const { uploadThroughHost } = await import("../../agent-os-module/src/lib/omniwatchHostWorker.ts");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "omni-host-upload-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const part = path.join(dir, "part_2_1.mp4");
+  fs.writeFileSync(part, "x");
+  const meta = path.join(dir, "oss.json");
+  fs.writeFileSync(meta, JSON.stringify({
+    "part_2_0.mp4": { url: "oss://keep/0", at: Date.now() },
+    "part_2_1.mp4": { url: "oss://refused/1", at: Date.now() },
+  }));
+  const calls = [];
+  // A host upload exactly like the protected `src/lib/omniwatch.ts`: cache-first.
+  const hostUpload = async (...args) => {
+    calls.push(args);
+    const known = fs.existsSync(meta) ? JSON.parse(fs.readFileSync(meta, "utf8")) : {};
+    const hit = known[path.basename(args[0])];
+    if (hit) return { url: hit.url, reused: true };
+    known[path.basename(args[0])] = { url: "oss://fresh/1", at: Date.now() };
+    fs.writeFileSync(meta, JSON.stringify(known));
+    return { url: "oss://fresh/1", reused: false };
+  };
+
+  const cached = await uploadThroughHost(hostUpload, part, "sk-test");
+  assert.deepEqual(cached, { url: "oss://refused/1", reused: true }, "no refresh: the host cache is used");
+  const fresh = await uploadThroughHost(hostUpload, part, "sk-test", { refresh: true });
+  assert.deepEqual(fresh, { url: "oss://fresh/1", reused: false }, "refresh: a new object");
+  for (const args of calls) assert.equal(args.length, 2, "the host uploader is called with (src, key) only");
+  const known = JSON.parse(fs.readFileSync(meta, "utf8"));
+  assert.equal(known["part_2_0.mp4"].url, "oss://keep/0", "other parts keep their cached URL");
+
+  // No cache file at all: refresh simply uploads.
+  fs.rmSync(meta);
+  const first = await uploadThroughHost(hostUpload, part, "sk-test", { refresh: true });
+  assert.equal(first.reused, false);
+});
+
+test("R3: integration files never pass extra arguments to the protected host uploader", () => {
+  const files = [
+    "agent-os-module/src/lib/omniwatchHostWorker.ts",
+    "agent-os-module/src/lib/omniwatchPanelRuntime.ts",
+  ];
+  for (const rel of files) {
+    const text = fs.readFileSync(path.join(repo, rel), "utf8");
+    assert.doesNotMatch(text, /(?:hostEngine|legacy)\.upload\(/, `${rel} must go through uploadThroughHost`);
+  }
+  // The protected host file keeps the signature every installed host has.
+  const host = fs.readFileSync(path.join(repo, "agent-os-module/src/lib/omniwatch.ts"), "utf8");
+  assert.match(host, /export async function upload\(src: string, key: string\)/);
+});

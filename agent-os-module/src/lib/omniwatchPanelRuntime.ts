@@ -55,6 +55,7 @@ import { OperationJournal } from "../../../packages/omniwatch/src/storage/operat
 import { createSourceRegistry, keyframeAlignedStart } from "../../../packages/omniwatch/src/sources/index.ts";
 import { openSqliteStore } from "../../../packages/omniwatch/src/storage/index.ts";
 import { createOmniWatchHost, type OmniWatchHost } from "./omniwatchHost.ts";
+import { uploadThroughHost } from "./omniwatchHostWorker.ts";
 import type { HostModelPort } from "./omniwatchMemory.ts";
 import { registerDurableJobReader } from "./omniwatchJobs.ts";
 import type { Job } from "./omniwatchJobs.ts";
@@ -298,7 +299,7 @@ export function createPanelRuntime(options: { env?: NodeJS.ProcessEnv } = {}): P
       const legacy = (await hostModules()).omniwatch;
       const key = config.apiKey();
       if (!key) throw new Error("Brak klucza API dla uploadu materialu.");
-      const uploaded = await legacy.upload(part.localPath, key, resolveOptions);
+      const uploaded = await uploadThroughHost(legacy.upload, part.localPath, key, resolveOptions);
       return uploaded.url;
     },
     costForUsage: ({ inputTokens, outputTokens }) => panelCostForUsage(inputTokens, outputTokens),

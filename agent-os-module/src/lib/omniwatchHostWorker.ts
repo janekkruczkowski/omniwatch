@@ -12,8 +12,44 @@
  */
 
 import { existsSync, mkdirSync } from "node:fs";
+import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { MediaInfo, MediaPart, SourceRef } from "../../../packages/omniwatch/src/contracts/types.ts";
+
+/** The host's uploader, as every Agent OS release ships it: `(file, key)`. */
+export type HostUpload = (src: string, key: string) => Promise<{ url: string; reused: boolean }>;
+
+/**
+ * Upload one part through the host's own uploader, optionally forcing a new object.
+ *
+ * `src/lib/omniwatch.ts` is a protected host file: the installer never replaces it, so
+ * the integration must work with the host's two-argument `upload(src, key)`. The host
+ * caches oss:// URLs in `<dir>/oss.json` keyed by file name; when Model Studio refused
+ * the cached URL (R2-03: 400 "URL not valid"), forgetting that one entry makes the
+ * host upload a fresh object. A third argument would be ignored by older hosts and
+ * breaks the host's typecheck (R3).
+ */
+export async function uploadThroughHost(
+  upload: HostUpload,
+  src: string,
+  key: string,
+  options?: { refresh?: boolean },
+): Promise<{ url: string; reused: boolean }> {
+  if (options?.refresh) {
+    const meta = path.join(path.dirname(src), "oss.json");
+    try {
+      const known = JSON.parse(await readFile(meta, "utf8")) as Record<string, unknown> | null;
+      const name = path.basename(src);
+      if (known && typeof known === "object" && Object.prototype.hasOwnProperty.call(known, name)) {
+        delete known[name];
+        await writeFile(meta, JSON.stringify(known));
+      }
+    } catch {
+      /* no cache yet: the host uploads anyway */
+    }
+  }
+  return upload(src, key);
+}
 
 export interface HostWorkerOptions {
   /** Absolute file URL of the shared core entry (checkout `src/index.ts` or installed dist). */
@@ -169,7 +205,7 @@ export async function runHostWorker(options: HostWorkerOptions): Promise<HostWor
       // used to pass a file label, which could never authenticate.
       const key = configPort.apiKey();
       if (!key) throw new Error("Brak klucza API dla uploadu materialu.");
-      const uploaded = await hostEngine.upload(part.localPath, key, resolveOptions);
+      const uploaded = await uploadThroughHost(hostEngine.upload, part.localPath, key, resolveOptions);
       return uploaded.url;
     },
   });
