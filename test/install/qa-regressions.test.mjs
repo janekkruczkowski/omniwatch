@@ -23,6 +23,7 @@ import {
   dashscopeHost,
   uploadPolicyUrl,
 } from "../../packages/omniwatch/src/contracts/endpoints.ts";
+import { OmniWatchError } from "../../packages/omniwatch/src/contracts/errors.ts";
 import { loadStandaloneConfig, runtimeConfigDocument } from "../../apps/standalone/config.mjs";
 import { createFixtureSource, createRuntimeWiring } from "../../packages/omniwatch/src/runtime/poc.ts";
 import { createStandaloneServer } from "../../apps/standalone/server.mjs";
@@ -195,7 +196,7 @@ test("ISSUE-003: the UI wires a terminal error state, with a retry control", () 
   const html = fs.readFileSync(path.join(repo, "apps/standalone/static/index.html"), "utf8");
   // Static wiring only: the BEHAVIOUR is covered by the script-execution tests below.
   assert.match(html, /on\('error', d => fail\(/, "the SSE error event must reach the terminal handler");
-  assert.match(html, /es\.onerror = \(\) => \{[\s\S]{0,200}?fail\(/, "a transport failure must also be terminal");
+  assert.match(html, /stream\.onerror = \(\) => \{[\s\S]{0,500}?fail\(/, "a transport failure must also be terminal");
   assert.doesNotMatch(html, /es\.onerror = \(\) => \{ if \(es\) finish\(\); \}/, "the old silent finish must be gone");
   const i18n = JSON.parse(fs.readFileSync(path.join(repo, "apps/standalone/static/i18n.json"), "utf8"));
   for (const lang of Object.keys(i18n)) {
@@ -278,6 +279,7 @@ function createElementStore() {
         listeners.get(key).push(fn);
       },
       dispatch(type, event = {}) {
+        if (type === "click" && typeof el.onclick === "function") el.onclick({ preventDefault() {}, ...event });
         for (const fn of listeners.get(`${id}:${type}`) ?? []) fn({ preventDefault() {}, ...event });
       },
       /** `span` mirrors the legend markup the page rewrites on load. */
@@ -304,6 +306,7 @@ function createElementStore() {
   for (const id of elementIds) {
     makeElement(id);
   }
+  makeElement(".retry-action");
   return { elements, makeElement, setDynamicQuery: (fn) => (dynamic.query = fn) };
 }
 
@@ -351,7 +354,7 @@ function runPage() {
     querySelectorAll: () => [],
     createElement: () => {
       const el = dom.makeElement(`#dyn-${dom.elements.size}`);
-      el.querySelector = () => dom.elements.get("#retryBtn") ?? null;
+      el.querySelector = () => dom.elements.get(".retry-action") ?? null;
       return el;
     },
     addEventListener: () => {},
@@ -389,7 +392,7 @@ function runPage() {
   );
   // Submit a URL through the page's own form handler.
   dom.elements.get("#url").value = "https://youtu.be/SYNTHETIC01";
-  dom.setDynamicQuery((selector) => (selector === "#retryBtn" ? dom.elements.get("#retryBtn") : null));
+  dom.setDynamicQuery((selector) => (selector === ".retry-action" ? dom.elements.get(".retry-action") : null));
   return { dom, bodyClasses, sources, ready, submit: () => dom.elements.get("#f").dispatch("submit") };
 }
 
@@ -539,14 +542,51 @@ test("ISSUE-003 visible: a new run clears the failed state again", async () => {
   await new Promise((resolve) => setImmediate(resolve));
   await new Promise((resolve) => setImmediate(resolve));
   submit();
-  sources[sources.length - 1].emit("error", { error: "missing_config", message: "brak klucza" });
+  sources[sources.length - 1].emit("error", { error: "runtime_unavailable", message: "chwilowy blad" });
   assert.equal(bodyClasses.has("failed"), true, "the error marked the page");
 
   // Pressing Retry re-issues the same request and must return to the running state.
-  dom.elements.get("#retryBtn").dispatch("click");
+  dom.elements.get(".retry-action").dispatch("click");
   assert.equal(bodyClasses.has("failed"), false, "a retry must clear the failed state");
   assert.equal(bodyClasses.has("running"), true, "a retry must run again");
   assert.equal(mainVisible(bodyClasses).visible, true, "the retried run shows the work area");
+});
+
+test("ISSUE-010 UI: unknown outcome warns before retrying the same teardown operation", async () => {
+  const { dom, bodyClasses, sources, submit } = runPage();
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  dom.elements.get("#mTear").dispatch("click");
+  dom.elements.get("#q").value = "rozbierz film";
+  submit();
+  assert.match(sources[0].url, /mode=teardown/);
+  sources[0].emit("operation", { operationId: "op_fixture_010" });
+  sources[0].emit("error", { error: "outcome_unknown", operationId: "op_fixture_010", message: "Wynik wywołania nieznany." });
+  assert.equal(bodyClasses.has("failed"), true);
+  assert.equal(sources.length, 1, "an error never starts a second provider request");
+  assert.match(dom.elements.get(".retry-action").innerHTML, /możliwy dodatkowy koszt/);
+  assert.match(pageHtml, /body\.failed \.follow\{display:none\}/, "follow-up controls stay hidden on failure");
+  assert.doesNotMatch(pageHtml, /id="retryBtn"/, "error cards do not share a duplicate id");
+  dom.elements.get(".retry-action").dispatch("click");
+  assert.equal(sources.length, 2);
+  assert.equal(dom.elements.get(".retry-action").disabled, true, "the old decision cannot be clicked twice");
+  assert.match(sources[1].url, /mode=teardown/);
+  assert.match(sources[1].url, /retryOperation=op_fixture_010&confirmRetry=1/);
+  assert.equal(bodyClasses.has("failed"), false);
+  assert.match(pageHtml, /body\.done \.hero\{display:none\}/, "a delivered result keeps the hero form out of view");
+});
+
+test("ISSUE-010 UI: configuration and URL errors return to the form without retrying", async () => {
+  for (const error of ["missing_config", "invalid_input"]) {
+    const { dom, bodyClasses, sources, submit } = runPage();
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    submit();
+    sources[0].emit("error", { error, message: "Popraw ustawienia." });
+    dom.elements.get(".retry-action").dispatch("click");
+    assert.equal(sources.length, 1, `${error} must not issue a new request`);
+    assert.equal(bodyClasses.has("failed"), false);
+  }
 });
 
 /* ------------------------------------------------------------------ ISSUE-007 -- */
@@ -628,8 +668,10 @@ function plantCachedVideo(cacheDir, id) {
  * is the last resort only because a real socket is a stronger test - the socket-based
  * tests above still cover the transport.
  */
-async function driveWatch(app, { url, q = "", lang = "pl", mode = "summary" }) {
+async function driveWatch(app, { url, q = "", lang = "pl", mode = "summary", retryOperation = null, confirmRetry = false }) {
   const query = new URLSearchParams({ url, q, lang, mode });
+  if (retryOperation) query.set("retryOperation", retryOperation);
+  if (confirmRetry) query.set("confirmRetry", "1");
   const req = {
     method: "GET",
     url: `/api/watch?${query.toString()}`,
@@ -657,6 +699,69 @@ async function driveWatch(app, { url, q = "", lang = "pl", mode = "summary" }) {
   await app.handle(req, res);
   return { body };
 }
+
+function sseData(body, name) {
+  const frame = body.split("\n\n").find((part) => part.startsWith(`event: ${name}\n`));
+  return frame ? JSON.parse(frame.split("\n").find((line) => line.startsWith("data: ")).slice(6)) : null;
+}
+
+test("ISSUE-010: unknown outcome needs explicit same-operation retry and never auto-calls twice", async () => {
+  const { appRoot, dataDir, cacheDir } = watchShell();
+  const calls = [];
+  const model = {
+    modelName: "stub-unknown-once",
+    async call(request) {
+      calls.push({ operationId: request.operationId, attemptId: request.attemptId });
+      if (calls.length === 1) throw new OmniWatchError("outcome_unknown", "Polaczenie przerwane po wyslaniu.");
+      return {
+        text: "## Summary\n- [0:05] punkt",
+        usage: { inputTokens: 10, outputTokens: 5, costUsd: 0.001, costKnown: true },
+        completed: true,
+      };
+    },
+  };
+  const app = createStandaloneServer({
+    appRoot, dataDir, cacheDir, model,
+    source: createFixtureSource({ durationSeconds: 16 }),
+    env: { OMNIWATCH_APP_ROOT: appRoot, OMNIWATCH_DATA_DIR: dataDir },
+  });
+  const url = "https://youtu.be/SYNTHETIC01";
+  const first = await driveWatch(app, { url, q: "rozbierz film", mode: "teardown" });
+  const operationId = sseData(first.body, "operation")?.operationId;
+  assert.ok(operationId, "the UI receives the durable operation identity");
+  assert.equal(sseData(first.body, "error")?.error, "outcome_unknown");
+  assert.equal(sseData(first.body, "error")?.operationId, operationId);
+  assert.equal(calls.length, 1);
+
+  const ordinary = await driveWatch(app, { url, q: "rozbierz film", mode: "teardown" });
+  assert.equal(sseData(ordinary.body, "error")?.error, "outcome_unknown");
+  assert.equal(calls.length, 1, "ordinary Retry cannot repeat an uncertain paid call");
+  const unconfirmed = await driveWatch(app, { url, retryOperation: operationId, mode: "summary" });
+  assert.equal(sseData(unconfirmed.body, "error")?.error, "invalid_input");
+  assert.equal(calls.length, 1, "an operation id alone is not consent");
+
+  const explicit = await driveWatch(app, { url, retryOperation: operationId, confirmRetry: true, mode: "summary" });
+  assert.ok(sseData(explicit.body, "done"), explicit.body);
+  assert.deepEqual(calls.map((call) => call.operationId), [operationId, operationId], "the approved retry reuses the same operation");
+  assert.notEqual(calls[0].attemptId, calls[1].attemptId, "retry gets a fresh attempt identity");
+  const duplicate = await driveWatch(app, { url, retryOperation: operationId, confirmRetry: true });
+  assert.equal(sseData(duplicate.body, "error")?.error, "invalid_input");
+  assert.equal(calls.length, 2, "confirmation cannot launch the same completed operation twice");
+
+  const wiring = createRuntimeWiring({
+    dataDir, config: runtimeConfigDocument(loadStandaloneConfig({ appRoot, env: {} })), environment: {},
+  });
+  try {
+    const operation = wiring.store.getOperation(operationId);
+    assert.equal(operation.request.mode, "teardown", "form mode cannot replace the saved retry mode");
+    assert.equal(operation.request.question, "rozbierz film");
+    assert.equal(operation.state, "delivered");
+    assert.deepEqual(wiring.store.listAttempts(operationId).map((attempt) => attempt.phase).sort(), ["response", "unknown"],
+      "the first uncertain attempt remains in the audit trail after a paid retry");
+  } finally {
+    wiring.close();
+  }
+});
 
 test("ISSUE-007: a live request keeps ownership, so a concurrent run is not a takeover", async (t) => {
   const { appRoot, dataDir, cacheDir } = watchShell();

@@ -15,6 +15,7 @@
  *   - `costKnown` is false when the provider reported no usage, instead of a fake zero.
  */
 
+import { randomUUID } from "node:crypto";
 import { isOmniWatchError, OmniWatchError, toOmniWatchError } from "../contracts/errors.ts";
 import { computeAnalysisId, computeAnalysisKey, sha256Hex } from "../contracts/keys.ts";
 import type {
@@ -222,7 +223,9 @@ export async function analyze(request: AnalysisRequest, deps: AnalysisDeps): Pro
     promptVersion: string,
   ): Promise<CallOutcome> => {
     attemptCounter += 1;
-    const attemptId = `att_${operationId}_${attemptCounter}`;
+    // A confirmed retry runs the same operation again. Give every paid call a new
+    // journal identity so its old unknown/response evidence remains immutable.
+    const attemptId = `att_${operationId}_${attemptCounter}_${randomUUID()}`;
     const requestSummary = JSON.stringify({
       model: deps.model.modelName,
       promptVersion,

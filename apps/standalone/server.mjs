@@ -437,6 +437,17 @@ export async function runWatchPipeline(options) {
   const { wiring, emit, request, config, analysisId } = options;
   emit("stage", { step: "download" });
 
+  const retryId = request.retryOperationId ?? null;
+  const prior = retryId ? wiring.store.getOperation(retryId) : null;
+  if (retryId && (!prior || prior.state !== "outcome_unknown" || request.confirmRetry !== true)) {
+    throw new OmniWatchError("invalid_input", "Ponowienie wymaga jawnego potwierdzenia operacji o nieznanym wyniku.", {
+      operationId: retryId,
+    });
+  }
+  // The durable request, not mutable form fields, defines a paid retry. This keeps
+  // teardown/summary, language and conversation parent identical to the first call.
+  const savedRequest = prior?.request ?? null;
+
   if (!config.apiKeyPresent) {
     throw new OmniWatchError(
       "missing_config",
@@ -445,7 +456,7 @@ export async function runWatchPipeline(options) {
     );
   }
 
-  const sourceRef = await wiring.deps.source.resolve({ url: request.url });
+  const sourceRef = savedRequest?.sourceRef ?? await wiring.deps.source.resolve({ url: request.url });
   const info = await wiring.deps.source.prepare(sourceRef);
   const legacyId = sourceRef.legacyId ?? sourceRef.sourceId;
   emit("meta", {
@@ -465,7 +476,7 @@ export async function runWatchPipeline(options) {
   emit("uploaded", { reused: info.reusedUpload === true });
   emit("stage", { step: "watch", parts: parts.length, fps: fpsFor(info.durationSeconds) });
 
-  const analysisRequest = {
+  const analysisRequest = savedRequest ?? {
     sourceRef,
     mode: request.mode,
     focus: null,
@@ -511,10 +522,22 @@ export async function runWatchPipeline(options) {
     // Resolve interrupted work before admission. A previously started paid call is
     // marked outcome_unknown here, so claiming the same key cannot execute it again.
     await recoverPendingWork(wiring.deps, journal);
-    enqueued = enqueueAnalysis({ store: wiring.store, request: analysisRequest });
+    if (retryId) {
+      const current = journal.requireOperation(retryId);
+      if (current.state !== "outcome_unknown") {
+        throw new OmniWatchError("invalid_input", "Operacja nie czeka juz na decyzje o ponowieniu.", { operationId: retryId });
+      }
+      journal.resolveUnknownOutcome(retryId, "retry");
+      enqueued = { operation: journal.requireOperation(retryId), created: false };
+    } else {
+      enqueued = enqueueAnalysis({ store: wiring.store, request: analysisRequest });
+    }
+    emit("operation", { operationId: enqueued.operation.id });
 
     if (enqueued.operation.state === "outcome_unknown") {
-      throw new OmniWatchError("outcome_unknown", "Wynik poprzedniego wywolania modelu jest nieznany; sprawdz operacje przed ponowieniem.");
+      throw new OmniWatchError("outcome_unknown", "Wynik poprzedniego wywolania modelu jest nieznany; sprawdz operacje przed ponowieniem.", {
+        operationId: enqueued.operation.id,
+      });
     }
 
     // A repeat of already-finished work shows the existing answer instead of paying for
@@ -552,6 +575,7 @@ export async function runWatchPipeline(options) {
     throw new OmniWatchError(
       summary.errorClass ?? "runtime_unavailable",
       summary.message ?? "Analiza nie zakonczyla sie poprawnie.",
+      { operationId: enqueued.operation.id },
     );
   }
 
@@ -745,6 +769,8 @@ async function handleWatch(req, res, context, url) {
   const question = url.searchParams.get("q") ?? "";
   const conversationId = url.searchParams.get("conversation");
   const parentTurnId = url.searchParams.get("parent");
+  const retryOperationId = url.searchParams.get("retryOperation");
+  const confirmRetry = url.searchParams.get("confirmRetry") === "1";
 
   res.writeHead(200, sseHeaders());
   const emit = (name, data) => {
@@ -756,18 +782,18 @@ async function handleWatch(req, res, context, url) {
     if (context.runWatch) {
       await context.runWatch({
         emit,
-        request: { url: target, question, language, mode, conversationId, parentTurnId },
+        request: { url: target, question, language, mode, conversationId, parentTurnId, retryOperationId, confirmRetry },
       });
     } else {
       await context.defaultWatch({
         emit,
-        request: { url: target, question, language, mode, conversationId, parentTurnId },
+        request: { url: target, question, language, mode, conversationId, parentTurnId, retryOperationId, confirmRetry },
       });
     }
   } catch (error) {
     const errorClass = error?.errorClass ?? "runtime_unavailable";
     const message = String(error?.message ?? error).slice(0, 600);
-    emit("error", { error: errorClass, message });
+    emit("error", { error: errorClass, message, operationId: error?.operationId ?? null });
   } finally {
     if (!res.writableEnded) res.end();
   }

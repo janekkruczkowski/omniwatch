@@ -54,7 +54,9 @@ body.running main{display:grid}
    visible; only the very first, untouched page hides `main`. */
 body.failed main,body.done main{display:grid}
 body.failed .steps,body.done .steps{display:none}
-body.failed .hero{display:none}
+body.failed .hero,body.done .hero{display:none}
+body.failed .follow{display:none}
+body.failed #progressCard{display:none}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:18px}
 .left{position:sticky;top:16px;display:flex;flex-direction:column;gap:16px}
 .player{aspect-ratio:16/9;width:100%;border-radius:12px;border:0;background:#000}
@@ -133,6 +135,9 @@ body.idle .follow{display:block}
 .parts i.on{background:var(--accent);animation:pulse 1s infinite} .parts i.ok{background:var(--ok);animation:none}
 @keyframes pulse{50%{opacity:.4}}
 .err{color:#ff8fa3;white-space:pre-wrap;font:13px "JetBrains Mono",monospace}
+.retry{display:flex;flex-wrap:wrap;gap:10px;margin-top:16px}
+.retry .btn{font:700 14px Inter,system-ui,sans-serif}
+.err-help{color:var(--muted);font-size:14px;margin:12px 0 0}
 @media (max-width:980px){main{grid-template-columns:1fr}.left{position:static}}
 @media (max-width:560px){header{padding:14px 16px}.pill{display:none}.ask .bar{flex-direction:column;align-items:stretch}
   .visual li{grid-template-columns:1fr}.visual li img{width:100%}}
@@ -166,7 +171,7 @@ body.idle .follow{display:block}
       <div class="meta"><h2 id="title"></h2><div id="sub">&nbsp;</div>
         <span class="newvid" id="newvid" onclick="location.reload()"></span></div>
     </div>
-    <div class="card">
+    <div class="card" id="progressCard">
       <div class="label" style="justify-content:space-between"><span id="progressLabel"></span><span class="timer" id="timer">0.0s</span></div>
       <div class="steps">
         <div class="step" data-s="download"><i></i><span id="stepDownload"></span><small></small></div>
@@ -215,9 +220,10 @@ function applyLang() {
   $('#legend').querySelector('span').innerHTML = T().legend;
   $('#watchLabel').textContent = T().stepWatchOne;
   if (!$('#title').textContent || !document.body.classList.contains('running')) $('#title').textContent = T().fetching;
-  chips($('#heroChips'), '#q'); chips($('#followChips'), '#q2', () => ask($('#q2').value));
+  chips($('#heroChips'), '#q'); chips($('#followChips'), '#q2', () => ask($('#q2').value, { followup: true }));
 }
-let vid = null, url = null, strip = [], seconds = 0, t0 = 0, timerId = null, es = null, card = null, question = '', partsDone = 0, lastAnswer = '';
+let vid = null, url = null, strip = [], seconds = 0, t0 = 0, timerId = null, es = null, card = null, partsDone = 0, lastAnswer = '';
+let activeRequest = null, activeOperationId = null;
 /** True once this run reached a terminal state, so a late transport error cannot
  *  rewrite the message the server already sent (or a delivered answer). */
 let ended = false;
@@ -314,10 +320,10 @@ function highlight(text) {  // light up the strip tiles whose span contains a ti
   $('#legend').style.display = cited.length ? 'flex' : 'none';
 }
 
-function newCard(q) {
+function newCard(q, requestMode = mode) {
   document.querySelectorAll('.qa').forEach(c => c.classList.add('old'));
   card = document.createElement('div'); card.className = 'card qa';
-  const tear = mode === 'teardown';
+  const tear = requestMode === 'teardown';
   card.innerHTML = `<div class="q"><span class="ico">${tear ? '🔧' : q ? '❓' : '📋'}</span><span>${tear ? T().teardownCard + (q ? ` — ${esc(q)}` : '') : q ? esc(q) : T().summaryCard}</span></div>
     <div class="md"><div class="pending" id="pending">${T().pendingDownload}</div></div>`;
   $('#answers').prepend(card);
@@ -349,54 +355,88 @@ function stopRun() {
   $('#timer').textContent = '';
 }
 
-function fail(message) {
+function fail(problem) {
   // The stream closes right after it reports a terminal error, and the EventSource's
   // own `onerror` fires for that close. Without this latch the generic transport text
   // ("fetch failed") replaced the real reason the server had just sent.
   if (ended) return;
   ended = true;
   stopRun();
-  // `failed` keeps `main` on screen (see the CSS above) so the error and Retry are
-  // actually visible; `idle` still opens the follow-up box. Dropping `running` alone
-  // hid the whole work area, which is what made an error look like a reset to the form.
+  const error = typeof problem === 'string' ? 'runtime_unavailable' : problem?.error || 'runtime_unavailable';
+  const message = typeof problem === 'string' ? problem : problem?.message || T().errorGeneric;
+  const operationId = typeof problem === 'object' ? problem?.operationId || activeOperationId : activeOperationId;
+  const failedRequest = activeRequest ? { ...activeRequest } : null;
+  const failedCard = card;
+  // `failed` keeps `main` on screen so the error and Retry remain visible, while
+  // the follow-up box stays hidden until a successful result arrives.
   document.body.classList.remove('running');
-  document.body.classList.add('idle', 'failed');
-  setStep('end');
+  document.body.classList.add('failed');
+  document.body.classList.remove('idle');
+  setStep(null);
   $('#strip').classList.remove('scanning');
   $('#parts').style.display = 'none';
   $('#wcount').textContent = '';
   $('#upinfo').textContent = '';
   $('#title').textContent = T().errorTitle;
   $('#sub').textContent = '';
-  if (card) {
-    const md = card.querySelector('.md');
+  if (failedCard) {
+    const md = failedCard.querySelector('.md');
     if (md) {
+      const unknown = error === 'outcome_unknown';
+      const paidRetry = unknown && operationId;
+      const help = unknown ? T().retryUnknownWarning : error === 'missing_config' ? T().configureHint : '';
+      const action = paidRetry ? T().retryUnknownConfirm : unknown ? T().checkResult : error === 'invalid_input' ? T().correctUrl
+        : error === 'missing_config' ? T().backToForm : error === 'runtime_unavailable' ? T().checkResult : T().retry;
       md.innerHTML = `<div class="err" role="alert">⚠ ${esc(message)}</div>` +
-        `<div class="retry"><button type="button" id="retryBtn">${T().retry}</button></div>`;
-      const retry = md.querySelector('#retryBtn');
-      if (retry) retry.addEventListener('click', () => { card.classList.add('old'); ask(question); });
+        (help ? `<p class="err-help">${esc(help)}</p>` : '') +
+        `<div class="retry"><button type="button" class="btn retry-action">${esc(action)}</button></div>`;
+      const retry = md.querySelector('.retry-action');
+      if (retry) retry.addEventListener('click', () => {
+        if (error === 'invalid_input' || error === 'missing_config') {
+          document.body.classList.remove('failed', 'done', 'idle');
+          $('#url').focus();
+          return;
+        }
+        if (!failedRequest) return;
+        retry.disabled = true;
+        failedCard.classList.add('old');
+        ask(failedRequest.question, {
+          snapshot: failedRequest,
+          retryOperationId: paidRetry ? operationId : null,
+          sourceCard: failedCard,
+        });
+      });
     }
   }
-  $('#url').focus();
+  if (error === 'invalid_input') $('#url').focus();
   $('#go').disabled = $('#go2').disabled = false;
 }
 
-function ask(q) {
+function ask(q, options = {}) {
   if (es) return;
-  q = (q || '').trim(); question = q;
-  if (document.querySelector('.qa') && mode === 'teardown') setMode('ask');  // follow-ups are questions
+  q = (q || '').trim();
+  if (options.followup) setMode('ask');
+  const request = options.snapshot ?? {
+    url, question: q, language: lang, mode,
+    conversationId, parentTurnId,
+  };
+  activeRequest = { ...request };
+  activeOperationId = options.retryOperationId ?? null;
   document.body.classList.add('running'); document.body.classList.remove('idle', 'failed', 'done');
   ended = false;
   $('#go').disabled = $('#go2').disabled = true; $('#q2').value = '';
   $('#legend').style.display = 'none'; $('#parts').style.display = 'none'; $('#wcount').textContent = ''; $('#upinfo').textContent = '';
-  partsDone = 0; lastAnswer = ''; newCard(q); window.scrollTo({top: 0, behavior: 'smooth'});
+  partsDone = 0; lastAnswer = ''; newCard(request.question, request.mode); window.scrollTo({top: 0, behavior: 'smooth'});
   t0 = performance.now(); clearInterval(timerId);
   timerId = setInterval(() => $('#timer').textContent = ((performance.now() - t0) / 1000).toFixed(1) + 's', 100);
 
-  const thread = `${conversationId ? `&conversation=${encodeURIComponent(conversationId)}` : ''}${parentTurnId ? `&parent=${encodeURIComponent(parentTurnId)}` : ''}`;
-  es = new EventSource(`/api/watch?url=${encodeURIComponent(url)}&q=${encodeURIComponent(q)}&lang=${lang}&mode=${mode}${thread}`);
-  const on = (ev, fn) => es.addEventListener(ev, e => fn(JSON.parse(e.data)));
+  const thread = `${request.conversationId ? `&conversation=${encodeURIComponent(request.conversationId)}` : ''}${request.parentTurnId ? `&parent=${encodeURIComponent(request.parentTurnId)}` : ''}`;
+  const retry = options.retryOperationId ? `&retryOperation=${encodeURIComponent(options.retryOperationId)}&confirmRetry=1` : '';
+  es = new EventSource(`/api/watch?url=${encodeURIComponent(request.url)}&q=${encodeURIComponent(request.question)}&lang=${encodeURIComponent(request.language)}&mode=${request.mode}${thread}${retry}`);
+  const stream = es, answerCard = card;
+  const on = (ev, fn) => stream.addEventListener(ev, e => fn(JSON.parse(e.data)));
   const finish = () => stopRun();
+  on('operation', d => { if (d.operationId) activeOperationId = d.operationId; });
   on('stage', d => {
     setStep(d.step);
     if (d.step === 'upload') pending(T().pendingUpload);
@@ -422,7 +462,7 @@ function ask(q) {
   on('uploaded', d => { $('#upinfo').textContent = d.reused ? T().cached : ''; });
   on('part_done', d => { $('#parts').children[d.i].className = 'ok'; $('#wcount').textContent = `${++partsDone}/${$('#parts').children.length}`; });
   on('merge', () => pending(T().pendingMerge));
-  const showAnswer = d => { lastAnswer = d.text; renderMd(card.querySelector('.md'), d.text); };
+  const showAnswer = d => { lastAnswer = d.text; renderMd(answerCard.querySelector('.md'), d.text); };
   on('answer', showAnswer);
   on('answer.text', showAnswer);
   on('turn', d => { if (d.conversationId) conversationId = d.conversationId; if (d.turnId) parentTurnId = d.turnId; });
@@ -440,20 +480,21 @@ function ask(q) {
     const cost = usage && usage.costKnown === true && typeof usage.costUsd === 'number'
       ? `<span>💰 <b>$${usage.costUsd.toFixed(3)}</b>${typeof tokens === 'number' ? ` · ${(tokens / 1000).toFixed(0)}k tokenów` : ''}</span>`
       : `<span>💰 <b>${T().statCostUnknown}</b></span>`;
-    card.insertAdjacentHTML('beforeend', `<div class="stats"><span>⏱ <b>${elapsed}s</b></span>${parts > 1 ? `<span>${T().statParts.replace('{n}', parts)}</span>` : ''}${cost}${reused ? `<span>${T().statReused}</span>` : ''}</div>`);
+    answerCard.insertAdjacentHTML('beforeend', `<div class="stats"><span>⏱ <b>${elapsed}s</b></span>${parts > 1 ? `<span>${T().statParts.replace('{n}', parts)}</span>` : ''}${cost}${reused ? `<span>${T().statReused}</span>` : ''}</div>`);
+    options.sourceCard?.remove();
     $('#q2').focus();
   });
-  on('error', d => fail(d && d.message ? d.message : T().errorGeneric));
-  es.onerror = () => {
+  on('error', d => fail(d));
+  stream.onerror = () => {
     // A transport failure before any answer is also terminal; never auto-reconnect,
     // because reconnecting would restart the whole (possibly paid) job.
-    if (es) fail(lastAnswer ? T().errorConnectionAfterAnswer : T().errorConnection);
+    if (es === stream) fail({ error: 'runtime_unavailable', message: lastAnswer ? T().errorConnectionAfterAnswer : T().errorConnection, operationId: activeOperationId });
   };
 }
 
 $('#f').addEventListener('submit', e => { e.preventDefault(); url = $('#url').value.trim(); if (url) ask($('#q').value); });
-$('#go2').addEventListener('click', () => ask($('#q2').value));
-for (const [ta, fn] of [['#q', () => $('#f').requestSubmit()], ['#q2', () => ask($('#q2').value)]])
+$('#go2').addEventListener('click', () => ask($('#q2').value, { followup: true }));
+for (const [ta, fn] of [['#q', () => $('#f').requestSubmit()], ['#q2', () => ask($('#q2').value, { followup: true })]])
   $(ta).addEventListener('keydown', e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey || (ta === '#q2' && !e.shiftKey))) { e.preventDefault(); fn(); } });
 </script>
 </body>
