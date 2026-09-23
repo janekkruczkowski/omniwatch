@@ -548,7 +548,8 @@ export async function runWatchPipeline(options) {
     emit("operation", { operationId: enqueued.operation.id });
 
     if (enqueued.operation.state === "outcome_unknown") {
-      throw new OmniWatchError("outcome_unknown", "Wynik poprzedniego wywolania modelu jest nieznany; sprawdz operacje przed ponowieniem.", {
+      const saved = enqueued.operation.errorMessage ? ` ${enqueued.operation.errorMessage}` : "";
+      throw new OmniWatchError("outcome_unknown", `Wynik poprzedniego wywolania modelu jest nieznany; sprawdz operacje przed ponowieniem.${saved}`, {
         operationId: enqueued.operation.id,
       });
     }

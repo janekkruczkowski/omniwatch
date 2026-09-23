@@ -664,6 +664,12 @@ test("LF: a long film runs its parts side by side; unknown parts are marked and 
   assert.match(error.message, /czesci 2, 4 \(z 5\)/);
   assert.match(error.message, /Gotowe czesci \(3\/5\)/);
 
+  // Coming back later with the same form: still gated, and still told which parts.
+  const again = await driveWatch(app, { url });
+  assert.equal(sseData(again.body, "error")?.error, "outcome_unknown");
+  assert.match(sseData(again.body, "error").message, /czesci 2, 4 \(z 5\)/);
+  assert.equal(calls.length, 5, "the ordinary resubmit pays nothing");
+
   round = 2;
   const retry = await driveWatch(app, { url, retryOperation: operationId, confirmRetry: true });
   assert.ok(sseData(retry.body, "done"), retry.body);

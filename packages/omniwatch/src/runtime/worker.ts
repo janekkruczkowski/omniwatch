@@ -269,7 +269,7 @@ export async function runOperation(
   if (outcome.errorClass === "outcome_unknown") {
     // The engine names the uncertain parts; that is what the retry decision is about.
     const reason = outcome.outcomeMessage ?? "Model nie potwierdzil zakonczenia odpowiedzi; wynik jest nieznany.";
-    journal.markOutcomeUnknown(operationId, reason);
+    journal.markOutcomeUnknown(operationId, reason, { replaceMessage: Boolean(outcome.outcomeMessage) });
     return {
       operationId,
       analysisKey,
