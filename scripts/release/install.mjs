@@ -796,6 +796,13 @@ function navFilesFor(options) {
       optional: true,
       missing: "nie istnieje - link Astros -> OmniWatch (SPEC F12) nie zostal zarejestrowany",
     },
+    // The Memory panel's Vault label shows the resolved Vault, not a fixed default.
+    {
+      name: "memory",
+      absolute: join(navRoot, "src", "components", "MemoryPanel.tsx"),
+      optional: true,
+      missing: "nie istnieje - etykieta Vaulta w panelu pamieci nie zostala podmieniona",
+    },
   ];
 }
 

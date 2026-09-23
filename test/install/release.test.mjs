@@ -189,6 +189,25 @@ function makeAgentOsHost() {
       "",
     ].join("\n"),
   );
+  // The Memory panel with the fixed Vault label the registrar replaces (QA 2026-09-23).
+  writeFileSync(
+    join(root, "source", "src", "components", "MemoryPanel.tsx"),
+    [
+      '"use client";',
+      "",
+      'import { useState } from "react";',
+      'import Panel from "./Panel";',
+      "",
+      "export default function MemoryPanel() {",
+      "  return (",
+      '    <div className="text-[11px]">',
+      "      Vault: <code>~/Documents/Obsidian Vault</code>",
+      "    </div>",
+      "  );",
+      "}",
+      "",
+    ].join("\n"),
+  );
   writeFileSync(
     join(root, "source", "src", "app", "api", "video", "auto", "assemble", "route.ts"),
     [
@@ -555,6 +574,52 @@ test("T16: the installer registers the Astros link but never touches Director or
   const rendered = readFileSync(assemblePath, "utf8");
   assert.ok(!rendered.includes("seconds?: number"), "no Director/assemble seconds patch applied");
   assert.ok(!rendered.includes("omni-assemble-validate"), "no assemble validation patch applied");
+});
+
+test("QA 2026-09-23: install delivers the library route and UI and shows the resolved Vault in Memory", () => {
+  const agentOs = makeAgentOsHost();
+  const memoryPath = join(agentOs, "source", "src", "components", "MemoryPanel.tsx");
+  const checked = runInstaller(["--target", "agent-os", "--root", agentOs, "--check"]);
+  assert.equal(checked.status, 0, checked.stderr);
+  assert.match(readFileSync(memoryPath, "utf8"), /~\/Documents\/Obsidian Vault/, "--check writes nothing");
+
+  const result = runInstaller(["--target", "agent-os", "--root", agentOs]);
+  assert.equal(result.status, 0, result.stderr);
+  for (const rel of [
+    "src/app/api/omniwatch/library/route.ts",
+    "src/app/api/omniwatch/library/handler.ts",
+    "src/components/OmniLibrary.tsx",
+    "src/components/OmniVaultLabel.tsx",
+    "src/app/api/omniwatch/jobs/handler.ts",
+    "src/lib/omniwatchPanelRuntime.ts",
+  ]) {
+    const installed = join(agentOs, "source", ...rel.split("/"));
+    assert.ok(existsSync(installed), `${rel} is installed`);
+    assert.deepEqual(readFileSync(installed), readFileSync(join(ROOT, "agent-os-module", ...rel.split("/"))), rel);
+  }
+  assert.ok(
+    release.manifest.shellIntegration.files.some((file) => file.path === "source/src/app/api/omniwatch/library/route.ts"),
+    "the release manifest declares the new route",
+  );
+  const memory = readFileSync(memoryPath, "utf8");
+  assert.doesNotMatch(memory, /~\/Documents\/Obsidian Vault/, "no fixed default Vault label");
+  assert.match(memory, /Vault: <OmniVaultLabel \/>/);
+  assert.equal(memory.split('import OmniVaultLabel from "./OmniVaultLabel";').length - 1, 1);
+  assert.ok(result.json.navFiles.includes("source/src/components/MemoryPanel.tsx"), JSON.stringify(result.json.navFiles));
+
+  const again = runInstaller(["--target", "agent-os", "--root", agentOs]);
+  assert.equal(again.status, 0, again.stderr);
+  assert.equal(readFileSync(memoryPath, "utf8"), memory, "re-install is idempotent");
+});
+
+test("QA 2026-09-23: a Memory panel without the default label is left alone and does not block install", () => {
+  const agentOs = makeAgentOsHost();
+  const memoryPath = join(agentOs, "source", "src", "components", "MemoryPanel.tsx");
+  writeFileSync(memoryPath, 'import Panel from "./Panel";\nexport default function MemoryPanel() { return <p>custom</p>; }\n');
+  const before = readFileSync(memoryPath);
+  const result = runInstaller(["--target", "agent-os", "--root", agentOs]);
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(readFileSync(memoryPath), before);
 });
 
 test("T16: the Astros link opens OmniWatch for that video and is registered exactly once", () => {

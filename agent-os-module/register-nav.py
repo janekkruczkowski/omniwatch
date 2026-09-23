@@ -8,12 +8,15 @@ What this registrar owns:
   anchors to mount it; otherwise it falls back to a top-level tab.
 * **The Astros link (SPEC F12)** - a fourth action chip on an Astros topic that opens
   OmniWatch for that video, so refreshing Astros does not start another paid analysis.
+* **The Memory Vault label** - `MemoryPanel.tsx` printed a fixed
+  "~/Documents/Obsidian Vault"; it now shows the Vault actually resolved at runtime
+  (`OmniVaultLabel`, which reads `/api/omniwatch/library`).
 
 It does **not** touch the Video Director, Blueprint or the film-production
 `api/video/auto/assemble` route: those stay in the film project, and the analysis
 release installs without deploying them.
 
-    python3 register-nav.py <agent-os>/source [--only sidebar,topbar,hermes,astros]
+    python3 register-nav.py <agent-os>/source [--only sidebar,topbar,hermes,astros,memory]
                             [--dry-run] [--path-prefix <p>] [--json]
 
 Every edit is idempotent and re-running repairs the tabs and the chip. A requested
@@ -58,6 +61,12 @@ CHIP = (
     '                    )}\n')
 CHIP_CSS = ('        .asx-act.omni{ color:#c58bff; border-color:rgba(197,139,255,.5); }'
             ' .asx-act.omni:hover{ box-shadow:0 0 18px rgba(197,139,255,.3); }\n')
+
+# The Memory panel's Vault label: a hard-coded default path replaced by the resolved one.
+MEMORY_MARKER = "OmniVaultLabel"
+MEMORY_ANCHOR = "Vault: <code>~/Documents/Obsidian Vault</code>"
+MEMORY_LABEL = "Vault: <OmniVaultLabel />"
+MEMORY_IMPORT = 'import OmniVaultLabel from "./OmniVaultLabel";\n'
 
 DRY_RUN = False
 
@@ -234,19 +243,42 @@ def patch_astros(src, _scout_top_level=None):
     return "chip added", True
 
 
+def patch_memory(src, _scout_top_level=None):
+    """Show the Vault actually in use instead of a fixed default path.
+
+    The label is display-only; the Memory panel's own reads are untouched. A file that
+    no longer carries the exact default label is left alone and reported, never guessed at.
+    """
+    path = f"{src}/src/components/MemoryPanel.tsx"
+    text = read(path)
+    if MEMORY_MARKER in text:
+        return "already added", False
+    imports = list(re.finditer(r'^import [^\n]*;\n', text, flags=re.M))
+    if MEMORY_ANCHOR not in text or not imports:
+        # Cosmetic only: a host whose panel no longer prints the default label keeps its
+        # own text. Never a conflict that would block installing the analysis release.
+        return "etykieta Vaulta nie znaleziona - plik pozostawiony bez zmian", False
+    last = imports[-1]
+    text = text[:last.end()] + MEMORY_IMPORT + text[last.end():]
+    text = text.replace(MEMORY_ANCHOR, MEMORY_LABEL, 1)
+    write(path, text)
+    return "vault label added", True
+
+
 NAV_FILES = {
     "sidebar": "src/components/Sidebar.tsx",
     "topbar": "src/components/TopBar.tsx",
     "hermes": "src/app/hermes/page.tsx",
     "astros": "src/components/AstrosView.tsx",
+    "memory": "src/components/MemoryPanel.tsx",
 }
 
 
 def main():
     parser = argparse.ArgumentParser(description="Register OmniWatch navigation in Agent OS")
     parser.add_argument("src", help="<agent-os>/source")
-    parser.add_argument("--only", default="sidebar,topbar,hermes,astros",
-                        help="comma-separated subset of sidebar,topbar,hermes,astros")
+    parser.add_argument("--only", default="sidebar,topbar,hermes,astros,memory",
+                        help="comma-separated subset of sidebar,topbar,hermes,astros,memory")
     parser.add_argument("--path-prefix", default=None,
                         help="prefix for reported paths (default: the src directory name)")
     parser.add_argument("--dry-run", action="store_true",
@@ -297,7 +329,8 @@ def main():
         action, changed = result
         record(name, action, before, digest(f"{src}/{NAV_FILES[name]}"), changed=changed)
 
-    for name, function in (("sidebar", patch_sidebar), ("topbar", patch_topbar), ("astros", patch_astros)):
+    for name, function in (("sidebar", patch_sidebar), ("topbar", patch_topbar), ("astros", patch_astros),
+                           ("memory", patch_memory)):
         if name not in requested:
             continue
         path = f"{src}/{NAV_FILES[name]}"

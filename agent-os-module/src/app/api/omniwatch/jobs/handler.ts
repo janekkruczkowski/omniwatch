@@ -28,6 +28,7 @@ import type {
   SourceRef,
 } from "../../../../../../packages/omniwatch/src/contracts/types.ts";
 import type { MemoryPort, StorePort } from "../../../../../../packages/omniwatch/src/contracts/ports.ts";
+import { OperationJournal, UNKNOWN_RETRY_WARNING } from "../../../../../../packages/omniwatch/src/storage/operations.ts";
 // Relative imports on purpose: this module is loaded directly by `node --test`, which
 // does not resolve the host's `@/` alias. Next resolves relative paths just as well.
 import { getJob, startJob } from "../../../../lib/omniwatchJobs.ts";
@@ -61,6 +62,19 @@ export interface JobsRequest {
   parent?: string | null;
   parentTurnId?: string | null;
   force?: boolean;
+  /**
+   * Explicit retry of ONE operation whose model call has an unknown outcome. Same
+   * contract as the standalone `retryOperation` + `confirmRetry=1`: the id alone is
+   * not consent, and the saved request (not the form) defines what is retried.
+   */
+  retryOperation?: string | null;
+  confirmRetry?: boolean | string | number | null;
+}
+
+export { UNKNOWN_RETRY_WARNING };
+
+function confirmed(value: JobsRequest["confirmRetry"]): boolean {
+  return value === true || value === 1 || value === "1" || value === "true";
 }
 
 /** The film-production adapter, as the jobs endpoint uses it. */
@@ -85,6 +99,11 @@ export interface JobsHandlerDeps {
   enqueue(request: AnalysisRequest): { operation: Operation; created: boolean };
   /** Make sure a consumer exists for this operation (spawn/verify the worker). */
   ensureWorker(operationId: string): Promise<void>;
+  /**
+   * Record the user's explicit decision to retry an `outcome_unknown` operation
+   * (back to `pending`). Defaults to the shared journal over `store`.
+   */
+  retryUnknown?(operationId: string): Operation;
   /** Free, cache-only metadata for the card; null when the video is not local yet. */
   lookupMedia(sourceRef: SourceRef): Promise<JobMeta | null>;
   /** The film modes keep their own path (no second analysis engine here). */
@@ -152,6 +171,8 @@ export interface DurableJobView extends Job {
   parentTurnId?: string | null;
   errorClass?: string | null;
   costKnown?: boolean;
+  /** True only for an operation waiting for the user's retry decision. */
+  retryable?: boolean;
 }
 
 function stageFor(operation: Operation): string {
@@ -243,6 +264,7 @@ export async function readDurableJob(
     finishedAt: Date.parse(operation.updatedAt) || undefined,
     error: operation.errorMessage ?? undefined,
     errorClass: operation.errorClass ?? null,
+    retryable: operation.state === "outcome_unknown",
     analysisId,
     conversationId: buffer?.conversationId ?? null,
     turnId: buffer?.turnId ?? null,
@@ -290,6 +312,9 @@ export function createJobsHandler(deps: JobsHandlerDeps): JobsHandler {
     } catch {
       return json({ error: "invalid_input", message: "Niepoprawne cialo zadania." }, 400);
     }
+
+    const retryId = String(body.retryOperation ?? "").trim();
+    if (retryId) return retryUnknownOperation(retryId, confirmed(body.confirmRetry));
 
     const url = String(body.url ?? "").trim();
     const sourceId = String(body.sourceId ?? "").trim();
@@ -372,6 +397,26 @@ export function createJobsHandler(deps: JobsHandlerDeps): JobsHandler {
       );
     }
 
+    if (enqueued.operation.state === "outcome_unknown") {
+      // The same request already reached the provider once with an unknown result.
+      // Neither a repeated click nor `force` may pay again silently: the card gets the
+      // operation id and the warning, and only an explicit confirmed retry proceeds.
+      return json(
+        {
+          id: enqueued.operation.id,
+          operationId: enqueued.operation.id,
+          state: "error",
+          created: false,
+          errorClass: "outcome_unknown",
+          retryable: true,
+          retryWarning: UNKNOWN_RETRY_WARNING,
+          mode: mapped.mode,
+          startedAt: now(),
+        },
+        202,
+      );
+    }
+
     try {
       // Admission never runs the analysis; it only makes sure a consumer exists (D5).
       await deps.ensureWorker(enqueued.operation.id);
@@ -401,6 +446,70 @@ export function createJobsHandler(deps: JobsHandlerDeps): JobsHandler {
     );
   }
 
+  /**
+   * The conscious retry of an `outcome_unknown` operation (FAIL-A). Mirrors the
+   * standalone contract: without confirmation nothing is admitted; a confirmed retry
+   * moves the SAME operation back to pending (the saved request, not the form, defines
+   * the work) and makes sure a worker picks it up. A second confirmation after the
+   * retry started is refused, so one click can never pay twice.
+   */
+  async function retryUnknownOperation(operationId: string, isConfirmed: boolean): Promise<Response> {
+    const operation = deps.store.getOperation(operationId);
+    if (!operation) return json({ error: "invalid_input", message: `Operacja ${operationId} nie istnieje.` }, 404);
+    if (operation.state !== "outcome_unknown") {
+      return json(
+        {
+          error: "invalid_input",
+          message: "Operacja nie czeka juz na decyzje o ponowieniu.",
+          operationId,
+          state: operation.state,
+        },
+        409,
+      );
+    }
+    if (!isConfirmed) {
+      return json(
+        {
+          error: "confirm_required",
+          message: "Ponowienie wymaga jawnego potwierdzenia operacji o nieznanym wyniku.",
+          operationId,
+          retryWarning: UNKNOWN_RETRY_WARNING,
+        },
+        409,
+      );
+    }
+    try {
+      if (deps.retryUnknown) deps.retryUnknown(operationId);
+      else new OperationJournal({ store: deps.store }).resolveUnknownOutcome(operationId, "retry");
+    } catch (error) {
+      const failure = error instanceof OmniWatchError ? error : null;
+      return json(
+        { error: failure?.errorClass ?? "storage_unavailable", message: failure?.message ?? String(error), operationId },
+        failure?.errorClass === "invalid_input" ? 409 : 503,
+      );
+    }
+    try {
+      await deps.ensureWorker(operationId);
+    } catch (error) {
+      return json(
+        { error: "runtime_unavailable", message: error instanceof Error ? error.message : String(error), id: operationId },
+        503,
+      );
+    }
+    return json(
+      {
+        id: operationId,
+        operationId,
+        state: "running",
+        created: false,
+        retried: true,
+        mode: operation.request.mode,
+        startedAt: now(),
+      },
+      202,
+    );
+  }
+
   async function GET(request: Request): Promise<Response> {
     const id = new URL(request.url).searchParams.get("id") ?? "";
     if (!id) return json({ error: "invalid_input", message: "Brak parametru id." }, 400);
@@ -423,6 +532,7 @@ export function createJobsHandler(deps: JobsHandlerDeps): JobsHandler {
       parentTurnId: durable.parentTurnId ?? null,
       errorClass: durable.errorClass ?? null,
       error: durable.error,
+      ...(durable.retryable ? { retryable: true, retryWarning: UNKNOWN_RETRY_WARNING } : {}),
     });
   }
 

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Eye, Wrench, Link2, Loader2, Play, KeyRound, TerminalSquare, ArrowRight, Users, Clapperboard } from "lucide-react";
 import OmniMarkdown, { TS_RE, toSec } from "./OmniMarkdown";
 import ChannelScan from "./ChannelScan";
+import OmniLibrary from "./OmniLibrary";
 import "./OmniWatch.css";
 
 // OmniWatch — paste a link, Qwen Omni watches the video (picture AND sound) and
@@ -49,6 +50,26 @@ interface Card {
   /** the conversation this answer belongs to, and the turn a follow-up replies to.
    *  Kept per card so a question about video A can never be answered against B. */
   turn?: { conversationId: string | null; turnId: string | null };
+  /** the durable operation behind this card, once the server admitted it */
+  operationId?: string;
+  /** the model call's outcome is unknown: only an explicit, warned retry may run it again */
+  retry?: { operationId: string; warning: string };
+}
+
+/** What the jobs endpoint says about a failed run (poll or admission). */
+interface FailureInfo { error?: string; retryable?: boolean; retryWarning?: string; operationId?: string; id?: string }
+
+/** Retry offer for a card, or nothing. Only an operation the server marks retryable
+ *  (state outcome_unknown) gets one; any other failure is not a paid-call question. */
+export function retryOffer(info: FailureInfo, fallbackId?: string): Card["retry"] | undefined {
+  const operationId = info.operationId || info.id || fallbackId;
+  if (!info.retryable || !operationId) return undefined;
+  return { operationId, warning: info.retryWarning || "The model call has an unknown outcome; retrying may cost a second time." };
+}
+
+/** The body of an explicit retry: the operation id plus consent, nothing from the form. */
+export function retryBody(operationId: string) {
+  return { retryOperation: operationId, confirmRetry: true };
 }
 /** What the tab is doing. The first two are jobs the engine understands; "channel" is
  *  this tab pointed at an account, and never reaches the single-video job. */
@@ -206,7 +227,7 @@ export default function OmniWatchView() {
 
   // Start the job, then poll it. Nothing holds an HTTP request open for the minutes
   // this takes, so reloading the tab mid-run does not kill the work.
-  const ask = useCallback(async (q: string, target?: string, force?: "ask" | "teardown") => {
+  const ask = useCallback(async (q: string, target?: string, force?: "ask" | "teardown", retryOf?: string) => {
     // A follow-up carries the answer it replies to. The context is per card, so a
     // question asked while the tab has moved on still lands on the video it was about.
     const context = askContextRef.current;
@@ -238,14 +259,19 @@ export default function OmniWatchView() {
       if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
       setRunning(false);
     };
-    const fail = (message: string) => { finish(); patch((c) => ({ ...c, error: message })); };
+    const fail = (message: string, info: FailureInfo = {}, operationId?: string) => {
+      finish();
+      patch((c) => ({ ...c, error: message, retry: retryOffer(info, operationId ?? c.operationId) }));
+    };
 
     let started: { id: string };
     try {
       const res = await fetch("/api/omniwatch/jobs", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
+        // An explicit retry names the operation and carries consent; the saved request on
+        // the server defines what runs again, never the form fields (same as standalone).
+        body: JSON.stringify(retryOf ? { url: link, ...retryBody(retryOf) } : {
           url: link,
           q: q.trim(),
           // The new API takes focus and question separately; the legacy `q` stays for
@@ -259,14 +285,22 @@ export default function OmniWatchView() {
         }),
       });
       const body = await res.json();
-      if (!res.ok || !body.id) return fail(body.error || `Could not start (HTTP ${res.status})`);
+      if (!res.ok || !body.id) return fail(body.message || body.error || `Could not start (HTTP ${res.status})`, body);
+      patch((c) => ({ ...c, operationId: body.id }));
+      if (body.state === "error" && body.retryable) {
+        return fail(
+          "The model call for this exact request was interrupted earlier; whether it completed is unknown.",
+          body,
+          body.id,
+        );
+      }
       started = body;
     } catch (e) {
       return fail(e instanceof Error ? e.message : "Could not reach the server");
     }
 
     pollRef.current = setInterval(async () => {
-      let d: Progress & { state: string; error?: string } & Partial<Stats>;
+      let d: Progress & { state: string; error?: string } & Partial<Stats> & FailureInfo;
       try {
         const r = await fetch(`/api/omniwatch/jobs?id=${started.id}`, { cache: "no-store" });
         if (r.status === 404) return fail("The dashboard restarted while this was running. Ask again — the video is cached, so it will be quick.");
@@ -310,7 +344,7 @@ export default function OmniWatchView() {
           },
         }));
       } else if (d.state === "error") {
-        fail(d.error || "The run failed");
+        fail(d.error || "The run failed", d, started.id);
       }
     }, 700);
   }, [url, mode, lang, focus, setPlayer]);
@@ -467,6 +501,8 @@ export default function OmniWatchView() {
         )}
       </div>
 
+      <OmniLibrary />
+
       {started && (
         <div className="grid gap-5" style={{ gridTemplateColumns: "minmax(0,380px) minmax(0,1fr)" }}>
           <div className="space-y-4">
@@ -572,6 +608,11 @@ export default function OmniWatchView() {
                 frame={(sec) => frameUrl(c.src, sec)}
                 running={running && c.id === cardId.current}
                 source={c.src ?? null}
+                onRetry={running ? undefined : (r) => {
+                  // Consent is explicit: the warning is shown on the card and confirmed here.
+                  if (!window.confirm(r.warning)) return;
+                  ask(c.q, c.src?.url, c.mode, r.operationId);
+                }}
               />
             ))}
           </div>
@@ -582,8 +623,10 @@ export default function OmniWatchView() {
 }
 
 // ── one question and its answer ────────────────────────────────────────────────
-function Answer({ card, locale, onSeek, frame, running, source }: {
+function Answer({ card, locale, onSeek, frame, running, source, onRetry }: {
   card: Card; locale: Locale | null; onSeek: (s: number) => void; frame: (s: number) => string; running: boolean;
+  /** explicit retry of an outcome_unknown call; absent while another run is going */
+  onRetry?: (retry: NonNullable<Card["retry"]>) => void;
   /** what was watched — needed to build a brief from this answer, absent while a job is
    *  still finding out what the video even is */
   source: CardSource | null;
@@ -603,7 +646,22 @@ function Answer({ card, locale, onSeek, frame, running, source }: {
       </div>
 
       {card.error ? (
-        <div className="text-sm" style={{ color: "var(--plum)", whiteSpace: "pre-wrap" }}>⚠ {card.error}</div>
+        <div className="space-y-2">
+          <div className="text-sm" style={{ color: "var(--plum)", whiteSpace: "pre-wrap" }}>⚠ {card.error}</div>
+          {card.retry && (
+            <div className="flex flex-wrap items-center gap-3" data-omniwatch-retry={card.retry.operationId}>
+              <span className="text-xs" style={{ color: "var(--cream-dim)" }}>{card.retry.warning}</span>
+              <button
+                onClick={() => card.retry && onRetry?.(card.retry)}
+                disabled={!onRetry}
+                className="pill pill-warn disabled:opacity-40"
+                style={{ cursor: onRetry ? "pointer" : "default" }}
+              >
+                {ui.retryUnknown || "Retry (may cost again) →"}
+              </button>
+            </div>
+          )}
+        </div>
       ) : !card.text ? (
         <div className="flex items-center gap-2 text-sm" style={{ color: "var(--cream-dim)" }}>
           <Loader2 size={14} className="animate-spin" /> {ui.pendingDownload || "Downloading the video…"}

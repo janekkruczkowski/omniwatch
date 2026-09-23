@@ -16,6 +16,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
 import { createOpenAiModelPort } from "../../../packages/omniwatch/src/analysis/index.ts";
+import { chatCompletionsUrl, DEFAULT_DASHSCOPE_HOST } from "../../../packages/omniwatch/src/contracts/endpoints.ts";
 import { ANALYSIS_VERSION } from "../../../packages/omniwatch/src/contracts/types.ts";
 import type { AnalysisRequest, MediaPart, SourceRef } from "../../../packages/omniwatch/src/contracts/types.ts";
 import type {
@@ -61,28 +62,64 @@ export function createPanelHostMemory(env: NodeJS.ProcessEnv = process.env): Omn
   return createOmniWatchHost({
     env,
     configPath: env.AGENTIC_OS_CONFIG,
-    model: hostAnswerModel(env),
+    model: createHostAnswerModel(env),
   });
+}
+
+/**
+ * The provider settings of this panel, read in ONE place. The video-analysis model port
+ * and the library answer model both take their key, host and model name from here, so
+ * the two can never drift apart again (FAIL-C: the answer model once built its own URL
+ * and hit a 404 on the documented DashScope default).
+ */
+export function panelApiKey(env: NodeJS.ProcessEnv = process.env): string | null {
+  return env.DASHSCOPE_API_KEY || env.OMNIWATCH_API_KEY || null;
+}
+
+export function panelApiBase(env: NodeJS.ProcessEnv = process.env): string {
+  return env.DASHSCOPE_API || env.OMNIWATCH_API_BASE || DEFAULT_DASHSCOPE_HOST;
+}
+
+export function panelModelName(env: NodeJS.ProcessEnv = process.env): string {
+  return env.OMNI_MODEL || "qwen3.8-omni-flash";
+}
+
+/** Same per-token price the analysis port reports; null when the provider gave no usage. */
+export function panelCostForUsage(inputTokens: unknown, outputTokens: unknown): number | null {
+  if (typeof inputTokens !== "number" || typeof outputTokens !== "number") return null;
+  return inputTokens * (0.15 / 1e6) + outputTokens * (0.47 / 1e6);
 }
 
 /**
  * The host model used to answer questions about the library (D7). A thin adapter over
  * the host's own key and endpoint — not a second knowledge base and not a new provider.
+ * The endpoint comes from the shared `chatCompletionsUrl`, the same function the
+ * analysis provider uses: one source of truth for provider URLs.
  */
-function hostAnswerModel(env: NodeJS.ProcessEnv): HostModelPort | null {
-  const key = env.DASHSCOPE_API_KEY || env.OMNIWATCH_API_KEY;
+export function createHostAnswerModel(
+  env: NodeJS.ProcessEnv = process.env,
+  options: { fetchImpl?: typeof fetch; log?: (line: string) => void } = {},
+): HostModelPort | null {
+  const key = panelApiKey(env);
   if (!key) return null;
-  const base = (env.DASHSCOPE_API || env.OMNIWATCH_API_BASE || "https://dashscope-intl.aliyuncs.com").replace(/\/+$/, "");
-  const model = env.OMNI_MODEL || "qwen3.8-omni-flash";
-  const url = /\/(?:compatible-mode\/)?v1$/.test(base) ? `${base}/chat/completions` : `${base}/v1/chat/completions`;
+  const url = chatCompletionsUrl(panelApiBase(env));
+  const model = panelModelName(env);
+  // Resolved per call, so a process-level fetch (or a test stub) installed later is used.
+  const doFetch: typeof fetch = (input, init) => (options.fetchImpl ?? globalThis.fetch)(input, init);
+  const log = options.log ?? ((line: string) => console.info(line));
   return {
     modelName: model,
     async complete({ system, user, maxOutputTokens }) {
-      const response = await fetch(url, {
+      const response = await doFetch(url, {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
         body: JSON.stringify({
           model,
+          // Omni models on DashScope only answer in streaming mode; a single SSE
+          // response is read to its final frame below.
+          stream: true,
+          stream_options: { include_usage: true },
+          modalities: ["text"],
           messages: [
             { role: "system", content: system },
             { role: "user", content: user },
@@ -91,10 +128,48 @@ function hostAnswerModel(env: NodeJS.ProcessEnv): HostModelPort | null {
         }),
       });
       if (!response.ok) throw new Error(`model HTTP ${response.status}`);
-      const payload = (await response.json()) as { choices?: { message?: { content?: string } }[] };
-      return payload.choices?.[0]?.message?.content ?? "";
+      const { text, usage } = await readChatResponse(response);
+      const cost = panelCostForUsage(usage?.prompt_tokens, usage?.completion_tokens);
+      // Informational only (no secret): lets an operator see what a library answer cost.
+      log(
+        `omniwatch.memory.answer model=${model} in=${usage?.prompt_tokens ?? "?"} out=${usage?.completion_tokens ?? "?"} ` +
+          `costUsd=${cost === null ? "unknown" : cost.toFixed(6)}`,
+      );
+      return text;
     },
   };
+}
+
+interface ChatUsage {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+}
+
+/** Reads either a JSON completion or an SSE stream of `chat.completion.chunk` frames. */
+async function readChatResponse(response: Response): Promise<{ text: string; usage: ChatUsage | null }> {
+  const contentType = response.headers.get("content-type") ?? "";
+  const raw = await response.text();
+  if (!/event-stream/i.test(contentType) && !/^\s*data:/m.test(raw)) {
+    const payload = JSON.parse(raw) as { choices?: { message?: { content?: string } }[]; usage?: ChatUsage };
+    return { text: payload.choices?.[0]?.message?.content ?? "", usage: payload.usage ?? null };
+  }
+  let text = "";
+  let usage: ChatUsage | null = null;
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("data:")) continue;
+    const data = trimmed.slice(5).trim();
+    if (data === "" || data === "[DONE]") continue;
+    let frame: { choices?: { delta?: { content?: string } }[]; usage?: ChatUsage | null };
+    try {
+      frame = JSON.parse(data);
+    } catch {
+      continue;
+    }
+    for (const choice of frame.choices ?? []) text += choice.delta?.content ?? "";
+    if (frame.usage) usage = frame.usage;
+  }
+  return { text, usage };
 }
 
 export interface HostModules {
@@ -116,6 +191,12 @@ export interface CardMeta {
 export interface PanelRuntime {
   dataDir: string;
   configPath: string | null;
+  /** The Vault this panel reads and writes (the resolved one, not a default label). */
+  vaultRoot: string;
+  /** OmniWatch directory inside the Vault. */
+  analysesDir: string;
+  /** True when a host model can answer questions about the library. */
+  answerModel: boolean;
   store: StorePort;
   memory: MemoryPort;
   source: SourcePort;
@@ -175,9 +256,9 @@ export function createPanelRuntime(options: { env?: NodeJS.ProcessEnv } = {}): P
     dataDir,
     memoryRoot: hostMemory.vaultRoot,
     language: env.OMNI_LANG || "en",
-    modelName: env.OMNI_MODEL || "qwen3.8-omni-flash",
-    apiKey: () => env.DASHSCOPE_API_KEY || env.OMNIWATCH_API_KEY || null,
-    apiBaseUrl: () => env.DASHSCOPE_API || env.OMNIWATCH_API_BASE || "https://dashscope-intl.aliyuncs.com",
+    modelName: panelModelName(env),
+    apiKey: () => panelApiKey(env),
+    apiBaseUrl: () => panelApiBase(env),
     maxFramesPerPart: () => Math.max(300, Number(env.OMNI_MAX_FRAMES || 2400)),
     cacheHours: () => 48,
     configPath: configPath ?? undefined,
@@ -194,10 +275,7 @@ export function createPanelRuntime(options: { env?: NodeJS.ProcessEnv } = {}): P
       const uploaded = await legacy.upload(part.localPath, key);
       return uploaded.url;
     },
-    costForUsage: ({ inputTokens, outputTokens }) => {
-      if (typeof inputTokens !== "number" || typeof outputTokens !== "number") return null;
-      return inputTokens * (0.15 / 1e6) + outputTokens * (0.47 / 1e6);
-    },
+    costForUsage: ({ inputTokens, outputTokens }) => panelCostForUsage(inputTokens, outputTokens),
   });
 
   const deps: RuntimeDeps = { clock, logger, config, store, source, model, memory };
@@ -283,6 +361,9 @@ export function createPanelRuntime(options: { env?: NodeJS.ProcessEnv } = {}): P
   return {
     dataDir,
     configPath,
+    vaultRoot: hostMemory.vaultRoot,
+    analysesDir: hostMemory.analysesDir,
+    answerModel: hostMemory.modelName !== null,
     store,
     memory,
     source,
