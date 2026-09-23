@@ -243,6 +243,19 @@ export async function runOperation(
       };
     }
     journal.markFailed(operationId, failure.errorClass, failure.message);
+    // Parts run side by side: another part of this run may already have an unknown
+    // outcome, which markFailed deliberately does not downgrade. Report what is stored,
+    // so the user is offered the confirmed retry instead of a plain failure.
+    if (deps.store.getOperation(operationId)?.state === "outcome_unknown") {
+      return {
+        operationId,
+        analysisKey,
+        state: "outcome_unknown",
+        errorClass: "outcome_unknown",
+        message: `Czesc filmu ma nieznany wynik, inna zostala odrzucona: ${failure.message}`,
+        modelCalls: countStartedAttempts(deps, operationId),
+      };
+    }
     return {
       operationId,
       analysisKey,
@@ -254,13 +267,15 @@ export async function runOperation(
   }
 
   if (outcome.errorClass === "outcome_unknown") {
-    journal.markOutcomeUnknown(operationId, "Model nie potwierdzil zakonczenia odpowiedzi; wynik jest nieznany.");
+    // The engine names the uncertain parts; that is what the retry decision is about.
+    const reason = outcome.outcomeMessage ?? "Model nie potwierdzil zakonczenia odpowiedzi; wynik jest nieznany.";
+    journal.markOutcomeUnknown(operationId, reason);
     return {
       operationId,
       analysisKey,
       state: "outcome_unknown",
       errorClass: "outcome_unknown",
-      message: "wynik wywolania nieznany",
+      message: outcome.outcomeMessage ?? "wynik wywolania nieznany",
       modelCalls: countStartedAttempts(deps, operationId),
     };
   }

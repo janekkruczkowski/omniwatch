@@ -219,9 +219,20 @@ export interface MediaInfo {
 
 export interface MediaPart {
   index: number;
+  /**
+   * Where the part's FILE starts in the full video. A stream-copy cut begins on the
+   * keyframe at or before the planned start, so this can be earlier than the plan;
+   * clip-relative timestamps are shifted by this value (M19).
+   */
   startSeconds: number;
   endSeconds: number;
   localPath: string;
+  /**
+   * Sampling rate for the whole film, fixed at split time. A part's own end is not
+   * the film's length: the first 2 minutes of a 5-minute film must not be sampled at
+   * the short-form 10 fps.
+   */
+  fps?: number;
 }
 
 export interface ListingItem {

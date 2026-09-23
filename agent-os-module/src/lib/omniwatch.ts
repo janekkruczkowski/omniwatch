@@ -314,12 +314,18 @@ export async function frameJpeg(id: string, sec: number): Promise<string> {
 
 // ── upload to Model Studio temporary storage ───────────────────────────────────
 /** Returns the oss:// URL and whether it was reused. Cached so follow-ups don't re-upload. */
-export async function upload(src: string, key: string): Promise<{ url: string; reused: boolean }> {
+export async function upload(
+  src: string,
+  key: string,
+  options: { refresh?: boolean } = {},
+): Promise<{ url: string; reused: boolean }> {
   const meta = path.join(path.dirname(src), "oss.json");
   let known: Record<string, { url: string; at: number }> = {};
   try { known = JSON.parse(await readFile(meta, "utf8")); } catch { /* first upload */ }
   const hit = known[path.basename(src)];
-  if (hit && Date.now() - hit.at < OSS_TTL) return { url: hit.url, reused: true };
+  // `refresh`: Model Studio refused the cached oss:// URL (400 "URL not valid"); a
+  // new object is accepted where the old one no longer is.
+  if (!options.refresh && hit && Date.now() - hit.at < OSS_TTL) return { url: hit.url, reused: true };
 
   const auth = { Authorization: `Bearer ${key}` };
   const r = await fetch(`${API}/api/v1/uploads?action=getPolicy&model=${encodeURIComponent(MODEL)}`, { headers: auth });

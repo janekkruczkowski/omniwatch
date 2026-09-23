@@ -133,6 +133,7 @@ body.idle .follow{display:block}
 .parts{display:flex;gap:4px;margin-top:10px}
 .parts i{flex:1;height:4px;border-radius:2px;background:var(--line);transition:background .3s}
 .parts i.on{background:var(--accent);animation:pulse 1s infinite} .parts i.ok{background:var(--ok);animation:none}
+.parts i.bad{background:#ff8fa3;animation:none} body.failed .parts i.on{animation:none;opacity:.35}
 @keyframes pulse{50%{opacity:.4}}
 .err{color:#ff8fa3;white-space:pre-wrap;font:13px "JetBrains Mono",monospace}
 .retry{display:flex;flex-wrap:wrap;gap:10px;margin-top:16px}
@@ -223,6 +224,8 @@ function applyLang() {
   chips($('#heroChips'), '#q'); chips($('#followChips'), '#q2', () => ask($('#q2').value, { followup: true }));
 }
 let vid = null, url = null, strip = [], seconds = 0, t0 = 0, timerId = null, es = null, card = null, partsDone = 0, lastAnswer = '';
+// Parts whose paid call ended with an unknown outcome in this run (multi-part films).
+let partsUnknown = [];
 let activeRequest = null, activeOperationId = null;
 /** True once this run reached a terminal state, so a late transport error cannot
  *  rewrite the message the server already sent (or a delivered answer). */
@@ -374,8 +377,12 @@ function fail(problem) {
   document.body.classList.remove('idle');
   setStep(null);
   $('#strip').classList.remove('scanning');
-  $('#parts').style.display = 'none';
-  $('#wcount').textContent = '';
+  // A multi-part film keeps its part bar: green parts are saved, red ones are what a
+  // confirmed retry will pay for again.
+  const partTotal = $('#parts').children.length;
+  const partFailure = partTotal > 1 && partsUnknown.length > 0;
+  if (!partFailure) { $('#parts').style.display = 'none'; $('#wcount').textContent = ''; }
+  else $('#wcount').textContent = `${partsDone}/${partTotal}`;
   $('#upinfo').textContent = '';
   $('#title').textContent = T().errorTitle;
   $('#sub').textContent = '';
@@ -384,8 +391,12 @@ function fail(problem) {
     if (md) {
       const unknown = error === 'outcome_unknown';
       const paidRetry = unknown && operationId;
-      const help = unknown ? T().retryUnknownWarning : error === 'missing_config' ? T().configureHint : '';
-      const action = paidRetry ? T().retryUnknownConfirm : unknown ? T().checkResult : error === 'invalid_input' ? T().correctUrl
+      const partsNote = unknown && partFailure
+        ? ` ${T().partsUnknownNote.replace('{done}', partsDone).replace('{total}', partTotal)}` : '';
+      const help = unknown ? T().retryUnknownWarning + partsNote : error === 'missing_config' ? T().configureHint : '';
+      const action = paidRetry && partFailure
+        ? T().retryPartsConfirm.replace('{n}', partTotal - partsDone).replace('{total}', partTotal)
+        : paidRetry ? T().retryUnknownConfirm : unknown ? T().checkResult : error === 'invalid_input' ? T().correctUrl
         : error === 'missing_config' ? T().backToForm : error === 'runtime_unavailable' ? T().checkResult : T().retry;
       md.innerHTML = `<div class="err" role="alert">⚠ ${esc(message)}</div>` +
         (help ? `<p class="err-help">${esc(help)}</p>` : '') +
@@ -427,7 +438,7 @@ function ask(q, options = {}) {
   ended = false;
   $('#go').disabled = $('#go2').disabled = true; $('#q2').value = '';
   $('#legend').style.display = 'none'; $('#parts').style.display = 'none'; $('#wcount').textContent = ''; $('#upinfo').textContent = '';
-  partsDone = 0; lastAnswer = ''; newCard(request.question, request.mode); window.scrollTo({top: 0, behavior: 'smooth'});
+  partsDone = 0; partsUnknown = []; lastAnswer = ''; newCard(request.question, request.mode); window.scrollTo({top: 0, behavior: 'smooth'});
   t0 = performance.now(); clearInterval(timerId);
   timerId = setInterval(() => $('#timer').textContent = ((performance.now() - t0) / 1000).toFixed(1) + 's', 100);
 
@@ -461,7 +472,8 @@ function ask(q, options = {}) {
     if (d.n > 1) { $('#parts').style.display = 'flex'; $('#parts').innerHTML = '<i class="on"></i>'.repeat(d.n); $('#wcount').textContent = `0/${d.n}`; }
   });
   on('uploaded', d => { $('#upinfo').textContent = d.reused ? T().cached : ''; });
-  on('part_done', d => { $('#parts').children[d.i].className = 'ok'; $('#wcount').textContent = `${++partsDone}/${$('#parts').children.length}`; });
+  on('part_done', d => { const bar = $('#parts').children[d.i]; if (bar) bar.className = 'ok'; $('#wcount').textContent = `${++partsDone}/${$('#parts').children.length}`; });
+  on('part_unknown', d => { const bar = $('#parts').children[d.i]; if (bar) bar.className = 'bad'; if (!partsUnknown.includes(d.i)) partsUnknown.push(d.i); });
   on('merge', () => pending(T().pendingMerge));
   const showAnswer = d => { lastAnswer = d.text; renderMd(answerCard.querySelector('.md'), d.text); };
   on('answer', showAnswer);

@@ -1,9 +1,17 @@
 /**
  * OpenAI-compatible ModelPort (T1).
  *
- * One `call()` issues exactly one HTTP request. There is no retry loop here, on
+ * One `call()` issues one billable HTTP request. There is no retry loop here, on
  * purpose: a 5xx, a timeout, an abort or a stream that stops without a protocol end
  * may already have been billed, so the runtime decides, not the transport (D9).
+ *
+ * The single exception is a request the provider REJECTED before running the model:
+ * HTTP 400 "The provided URL does not appear to be valid" for an oss:// media URL
+ * (R2-03). Measured 2026-09-23: a temporary oss:// object that already served one
+ * request is later refused this way (4 of 4 reuses after a success), in ~1 s, with no
+ * usage, while a fresh upload of the same file is accepted. With `resolveMediaUrl`
+ * the media is uploaded again and the request is sent once more; nothing was billed
+ * for the refused one.
  *
  * Error classes:
  *   - `missing_config`    - no key or no base URL; thrown by preflight() before work;
@@ -55,7 +63,7 @@ export interface OpenAiModelPortOptions {
    * oss:// upload). Without it, media parts cannot be sent and the call fails loudly
    * rather than silently analysing nothing.
    */
-  resolveMediaUrl?: (part: MediaPart) => Promise<string | null>;
+  resolveMediaUrl?: (part: MediaPart, options?: { refresh?: boolean }) => Promise<string | null>;
   /** Sampling rate per part; defaults to the length-based short/long rule. */
   fpsForPart?: (part: MediaPart) => number;
   /** Host-side pricing (the core never hard-codes a price list). */
@@ -103,6 +111,9 @@ function transportDiagnostic(error: unknown, phase: "headers" | "stream", abortS
  */
 const NOT_SENT_CODES = new Set(["ENOTFOUND", "EAI_AGAIN", "ECONNREFUSED", "EHOSTUNREACH", "ENETUNREACH", "EADDRNOTAVAIL"]);
 
+/** DashScope's refusal of a media URL it cannot (or can no longer) read. */
+const INVALID_MEDIA_URL = /does not appear to be valid|InvalidParameter[^"]*URL|url.{0,40}invalid/i;
+
 export function createOpenAiModelPort(options: OpenAiModelPortOptions): OpenAiModelPort {
   const { config } = options;
   const doFetch = options.fetchImpl ?? globalThis.fetch;
@@ -129,7 +140,7 @@ export function createOpenAiModelPort(options: OpenAiModelPortOptions): OpenAiMo
     }
   };
 
-  async function contentPayload(request: ModelCallRequest): Promise<unknown> {
+  async function contentPayload(request: ModelCallRequest, refresh = false): Promise<unknown> {
     if (!request.mediaParts.length) {
       return request.messages.map((message) => ({ role: message.role, content: message.text }));
     }
@@ -141,7 +152,7 @@ export function createOpenAiModelPort(options: OpenAiModelPortOptions): OpenAiMo
     }
     const media: Array<Record<string, unknown>> = [];
     for (const part of request.mediaParts) {
-      const url = await options.resolveMediaUrl(part);
+      const url = await options.resolveMediaUrl(part, refresh ? { refresh: true } : undefined);
       if (!url) {
         throw new OmniWatchError("source_unavailable", `Nie ma adresu providera dla czesci ${part.index}.`, {
           action: { label: "przygotuj material ponownie", kind: "none" },
@@ -150,7 +161,8 @@ export function createOpenAiModelPort(options: OpenAiModelPortOptions): OpenAiMo
       media.push({
         type: "video_url",
         video_url: { url },
-        fps: (options.fpsForPart ?? ((p: MediaPart) => fpsFor(p.endSeconds)))(part),
+        // The film's rate fixed at split time; the part's end is only a legacy guess.
+        fps: (options.fpsForPart ?? ((p: MediaPart) => p.fps ?? fpsFor(p.endSeconds)))(part),
       });
     }
     // The system message carries the data/instruction boundary and must keep its role;
@@ -186,7 +198,7 @@ export function createOpenAiModelPort(options: OpenAiModelPortOptions): OpenAiMo
     if (!base) throw missingConfig("Brak adresu API modelu analizy.", "ustaw adres API");
 
     const controller = new AbortController();
-    const startedAt = Date.now();
+    let startedAt = Date.now();
     let abortSource = "none";
     let deadline: unknown = null;
     let idle: unknown = null;
@@ -201,48 +213,65 @@ export function createOpenAiModelPort(options: OpenAiModelPortOptions): OpenAiMo
       if (idle) timers.clearTimeout(idle);
       idle = timers.setTimeout(() => { abortSource = "idle"; controller.abort(); }, idleTimeoutMs);
     };
-    if (timeoutMs) deadline = timers.setTimeout(() => { abortSource = "deadline"; controller.abort(); }, timeoutMs);
-    armIdle();
 
-    const body = {
-      model: config.modelName,
-      // Qwen3.8-Omni-Flash defaults to xhigh thinking. On video parts that can
-      // leave the first response byte behind the provider's ~60 s idle close.
-      // The documented low setting keeps reasoning while shortening that wait.
-      ...(/^qwen3\.8-omni-flash(?:$|-)/i.test(config.modelName) ? { reasoning_effort: "low" } : {}),
-      messages: await contentPayload(request),
-      modalities: ["text"],
-      stream: true,
-      stream_options: { include_usage: true },
-      max_tokens: request.maxOutputTokens ?? options.maxOutputTokens,
-    };
+    let response!: Response;
+    let rejectedDetail: string | null = null;
+    for (let round = 0; round < 2; round += 1) {
+      const body = {
+        model: config.modelName,
+        // Qwen3.8-Omni-Flash defaults to xhigh thinking. On video parts that can
+        // leave the first response byte behind the provider's ~60 s idle close.
+        // The documented low setting keeps reasoning while shortening that wait.
+        ...(/^qwen3\.8-omni-flash(?:$|-)/i.test(config.modelName) ? { reasoning_effort: "low" } : {}),
+        // Uploads happen here, before the clock below starts: `elapsed_ms` in a
+        // transport diagnostic is time on the wire, not upload time.
+        messages: await contentPayload(request, round > 0),
+        modalities: ["text"],
+        stream: true,
+        stream_options: { include_usage: true },
+        max_tokens: request.maxOutputTokens ?? options.maxOutputTokens,
+      };
 
-    let response: Response;
-    try {
-      response = await doFetch(endpoint(), {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${key}`,
-          "Content-Type": "application/json",
-          "X-DashScope-OssResourceResolve": "enable",
-        },
-        body: JSON.stringify(body),
-        signal: controller.signal,
-      });
-    } catch (error) {
-      clearTimers();
-      const code = errorCodeOf(error);
-      if (NOT_SENT_CODES.has(code)) {
-        throw new OmniWatchError("provider_rejected", `Nie udalo sie wyslac zadania do modelu (${code}).`, {
-          action: { label: "sprawdz polaczenie", kind: "check_operation" },
+      startedAt = Date.now();
+      if (timeoutMs) deadline = timers.setTimeout(() => { abortSource = "deadline"; controller.abort(); }, timeoutMs);
+      armIdle();
+      try {
+        response = await doFetch(endpoint(), {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${key}`,
+            "Content-Type": "application/json",
+            "X-DashScope-OssResourceResolve": "enable",
+          },
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        });
+      } catch (error) {
+        clearTimers();
+        const code = errorCodeOf(error);
+        if (NOT_SENT_CODES.has(code)) {
+          throw new OmniWatchError("provider_rejected", `Nie udalo sie wyslac zadania do modelu (${code}).`, {
+            action: { label: "sprawdz polaczenie", kind: "check_operation" },
+            cause: error,
+          });
+        }
+        const detail = transportDiagnostic(error, "headers", abortSource, Date.now() - startedAt);
+        throw new OmniWatchError("outcome_unknown", `Polaczenie z modelem przerwane; nie wiadomo, czy wywolanie doszlo do skutku. (${detail})`, {
+          action: { label: "sprawdz operacje", kind: "check_operation" },
           cause: error,
         });
       }
-      const detail = transportDiagnostic(error, "headers", abortSource, Date.now() - startedAt);
-      throw new OmniWatchError("outcome_unknown", `Polaczenie z modelem przerwane; nie wiadomo, czy wywolanie doszlo do skutku. (${detail})`, {
-        action: { label: "sprawdz operacje", kind: "check_operation" },
-        cause: error,
-      });
+      if (response.status !== 400 || round > 0 || !request.mediaParts.length || !options.resolveMediaUrl) break;
+      rejectedDetail = await response.text().catch(() => "");
+      if (!INVALID_MEDIA_URL.test(rejectedDetail)) break;
+      // Refused before the model ran (R2-03): upload the media again and resend once.
+      clearTimers();
+      rejectedDetail = null;
+    }
+    try {
+      request.onResponseStarted?.();
+    } catch {
+      /* a scheduling hint must never break the call */
     }
 
     // Headers arrived: from here on only inactivity ends the call. A long answer
@@ -254,7 +283,7 @@ export function createOpenAiModelPort(options: OpenAiModelPortOptions): OpenAiMo
 
     if (!response.ok) {
       clearTimers();
-      const detail = await response.text().catch(() => "");
+      const detail = rejectedDetail ?? await response.text().catch(() => "");
       const safeDetail = detail.slice(0, 300);
       if (response.status === 429) {
         throw new OmniWatchError("rate_limited", `Model odrzucil tempo zapytan (429). ${safeDetail}`.trim(), {

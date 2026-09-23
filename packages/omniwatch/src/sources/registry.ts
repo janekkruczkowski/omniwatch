@@ -23,6 +23,7 @@ import type { SourcePort } from "../contracts/ports.ts";
 import { evaluateUploadFreshness } from "./legacy.ts";
 import type { LegacyUploadEntry } from "./legacy.ts";
 import { splitParts } from "./media.ts";
+import type { SliceResult } from "./media.ts";
 import { parseSourceUrl } from "./url.ts";
 import {
   DEFAULT_CACHE_QUOTA_BYTES,
@@ -64,8 +65,11 @@ export interface MediaToolPort {
   probeDuration?(localPath: string): Promise<number>;
   /** Raw beta upload metadata (`oss.json`) for the prepared file. */
   readUploads?(source: SourceRef): Promise<Record<string, LegacyUploadEntry> | null>;
-  /** ffmpeg-style slice; only called when the plan has more than one part. */
-  slice(input: MediaSliceInput): Promise<string>;
+  /**
+   * ffmpeg-style slice; only called when the plan has more than one part. May report
+   * where the written file really starts (a stream-copy cut snaps to a keyframe).
+   */
+  slice(input: MediaSliceInput): Promise<SliceResult>;
 }
 
 export interface ListerPort {

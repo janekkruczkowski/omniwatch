@@ -16,6 +16,9 @@
 import { OmniWatchError } from "../contracts/errors.ts";
 import type { MediaInfo, MediaPart } from "../contracts/types.ts";
 
+/** What a host slicer returns: a path, or a path plus where that file really starts. */
+export type SliceResult = string | { localPath: string; startSeconds?: number };
+
 /** Thumbnails in the timeline strip, same as the beta's `STRIP`. */
 export const STRIP_COUNT = 16;
 
@@ -25,6 +28,43 @@ export const FPS_SHORT = 10;
 export const FPS_LONG = 2;
 
 export const fpsFor = (seconds: number): number => (seconds <= SHORT_MAX_SECONDS ? FPS_SHORT : FPS_LONG);
+
+/**
+ * Frames one Qwen3.8-Omni-Flash call may carry (2 minutes at 2 fps, about 46k input
+ * tokens at 480p).
+ *
+ * Measured live on 2026-09-23 (qa-omniwatch-20260923/LF-long-film): DashScope's
+ * compatible-mode endpoint sends response headers only with the first generated token
+ * and closes a connection that has produced no headers after ~60 s (reproduced with a
+ * plain non-streaming text request, no video). Time to headers grows with the input:
+ * ~90k-token parts (the old 480-frame cap) failed 4 of 4 fresh attempts, ~46k-token
+ * parts answered in a median ~20 s with 2 of 15 solo attempts lost to the provider's
+ * random queueing tail. The cap is enforced in the engine so both shells get it.
+ */
+export const QWEN38_OMNI_FLASH_MAX_FRAMES_PER_PART = 240;
+
+/** The configured frame budget, bounded for models with a measured provider limit. */
+export function effectiveMaxFramesPerPart(modelName: string | null | undefined, configured: number): number {
+  if (/^qwen3\.8-omni-flash(?:$|-)/i.test(String(modelName ?? ""))) {
+    return Math.min(configured, QWEN38_OMNI_FLASH_MAX_FRAMES_PER_PART);
+  }
+  return configured;
+}
+
+/**
+ * Where a stream-copied cut really starts. `ffmpeg -ss S -t L -i in -c copy` begins at
+ * the keyframe at or before S and still ends at S + L, so the file is longer than
+ * planned by exactly the distance to that keyframe. Timestamps the model reads from
+ * such a file are relative to the keyframe, not to S (R2-08: a TikTok part planned at
+ * 0:29 really began at 0:23, and a note at 0:32 became 1:01 in a 0:58 film).
+ */
+export function keyframeAlignedStart(plannedStart: number, plannedEnd: number, actualDuration: number): number {
+  if (!Number.isFinite(actualDuration) || actualDuration <= 0) return plannedStart;
+  const planned = plannedEnd - plannedStart;
+  // Ignore container rounding; only a real extension moves the start.
+  if (actualDuration <= planned + 0.25) return plannedStart;
+  return Math.max(0, plannedEnd - actualDuration);
+}
 
 /**
  * Python's `round()` breaks ties toward the even number; `Math.round` breaks them
@@ -149,7 +189,7 @@ export interface MediaSliceRequest {
 export async function splitParts(
   info: MediaInfo,
   policy: SplitPolicy,
-  slice: (request: MediaSliceRequest) => Promise<string>,
+  slice: (request: MediaSliceRequest) => Promise<SliceResult>,
 ): Promise<MediaPart[]> {
   if (!info.localPath) {
     throw new OmniWatchError("source_unavailable", "Brak lokalnego pliku do podzialu.", {
@@ -157,23 +197,33 @@ export async function splitParts(
     });
   }
   const plan = partPlan(info.durationSeconds, policy);
+  const fps = (policy.fpsForSeconds ?? fpsFor)(Number.isFinite(info.durationSeconds) ? info.durationSeconds : 0);
   if (plan.length === 1) {
-    return [{ index: 0, startSeconds: 0, endSeconds: info.durationSeconds, localPath: info.localPath }];
+    return [{ index: 0, startSeconds: 0, endSeconds: info.durationSeconds, localPath: info.localPath, fps }];
   }
   const parts: MediaPart[] = [];
   for (const entry of plan) {
-    const localPath = await slice({
+    const sliced = await slice({
       localPath: info.localPath,
       startSeconds: entry.startSeconds,
       endSeconds: entry.endSeconds,
       index: entry.index,
       count: plan.length,
     });
+    const localPath = typeof sliced === "string" ? sliced : sliced.localPath;
+    const reported = typeof sliced === "string" ? undefined : sliced.startSeconds;
+    // Only an earlier start inside this part's range is believable: a cut can snap
+    // back to a keyframe, never forward past the planned start.
+    const startSeconds =
+      typeof reported === "number" && Number.isFinite(reported) && reported >= 0 && reported <= entry.startSeconds
+        ? reported
+        : entry.startSeconds;
     parts.push({
       index: entry.index,
-      startSeconds: entry.startSeconds,
+      startSeconds,
       endSeconds: entry.endSeconds,
       localPath,
+      fps,
     });
   }
   return parts;

@@ -44,6 +44,14 @@ export interface ModelCallRequest {
   mediaParts: MediaPart[];
   language: string;
   maxOutputTokens?: number;
+  /**
+   * Called once when the provider has STARTED answering (response headers). The
+   * engine starts the next part only after this, because DashScope queues prefill:
+   * parts sent together wait behind each other and hit the ~60 s pre-header close.
+   * Providers that cannot tell may never call it; the engine then waits for the call
+   * to settle.
+   */
+  onResponseStarted?: () => void;
 }
 
 export interface ModelCallResponse {
@@ -220,6 +228,8 @@ export interface ConfigPort {
   apiKey(): string | null;
   apiBaseUrl(): string | null;
   maxFramesPerPart(): number;
+  /** Parts of one film in flight at once (default DEFAULT_PART_CONCURRENCY). */
+  partConcurrency?(): number;
   cacheHours(): number;
   /** Config location for spawned workers; non-secret. */
   configPath?: string;
