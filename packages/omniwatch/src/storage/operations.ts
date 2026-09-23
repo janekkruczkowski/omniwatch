@@ -424,9 +424,18 @@ export class OperationJournal {
     this.store.setOperationState(operationId, "failed", { errorClass, errorMessage: message });
   }
 
-  markOutcomeUnknown(operationId: string, message: string): void {
+  markOutcomeUnknown(operationId: string, message: string, options: { replaceMessage?: boolean } = {}): void {
     this.assertOwnership(operationId);
     const operation = this.requireOperation(operationId);
+    if (operation.state === "outcome_unknown" && options.replaceMessage) {
+      // The run's summary (which parts are uncertain) replaces the first part's raw
+      // transport detail, so a later visit explains what a retry would pay for.
+      this.store.setOperationState(operationId, "outcome_unknown", {
+        errorClass: "outcome_unknown",
+        errorMessage: message,
+      });
+      return;
+    }
     if (operation.state === "outcome_unknown" || operation.state === "delivered") {
       return;
     }

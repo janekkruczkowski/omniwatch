@@ -1,8 +1,8 @@
 /**
  * The single analysis engine (T1).
  *
- * Orchestration only: prepare media, split it, call the model ONE part at a time,
- * merge, produce an AnalysisResult. Storage, delivery and process lifecycle belong to
+ * Orchestration only: prepare media, split it, call the model for each part (a few at
+ * a time, see runGated), merge, produce an AnalysisResult. Storage, delivery and process lifecycle belong to
  * the runtime; this module receives ports and emits events.
  *
  * Cost safety, which is most of what this file is about:
@@ -43,10 +43,66 @@ import type {
 import { buildConversationContext, conversationScopeFor, estimateTokens } from "./context.ts";
 import type { ConversationContext, ConversationTurnSource } from "./context.ts";
 import { buildMergePrompt, buildPartNotesPrompt, buildWholePrompt, promptDate } from "./prompt.ts";
-import { parseTimestamp, shiftTimestamps } from "../sources/media.ts";
+import { effectiveMaxFramesPerPart, fpsFor, parseTimestamp, shiftTimestamps } from "../sources/media.ts";
 
 /** Default room for conversation history when the host does not declare one. */
 export const DEFAULT_CONVERSATION_BUDGET_TOKENS = 12000;
+
+/**
+ * Parts of one film in flight at once. The limit alone is not what protects the
+ * provider: runGated also holds every new part until all running ones have started
+ * answering. Measured live (2026-09-23): three ~46k-token parts sent together got
+ * headers after 30/36/45 s instead of ~16 s alone, nine together lost five to the
+ * ~60 s pre-header close. DashScope evidently prefills one account's requests one
+ * after another, so overlap is only useful while an earlier part is generating.
+ */
+export const DEFAULT_PART_CONCURRENCY = 3;
+
+/**
+ * Run `work` for every item with at most `limit` in flight, starting the next item
+ * only when every running one has called `started` (or settled). Items are started in
+ * order; `stop()` is checked before each start. `work` must not reject.
+ */
+export async function runGated<T>(
+  items: T[],
+  limit: number,
+  work: (item: T, started: () => void) => Promise<void>,
+  stop: () => boolean = () => false,
+): Promise<void> {
+  const max = Math.max(1, Math.floor(Number.isFinite(limit) ? limit : 1));
+  const running = new Set<Promise<void>>();
+  let notStarted = 0;
+  let wake: (() => void) | null = null;
+  const signal = (): void => {
+    const resume = wake;
+    wake = null;
+    resume?.();
+  };
+  for (const item of items) {
+    while (running.size >= max || notStarted > 0) {
+      await new Promise<void>((resolve) => { wake = resolve; });
+    }
+    if (stop()) break;
+    let marked = false;
+    notStarted += 1;
+    const started = (): void => {
+      if (marked) return;
+      marked = true;
+      notStarted -= 1;
+      signal();
+    };
+    const task: Promise<void> = Promise.resolve()
+      .then(() => work(item, started))
+      .catch(() => undefined)
+      .finally(() => {
+        started();
+        running.delete(task);
+        signal();
+      });
+    running.add(task);
+  }
+  await Promise.all(running);
+}
 
 export interface AnalysisDeps {
   clock: ClockPort;
@@ -77,6 +133,10 @@ export interface AnalysisOutcome extends AnalysisResult {
   errorClass: ErrorClass | null;
   /** Every event emitted during this run, in order (monotonic `version`). */
   events: ProgressEvent[];
+  /** Part indexes whose paid call has an unknown outcome in this run (merge = parts). */
+  unknownParts?: number[];
+  /** Human-readable reason for an unknown outcome, naming the parts involved. */
+  outcomeMessage?: string;
 }
 
 /** Optional provider hook so missing configuration fails before media work. */
@@ -112,11 +172,17 @@ export function extractHighlights(content: string, limit = 40): Highlight[] {
   return out;
 }
 
-function aggregateUsage(responses: ModelCallResponse[]): Usage {
+/**
+ * Sum the confirmed responses. `unknownCalls` counts paid calls of this run whose
+ * outcome is unknown: they may have been billed, so the total cannot be known (R2-05:
+ * a run with an unknown part used to report `costKnown: true`).
+ */
+export function aggregateUsage(responses: ModelCallResponse[], unknownCalls = 0): Usage {
   const inputs = responses.map((r) => r.usage?.inputTokens).filter(isNumber);
   const outputs = responses.map((r) => r.usage?.outputTokens).filter(isNumber);
   const costs = responses.map((r) => r.usage?.costUsd).filter(isNumber);
   const costKnown =
+    unknownCalls === 0 &&
     responses.length > 0 && responses.every((r) => r.usage?.costKnown === true && isNumber(r.usage?.costUsd));
   return {
     inputTokens: inputs.length ? inputs.reduce((a, b) => a + b, 0) : null,
@@ -163,6 +229,18 @@ export function promptDateFor(
   return promptDate(earliest ?? now);
 }
 
+/** Names the uncertain parts so the user can see what a confirmed retry will pay for. */
+export function unknownPartsMessage(unknown: number[], total: number, done: number, lastDetail: string): string {
+  const list = unknown.map((index) => index + 1).join(", ");
+  const head = unknown.length === 1
+    ? `Nie wiadomo, czy czesc ${list}/${total} zostala rozliczona`
+    : `Nie wiadomo, czy czesci ${list} (z ${total}) zostaly rozliczone`;
+  const reuse = done > 0
+    ? ` Gotowe czesci (${done}/${total}) sa zapisane; potwierdzone ponowienie zaplaci tylko za ${unknown.length} ${unknown.length === 1 ? "nieudana czesc" : "nieudane czesci"} i scalenie.`
+    : ` Potwierdzone ponowienie zaplaci za ${unknown.length} czesci i scalenie.`;
+  return `${head}.${reuse}${lastDetail ? ` Ostatni blad: ${lastDetail}` : ""}`;
+}
+
 const INCOMPLETE_NOTE =
   "\n\n_[Analiza niekompletna: odpowiedz modelu nie zostala potwierdzona jako ukonczona. "
   + "Zachowano tekst czesciowy; ponowienie tego wywolania moze kosztowac drugi raz.]_";
@@ -189,13 +267,20 @@ export async function analyze(request: AnalysisRequest, deps: AnalysisDeps): Pro
 
   emit("running", "preflight", { message: "sprawdzam konfiguracje" });
 
-  const maxFrames = Number(deps.config.maxFramesPerPart());
-  if (!isNumber(maxFrames) || maxFrames < 1) {
+  const configuredFrames = Number(deps.config.maxFramesPerPart());
+  if (!isNumber(configuredFrames) || configuredFrames < 1) {
     throw new OmniWatchError("missing_config", "Brak poprawnego limitu klatek na czesc.", {
       operationId,
       action: { label: "ustaw OMNI_MAX_FRAMES", kind: "fix_config" },
     });
   }
+  // One bound for every shell: a host's larger setting must not produce parts the
+  // provider closes before answering.
+  const maxFrames = effectiveMaxFramesPerPart(deps.model.modelName, configuredFrames);
+  const concurrencySetting = Number(deps.config.partConcurrency?.() ?? DEFAULT_PART_CONCURRENCY);
+  const partConcurrency = isNumber(concurrencySetting) && concurrencySetting >= 1
+    ? Math.floor(concurrencySetting)
+    : DEFAULT_PART_CONCURRENCY;
 
   // Fail on a missing key or endpoint before a download, an upload or a paid call.
   const preflight = (deps.model as ModelPort & PreflightableModel).preflight;
@@ -244,7 +329,12 @@ export async function analyze(request: AnalysisRequest, deps: AnalysisDeps): Pro
   emit("running", "split", {
     message: `dzielenie na czesci (limit ${maxFrames} klatek)`,
   });
-  const parts = await deps.source.split(info, { maxFramesPerPart: maxFrames });
+  const filmFps = fpsFor(info.durationSeconds);
+  // Hosts with their own splitter may not set the film's sampling rate; without it a
+  // provider would guess from the part's end and sample early parts of a 3-6 minute
+  // film at the short-form 10 fps.
+  const parts = (await deps.source.split(info, { maxFramesPerPart: maxFrames }))
+    .map((part) => (isNumber(part.fps) ? part : { ...part, fps: filmFps }));
   if (!parts.length) {
     throw new OmniWatchError("source_unavailable", "Nie udalo sie przygotowac zadnej czesci materialu.", {
       operationId,
@@ -264,6 +354,7 @@ export async function analyze(request: AnalysisRequest, deps: AnalysisDeps): Pro
     messages: ModelMessage[],
     mediaParts: MediaPart[],
     promptVersion: string,
+    onResponseStarted?: () => void,
   ): Promise<CallOutcome> => {
     attemptCounter += 1;
     // A confirmed retry runs the same operation again. Give every paid call a new
@@ -347,6 +438,7 @@ export async function analyze(request: AnalysisRequest, deps: AnalysisDeps): Pro
       messages,
       mediaParts,
       language: request.language,
+      ...(onResponseStarted ? { onResponseStarted } : {}),
     };
 
     let response: ModelCallResponse;
@@ -379,6 +471,7 @@ export async function analyze(request: AnalysisRequest, deps: AnalysisDeps): Pro
   let incomplete = false;
   let errorClass: ErrorClass | null = null;
   let unknownMessage = "";
+  let unknownParts: number[] = [];
 
   if (parts.length === 1) {
     const prompt = buildWholePrompt({
@@ -398,49 +491,89 @@ export async function analyze(request: AnalysisRequest, deps: AnalysisDeps): Pro
       incomplete = true;
       errorClass = outcome.errorClass;
       unknownMessage = outcome.message;
+      unknownParts = [0];
       content = outcome.partialText;
     }
   } else {
-    let failed = false;
-    for (const part of parts) {
-      const prompt = buildPartNotesPrompt({
-        mode: request.mode,
-        language: request.language,
-        info,
-        focus: normalizedFocus,
-        question,
-        partIndex: part.index,
-        partCount: parts.length,
-        startSeconds: part.startSeconds,
-        today,
-      });
-      const outcome = await runCall(part.index, prompt.messages, [part], prompt.version);
-      if (outcome.kind === "ok") {
-        responses.push(outcome.response);
-        notes.push(shiftTimestamps(outcome.response.text, part.startSeconds, part.endSeconds - part.startSeconds));
-        emit("running", "part_done", {
-          itemIndex: part.index,
-          itemCount: parts.length,
-          message: `czesc ${part.index + 1}/${parts.length} gotowa`,
+    // Every part is attempted, a few at a time (runGated). An unknown part does not
+    // stop the others: they are separate paid calls that the film needs anyway, and a
+    // later confirmed retry reuses every committed part and pays only for the missing
+    // ones. A definitive failure (4xx, missing config) stops new starts; calls already
+    // in flight are awaited so none is left unjournaled.
+    const partNotes = new Map<number, string>();
+    const partials = new Map<number, string>();
+    const unknownMessages = new Map<number, string>();
+    let definitive: unknown = null;
+    let definitiveSeen = false;
+    await runGated(
+      parts,
+      partConcurrency,
+      async (part, started) => {
+        const prompt = buildPartNotesPrompt({
+          mode: request.mode,
+          language: request.language,
+          info,
+          focus: normalizedFocus,
+          question,
+          partIndex: part.index,
+          partCount: parts.length,
+          startSeconds: part.startSeconds,
+          today,
         });
-      } else {
-        incomplete = true;
-        errorClass = outcome.errorClass;
-        unknownMessage = outcome.message;
-        if (outcome.partialText) notes.push(shiftTimestamps(outcome.partialText, part.startSeconds, 0));
-        failed = true;
-        break;
-      }
+        let outcome: CallOutcome;
+        try {
+          outcome = await runCall(part.index, prompt.messages, [part], prompt.version, started);
+        } catch (error) {
+          if (!definitiveSeen) {
+            definitiveSeen = true;
+            definitive = error;
+          }
+          return;
+        }
+        const length = part.endSeconds - part.startSeconds;
+        if (outcome.kind === "ok") {
+          responses.push(outcome.response);
+          partNotes.set(part.index, shiftTimestamps(outcome.response.text, part.startSeconds, length));
+          emit("running", "part_done", {
+            itemIndex: part.index,
+            itemCount: parts.length,
+            message: `czesc ${part.index + 1}/${parts.length} gotowa`,
+          });
+        } else {
+          unknownMessages.set(part.index, outcome.message);
+          if (outcome.partialText) partials.set(part.index, shiftTimestamps(outcome.partialText, part.startSeconds, length));
+          emit("running", "part_unknown", {
+            itemIndex: part.index,
+            itemCount: parts.length,
+            errorClass: "outcome_unknown",
+            message: `czesc ${part.index + 1}/${parts.length}: wynik nieznany`,
+          });
+        }
+      },
+      () => definitiveSeen,
+    );
+    if (definitiveSeen) throw definitive;
+
+    const ordered = parts.filter((part) => partNotes.has(part.index));
+    for (const part of parts) {
+      const text = partNotes.get(part.index) ?? partials.get(part.index);
+      if (text) notes.push(text);
     }
 
-    if (!failed) {
+    if (unknownMessages.size) {
+      incomplete = true;
+      errorClass = "outcome_unknown";
+      unknownParts = [...unknownMessages.keys()].sort((a, b) => a - b);
+      const last = unknownMessages.get(unknownParts[unknownParts.length - 1]) ?? "";
+      unknownMessage = unknownPartsMessage(unknownParts, parts.length, ordered.length, last);
+    } else {
       const mergePrompt = buildMergePrompt({
         mode: request.mode,
         language: request.language,
         info,
         focus: normalizedFocus,
         question,
-        notes: notes.map((text, index) => ({ index, startSeconds: parts[index].startSeconds, text })),
+        notes: ordered.map((part, index) => ({ index, startSeconds: part.startSeconds, text: partNotes.get(part.index)! })),
         history: context.turns,
         today,
       });
@@ -452,7 +585,8 @@ export async function analyze(request: AnalysisRequest, deps: AnalysisDeps): Pro
       } else {
         incomplete = true;
         errorClass = merged.errorClass;
-        unknownMessage = merged.message;
+        unknownParts = [parts.length];
+        unknownMessage = `Scalenie notatek: ${merged.message} Wszystkie ${parts.length} czesci sa zapisane; ponowienie zaplaci tylko za scalenie.`;
         content = merged.partialText;
       }
     }
@@ -466,7 +600,7 @@ export async function analyze(request: AnalysisRequest, deps: AnalysisDeps): Pro
 
   if (incomplete) content = `${content}${INCOMPLETE_NOTE}`;
 
-  const usage = aggregateUsage(responses);
+  const usage = aggregateUsage(responses, unknownParts.length);
   const result: AnalysisOutcome = {
     analysisId,
     analysisKey,
@@ -488,6 +622,7 @@ export async function analyze(request: AnalysisRequest, deps: AnalysisDeps): Pro
     incomplete: incomplete || undefined,
     errorClass,
     events,
+    ...(unknownParts.length ? { unknownParts, outcomeMessage: unknownMessage } : {}),
   };
 
   if (errorClass === "outcome_unknown") {
@@ -512,6 +647,7 @@ export async function analyze(request: AnalysisRequest, deps: AnalysisDeps): Pro
     analysisId,
     parts: parts.length,
     incomplete,
+    unknownParts: unknownParts.length,
     costKnown: usage.costKnown,
   });
   return result;

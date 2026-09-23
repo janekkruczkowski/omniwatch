@@ -508,7 +508,7 @@ test("engine: parts are analysed one at a time, then merged", async () => {
   assert.match(mergePrompt, /\[13:25\]/);
 });
 
-test("engine: an unknown outcome on a later part keeps earlier notes and skips the merge", async () => {
+test("engine: an unknown outcome on one part keeps the other parts' notes and skips the merge", async () => {
   const parts = [
     { index: 0, startSeconds: 0, endSeconds: 800.67, localPath: "/tmp/part0.mp4" },
     { index: 1, startSeconds: 800.67, endSeconds: 1601.33, localPath: "/tmp/part1.mp4" },
@@ -525,10 +525,14 @@ test("engine: an unknown outcome on a later part keeps earlier notes and skips t
 
   const result = await analyze(requestFor(sourceStub.sourceRef), deps);
 
-  assert.equal(model.state.count, 2, "no third part and no merge after an unknown outcome");
+  // LF (2026-09-23): the other parts are still attempted - they are separate calls the
+  // film needs anyway, and a confirmed retry then pays only for part 1 and the merge.
+  assert.equal(model.state.count, 3, "every part attempted once, no merge after an unknown outcome");
   assert.equal(result.incomplete, true);
   assert.equal(result.errorClass, "outcome_unknown");
+  assert.deepEqual(result.unknownParts, [1]);
   assert.match(result.content, /notes for part 0/);
+  assert.match(result.content, /notes for part 2/);
   assert.match(result.content, /Analiza niekompletna/);
 });
 

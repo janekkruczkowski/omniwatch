@@ -248,7 +248,8 @@ test("a confirmed retry on a later day keeps the operation's first date, so save
   });
   const outcome = await analyze(request(), deps(day1, flaky));
   assert.equal(outcome.errorClass, "outcome_unknown");
-  assert.deepEqual(first.requests.map((req) => req.partIndex), [0]);
+  // Part 1 is uncertain; part 2 is still attempted (LF: parts do not stop each other).
+  assert.deepEqual(first.requests.map((req) => req.partIndex).sort(), [0, 2]);
   assert.ok(systemOf(first.requests[0]).includes("TODAY'S DATE IS 2026-09-22."));
 
   // Next day: the same operation is retried. Part 0 must be reused, not paid again.
@@ -257,7 +258,7 @@ test("a confirmed retry on a later day keeps the operation's first date, so save
   const second = model();
   const retried = await analyze(request(), deps(day2, second));
   assert.equal(retried.errorClass, null);
-  assert.deepEqual(second.requests.map((req) => req.partIndex), [1, 2, 3], "part 0 reused; parts 1-2 and merge paid");
+  assert.deepEqual(second.requests.map((req) => req.partIndex), [1, 3], "parts 0 and 2 reused; part 1 and merge paid");
   for (const req of second.requests) assert.ok(systemOf(req).includes("TODAY'S DATE IS 2026-09-22."));
 });
 

@@ -27,7 +27,7 @@ import { OmniWatchError } from "../../packages/omniwatch/src/contracts/errors.ts
 import { loadStandaloneConfig, runtimeConfigDocument } from "../../apps/standalone/config.mjs";
 import { createFixtureSource, createRuntimeWiring } from "../../packages/omniwatch/src/runtime/poc.ts";
 import { partPlan } from "../../packages/omniwatch/src/sources/media.ts";
-import { createStandaloneServer, frameTargetPath } from "../../apps/standalone/server.mjs";
+import { createStandaloneMediaTool, createStandaloneServer, frameTargetPath } from "../../apps/standalone/server.mjs";
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const fixtures = path.join(repo, "test/fixtures/beta");
@@ -600,6 +600,135 @@ test("ISSUE-010 UI: configuration and URL errors return to the form without retr
     assert.equal(sources.length, 1, `${error} must not issue a new request`);
     assert.equal(bodyClasses.has("failed"), false);
   }
+});
+
+test("LF UI: several unknown parts stay visible and the retry names only the unfinished ones", async () => {
+  const { dom, bodyClasses, sources, submit } = runPage();
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+  submit();
+  sources[0].emit("operation", { operationId: "op_long_fixture" });
+  sources[0].emit("parts", { n: 5, starts: [0, 120, 240, 360, 480] });
+  // innerHTML does not build children in this stand-in; plant the five bars.
+  const bars = Array.from({ length: 5 }, () => ({ className: "on" }));
+  dom.elements.get("#parts").children = bars;
+  for (const i of [0, 2, 4]) sources[0].emit("part_done", { i });
+  for (const i of [1, 3]) sources[0].emit("part_unknown", { i });
+  sources[0].emit("error", { error: "outcome_unknown", operationId: "op_long_fixture", message: "Nie wiadomo, czy czesci 2, 4 (z 5) zostaly rozliczone." });
+  assert.equal(bodyClasses.has("failed"), true);
+  assert.deepEqual(bars.map((bar) => bar.className), ["ok", "bad", "ok", "bad", "ok"]);
+  assert.notEqual(dom.elements.get("#parts").style.display, "none", "the part bar stays on screen after the failure");
+  assert.equal(dom.elements.get("#wcount").textContent, "3/5");
+  const card = dom.elements.get(".retry-action").innerHTML;
+  assert.match(card, /Ponów tylko nieukończone części \(2 z 5\) — możliwy dodatkowy koszt/);
+  assert.match(card, /Ukończone części \(3\/5\) są zapisane i nie będą opłacane ponownie/);
+  dom.elements.get(".retry-action").dispatch("click");
+  assert.equal(sources.length, 2);
+  assert.match(sources[1].url, /retryOperation=op_long_fixture&confirmRetry=1/, "same operation: saved parts are reused");
+});
+
+test("LF: a long film runs its parts side by side; unknown parts are marked and a confirmed retry pays only for them", async () => {
+  const { appRoot, dataDir, cacheDir } = watchShell();
+  const calls = [];
+  let round = 1;
+  const model = {
+    modelName: "stub-long",
+    async call(request) {
+      calls.push({ round, part: request.partIndex });
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      if (round === 1 && (request.partIndex === 1 || request.partIndex === 3)) {
+        throw new OmniWatchError("outcome_unknown", "Polaczenie z modelem przerwane (phase=headers code=UND_ERR_SOCKET).");
+      }
+      request.onResponseStarted?.();
+      return {
+        text: `[0:05] czesc ${request.partIndex}`,
+        usage: { inputTokens: 10, outputTokens: 5, costUsd: 0.001, costKnown: true },
+        completed: true,
+      };
+    },
+  };
+  const app = createStandaloneServer({
+    appRoot, dataDir, cacheDir, model,
+    source: createFixtureSource({ durationSeconds: 750 }),
+    env: { OMNIWATCH_APP_ROOT: appRoot, OMNIWATCH_DATA_DIR: dataDir, OMNI_MAX_FRAMES: "300" },
+  });
+  const url = "https://youtu.be/SYNTHETIC01";
+  const first = await driveWatch(app, { url });
+  const operationId = sseData(first.body, "operation")?.operationId;
+  assert.equal(sseData(first.body, "parts")?.n, 5);
+  assert.deepEqual(calls.map((call) => call.part).sort(), [0, 1, 2, 3, 4], "all parts attempted, no merge yet");
+  const unknownFrames = first.body.split("\n\n").filter((frame) => frame.startsWith("event: part_unknown\n"));
+  assert.equal(unknownFrames.length, 2, "each uncertain part is reported to the UI");
+  const error = sseData(first.body, "error");
+  assert.equal(error?.error, "outcome_unknown");
+  assert.match(error.message, /czesci 2, 4 \(z 5\)/);
+  assert.match(error.message, /Gotowe czesci \(3\/5\)/);
+
+  // Coming back later with the same form: still gated, and still told which parts.
+  const again = await driveWatch(app, { url });
+  assert.equal(sseData(again.body, "error")?.error, "outcome_unknown");
+  assert.match(sseData(again.body, "error").message, /czesci 2, 4 \(z 5\)/);
+  assert.equal(calls.length, 5, "the ordinary resubmit pays nothing");
+
+  round = 2;
+  const retry = await driveWatch(app, { url, retryOperation: operationId, confirmRetry: true });
+  assert.ok(sseData(retry.body, "done"), retry.body);
+  assert.deepEqual(calls.filter((call) => call.round === 2).map((call) => call.part).sort(), [1, 3, 5],
+    "only parts 2 and 4 and the merge are paid for again");
+  const wiring = createRuntimeWiring({
+    dataDir, config: runtimeConfigDocument(loadStandaloneConfig({ appRoot, env: {} })), environment: {},
+  });
+  try {
+    const attempts = wiring.store.listAttempts(operationId);
+    assert.equal(attempts.filter((attempt) => attempt.phase === "unknown").length, 2, "the uncertain calls stay in the audit trail");
+    assert.equal(attempts.filter((attempt) => attempt.phase === "response").length, 6);
+  } finally {
+    wiring.close();
+  }
+});
+
+test("R2-08 standalone: a stream-copied part reports where its file really starts", async () => {
+  const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), "omni-slice-"));
+  const commands = [];
+  const media = createStandaloneMediaTool({
+    cacheDir,
+    runTool: async (cmd, args) => {
+      commands.push(cmd);
+      if (cmd === "ffmpeg") fs.writeFileSync(args[args.length - 1], "");
+      return { stdout: cmd === "ffprobe" ? "34.610156\n" : "", stderr: "" };
+    },
+  });
+  const sliced = await media.slice({ localPath: path.join(cacheDir, "adacd7b009d5bcd9", "source.mp4"), startSeconds: 29.268, endSeconds: 58.537, index: 1, count: 2 });
+  assert.deepEqual(commands, ["ffmpeg", "ffprobe"]);
+  assert.match(sliced.localPath, /part_2_1\.mp4$/);
+  assert.ok(Math.abs(sliced.startSeconds - 23.927) < 0.01, `start ${sliced.startSeconds}`);
+});
+
+test("R2-03 standalone: a refresh upload ignores the cached oss:// entry", async (t) => {
+  const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), "omni-up-"));
+  const dir = path.join(cacheDir, "SYNTH");
+  fs.mkdirSync(dir, { recursive: true });
+  const partPath = path.join(dir, "part_2_0.mp4");
+  fs.writeFileSync(partPath, "video");
+  fs.writeFileSync(path.join(dir, "oss.json"), JSON.stringify({ "part_2_0.mp4": { url: "oss://old/part_2_0.mp4", at: Math.floor(Date.now() / 1000) } }));
+  const media = createStandaloneMediaTool({ cacheDir });
+  const config = { apiKey: () => "fixture-key", apiBaseUrl: () => "https://dashscope-intl.aliyuncs.com", modelName: "qwen3.8-omni-flash" };
+  const original = globalThis.fetch;
+  const requests = [];
+  globalThis.fetch = async (url) => {
+    requests.push(String(url));
+    if (String(url).includes("getPolicy")) {
+      return new Response(JSON.stringify({ data: { upload_dir: "new-dir", upload_host: "https://oss.invalid", oss_access_key_id: "a", signature: "s", policy: "p", x_oss_object_acl: "private", x_oss_forbid_overwrite: "true" } }), { status: 200 });
+    }
+    return new Response("", { status: 200 });
+  };
+  t.after(() => { globalThis.fetch = original; });
+  assert.equal((await media.uploadPart({ localPath: partPath }, config)).url, "oss://old/part_2_0.mp4", "a normal call reuses the cache");
+  assert.equal(requests.length, 0);
+  const fresh = await media.uploadPart({ localPath: partPath }, config, { refresh: true });
+  assert.equal(fresh.url, "oss://new-dir/part_2_0.mp4");
+  assert.equal(fresh.reused, false);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir, "oss.json"), "utf8"))["part_2_0.mp4"].url, "oss://new-dir/part_2_0.mp4");
 });
 
 /* ------------------------------------------------------------------ ISSUE-007 -- */

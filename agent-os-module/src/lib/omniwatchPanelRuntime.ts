@@ -11,9 +11,9 @@
  * has no analysis logic of its own (D1/D9).
  */
 
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 import { createOpenAiModelPort } from "../../../packages/omniwatch/src/analysis/index.ts";
 import { chatCompletionsUrl, DEFAULT_DASHSCOPE_HOST } from "../../../packages/omniwatch/src/contracts/endpoints.ts";
@@ -39,7 +39,7 @@ import { createLogger, systemClock } from "../../../packages/omniwatch/src/runti
 import { spawnWorkerProcess } from "../../../packages/omniwatch/src/runtime/spawn.ts";
 import { runOperation } from "../../../packages/omniwatch/src/runtime/worker.ts";
 import { OperationJournal } from "../../../packages/omniwatch/src/storage/operations.ts";
-import { createSourceRegistry } from "../../../packages/omniwatch/src/sources/index.ts";
+import { createSourceRegistry, keyframeAlignedStart } from "../../../packages/omniwatch/src/sources/index.ts";
 import { openSqliteStore } from "../../../packages/omniwatch/src/storage/index.ts";
 import { createOmniWatchHost, type OmniWatchHost } from "./omniwatchHost.ts";
 import type { HostModelPort } from "./omniwatchMemory.ts";
@@ -268,11 +268,11 @@ export function createPanelRuntime(options: { env?: NodeJS.ProcessEnv } = {}): P
   const source = buildHostSource(hostModules);
   const model = createOpenAiModelPort({
     config,
-    resolveMediaUrl: async (part: MediaPart) => {
+    resolveMediaUrl: async (part: MediaPart, resolveOptions?: { refresh?: boolean }) => {
       const legacy = (await hostModules).omniwatch;
       const key = config.apiKey();
       if (!key) throw new Error("Brak klucza API dla uploadu materialu.");
-      const uploaded = await legacy.upload(part.localPath, key);
+      const uploaded = await legacy.upload(part.localPath, key, resolveOptions);
       return uploaded.url;
     },
     costForUsage: ({ inputTokens, outputTokens }) => panelCostForUsage(inputTokens, outputTokens),
@@ -442,14 +442,31 @@ function buildHostSource(hostModules: Promise<HostModules>): SourcePort {
       index: number;
       count: number;
     }) {
+      // Cut exactly the range the core planned. The legacy splitter re-planned from
+      // its own frame limit and a fake duration, so part 0 of a two-part plan was the
+      // whole film and any other plan asked for parts it never made.
       const legacy = (await hostModules).omniwatch;
-      const parts = await legacy.splitParts(
-        { id: "", title: "", channel: "", duration: input.endSeconds, extractor: "" },
-        input.localPath,
-      );
-      const match = parts[input.index];
-      if (!match) throw new Error(`Nie udalo sie przygotowac czesci ${input.index}.`);
-      return match.file;
+      const target = join(dirname(input.localPath), `part_${input.count}_${input.index}.mp4`);
+      if (!existsSync(target)) {
+        await legacy.run("ffmpeg", [
+          "-y", "-loglevel", "error",
+          "-ss", String(input.startSeconds),
+          "-t", String(Math.max(0, input.endSeconds - input.startSeconds)),
+          "-i", input.localPath,
+          "-c", "copy", "-avoid_negative_ts", "make_zero",
+          target,
+        ]);
+      }
+      // A stream copy starts on the keyframe before the planned start (R2-08).
+      try {
+        const probed = Number(String(await legacy.run("ffprobe", [
+          "-v", "error", "-show_entries", "format=duration",
+          "-of", "default=noprint_wrappers=1:nokey=1", target,
+        ])).trim());
+        return { localPath: target, startSeconds: keyframeAlignedStart(input.startSeconds, input.endSeconds, probed) };
+      } catch {
+        return target;
+      }
     },
   };
 

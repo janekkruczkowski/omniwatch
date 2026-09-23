@@ -11,7 +11,7 @@
  * Secrets stay in the environment: the entry passes env-var NAMES, never values.
  */
 
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import type { MediaInfo, MediaPart, SourceRef } from "../../../packages/omniwatch/src/contracts/types.ts";
 
@@ -120,24 +120,48 @@ export async function runHostWorker(options: HostWorkerOptions): Promise<HostWor
         reusedUpload: false,
       };
     },
-    split: async (info: MediaInfo): Promise<MediaPart[]> => {
+    split: async (info: MediaInfo, options: { maxFramesPerPart: number }): Promise<MediaPart[]> => {
       const fetched = prepared.get(info.sourceRef.sourceId);
       if (!fetched) throw new Error(`Brak przygotowanego materialu ${info.sourceRef.sourceId}`);
-      const parts = await hostEngine.splitParts(fetched.info, fetched.src);
-      return parts.map((part, index) => ({
-        index,
-        startSeconds: Number(part.start ?? 0),
-        endSeconds:
-          index + 1 < parts.length ? Number(parts[index + 1].start ?? 0) : Number(fetched.info?.duration ?? 0),
-        localPath: String(part.file),
-      }));
+      // The core's plan (its model-aware frame cap), cut exactly; the host splitter
+      // used its own OMNI_MAX_FRAMES and ignored the engine's limit.
+      return core.splitParts(
+        { ...info, localPath: fetched.src },
+        { maxFramesPerPart: options.maxFramesPerPart },
+        async (input: { localPath: string; startSeconds: number; endSeconds: number; index: number; count: number }) => {
+          const target = path.join(path.dirname(input.localPath), `part_${input.count}_${input.index}.mp4`);
+          if (!existsSync(target)) {
+            await hostEngine.run("ffmpeg", [
+              "-y", "-loglevel", "error",
+              "-ss", String(input.startSeconds),
+              "-t", String(Math.max(0, input.endSeconds - input.startSeconds)),
+              "-i", input.localPath,
+              "-c", "copy", "-avoid_negative_ts", "make_zero",
+              target,
+            ]);
+          }
+          try {
+            const probed = Number(String(await hostEngine.run("ffprobe", [
+              "-v", "error", "-show_entries", "format=duration",
+              "-of", "default=noprint_wrappers=1:nokey=1", target,
+            ])).trim());
+            return { localPath: target, startSeconds: core.keyframeAlignedStart(input.startSeconds, input.endSeconds, probed) };
+          } catch {
+            return target;
+          }
+        },
+      );
     },
   };
 
   const model = core.createOpenAiModelPort({
     config: configPort,
-    resolveMediaUrl: async (part: MediaPart) => {
-      const uploaded = await hostEngine.upload(part.localPath, `${path.basename(part.localPath)}#${part.index}`);
+    resolveMediaUrl: async (part: MediaPart, resolveOptions?: { refresh?: boolean }) => {
+      // The second argument is the API key (the upload authenticates with it); this
+      // used to pass a file label, which could never authenticate.
+      const key = await configPort.apiKey();
+      if (!key) throw new Error("Brak klucza API dla uploadu materialu.");
+      const uploaded = await hostEngine.upload(part.localPath, key, resolveOptions);
       return uploaded.url;
     },
   });

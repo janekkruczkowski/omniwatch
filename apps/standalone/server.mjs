@@ -54,7 +54,7 @@ const [
   { OperationJournal },
   { recoverPendingWork, runOperation },
   { createSourceRegistry },
-  { fpsFor, formatDuration, strip },
+  { effectiveMaxFramesPerPart, fpsFor, formatDuration, keyframeAlignedStart, strip },
   { BETA_OSS_TTL_HOURS },
 ] = await Promise.all(
   [
@@ -344,7 +344,15 @@ export function createStandaloneMediaTool(options) {
           target,
         ]);
       }
-      return target;
+      // A stream copy starts on the keyframe before the planned start (R2-08); report
+      // where the file really begins so part timestamps land on the film's clock.
+      try {
+        const probe = await run("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", target]);
+        const actual = Number(String(probe.stdout).trim());
+        return { localPath: target, startSeconds: keyframeAlignedStart(request.startSeconds, request.endSeconds, actual) };
+      } catch {
+        return target;
+      }
     },
 
     /**
@@ -352,7 +360,7 @@ export function createStandaloneMediaTool(options) {
      * material id comes from the part's own directory (`<cacheDir>/<id>/part_*.mp4`),
      * so the caller does not have to thread a `SourceRef` through the model port.
      */
-    async uploadPart(part, config) {
+    async uploadPart(part, config, options = {}) {
       const id = assertSafeLegacyId(path.basename(path.dirname(part.localPath)));
       const dir = dirFor(id);
       mkdirSync(dir, { recursive: true });
@@ -367,7 +375,8 @@ export function createStandaloneMediaTool(options) {
       // The provider's upload lifetime (47 h, the beta's OSS_TTL), not the local cache
       // window: a longer OMNI_CACHE_HOURS must never resend an expired oss:// URL.
       const verdict = evaluateUploadFreshness(known?.[name] ?? null, BETA_OSS_TTL_HOURS, nowSeconds());
-      if (verdict.valid && typeof known[name]?.url === "string") {
+      // `refresh`: the provider refused the cached URL (R2-03); upload a new object.
+      if (!options.refresh && verdict.valid && typeof known[name]?.url === "string") {
         return { url: known[name].url, reused: true };
       }
       const key = config.apiKey();
@@ -429,6 +438,8 @@ export function progressToEvent(event) {
       return event.itemIndex === 0 || event.itemIndex === undefined ? { name: "stage", data: { step: "answer" } } : null;
     case "part_done":
       return { name: "part_done", data: { i: event.itemIndex ?? 0 } };
+    case "part_unknown":
+      return { name: "part_unknown", data: { i: event.itemIndex ?? 0 } };
     case "merge":
       return { name: "merge", data: {} };
     default:
@@ -511,8 +522,10 @@ export async function runWatchPipeline(options) {
   });
   emit("stage", { step: "upload" });
 
+  // The same bound the engine applies, or the UI would draw a different part count
+  // than the engine reports progress for.
   const parts = await wiring.deps.source.split(info, {
-    maxFramesPerPart: wiring.deps.config.maxFramesPerPart(),
+    maxFramesPerPart: effectiveMaxFramesPerPart(wiring.deps.model.modelName, wiring.deps.config.maxFramesPerPart()),
   });
   emit("parts", { n: parts.length, starts: parts.map((part) => part.startSeconds) });
   emit("uploaded", { reused: info.reusedUpload === true });
@@ -577,7 +590,8 @@ export async function runWatchPipeline(options) {
     emit("operation", { operationId: enqueued.operation.id });
 
     if (enqueued.operation.state === "outcome_unknown") {
-      throw new OmniWatchError("outcome_unknown", "Wynik poprzedniego wywolania modelu jest nieznany; sprawdz operacje przed ponowieniem.", {
+      const saved = enqueued.operation.errorMessage ? ` ${enqueued.operation.errorMessage}` : "";
+      throw new OmniWatchError("outcome_unknown", `Wynik poprzedniego wywolania modelu jest nieznany; sprawdz operacje przed ponowieniem.${saved}`, {
         operationId: enqueued.operation.id,
       });
     }
@@ -1027,8 +1041,8 @@ export function createStandaloneServer(options = {}) {
       // URL, so the host adapter supplies that mapping (D5: host owns uploads).
       wiring.deps.model = createOpenAiModelPort({
         config: wiring.deps.config,
-        resolveMediaUrl: async (part) => {
-          const uploaded = await media.uploadPart(part, wiring.deps.config);
+        resolveMediaUrl: async (part, resolveOptions) => {
+          const uploaded = await media.uploadPart(part, wiring.deps.config, resolveOptions);
           return uploaded.url;
         },
         costForUsage: ({ inputTokens, outputTokens }) => {
