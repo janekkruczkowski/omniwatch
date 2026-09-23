@@ -19,6 +19,7 @@ import { OmniWatchError } from "../src/contracts/index.ts";
 import {
   aggregateUsage,
   analyze,
+  countUnknownCostCalls,
   DEFAULT_PART_CONCURRENCY,
   runBounded,
   unknownPartsMessage,
@@ -329,6 +330,75 @@ test("R2-05: usage with any unknown call is never reported as a known cost", () 
   assert.equal(aggregateUsage([ok, ok], 1).costKnown, false);
   assert.equal(aggregateUsage([ok, ok], 1).costUsd, null);
   assert.match(unknownPartsMessage([7], 17, 16, "phase=headers"), /czesc 8\/17/);
+});
+
+/* ------------------------------------------------------------- R3-03 --- */
+
+/**
+ * The R3-03 case: the operation was first run with two calls whose outcome is unknown,
+ * then consciously retried. The retry reports `costKnown: true` and the cost of what it
+ * confirmed — correct for what it bills, but the operation may also have been charged
+ * for the two earlier calls. The count travels on the usage so the UI can say so.
+ */
+test("R3-03: a retry reports the earlier unconfirmed calls alongside its own confirmed cost", () => {
+  // The journal as it looks after the first run: two calls reached the provider and no
+  // response was ever committed for either.
+  const firstRun = [
+    { id: "att_1", operationId: "op_long", phase: "intent", partIndex: 0, createdAt: "2026-09-23T12:00:00.000Z" },
+    { id: "att_1", operationId: "op_long", phase: "started", partIndex: 0, createdAt: "2026-09-23T12:00:00.000Z" },
+    { id: "att_1", operationId: "op_long", phase: "unknown", partIndex: 0, createdAt: "2026-09-23T12:00:00.000Z" },
+    { id: "att_2", operationId: "op_long", phase: "intent", partIndex: 2, createdAt: "2026-09-23T12:00:00.000Z" },
+    { id: "att_2", operationId: "op_long", phase: "started", partIndex: 2, createdAt: "2026-09-23T12:00:00.000Z" },
+    // A process killed mid-call leaves `started` and nothing after it.
+    { id: "att_3", operationId: "op_long", phase: "started", partIndex: 4, createdAt: "2026-09-23T12:00:00.000Z" },
+    // A definitive rejection provably never ran the model, so it is not charged.
+    { id: "att_4", operationId: "op_long", phase: "failed", partIndex: 5, createdAt: "2026-09-23T12:00:00.000Z" },
+    // A call confirmed in the first run: it is in the total, never counted as unknown.
+    { id: "att_5", operationId: "op_long", phase: "response", partIndex: 1, createdAt: "2026-09-23T12:00:00.000Z" },
+  ];
+  // att_1 ended `unknown`, att_2 and att_3 were left `started` (the process died before
+  // anything was written after them): three calls may have been billed and none of them
+  // is in the retry's total. att_1's three journal rows are one call, not three.
+  assert.equal(countUnknownCostCalls(firstRun), 3, "two started plus one unknown, deduplicated by id");
+  // No journal at all is the ordinary first run: nothing to report.
+  assert.equal(countUnknownCostCalls([]), 0);
+  assert.equal(countUnknownCostCalls(undefined), 0);
+  // An attempt written `unknown` and then confirmed is the same call, now accounted for.
+  assert.equal(
+    countUnknownCostCalls([
+      { id: "att_6", operationId: "op_long", phase: "unknown", partIndex: 0, createdAt: "2026-09-23T12:00:00.000Z" },
+      { id: "att_6", operationId: "op_long", phase: "response", partIndex: 0, createdAt: "2026-09-23T12:00:00.000Z" },
+    ]),
+    0,
+    "a confirmed call is never counted as unknown",
+  );
+
+  // The count rides on the usage, and only when there is something to report.
+  const confirmed = { text: "## Scalone", usage, completed: true };
+  assert.equal(aggregateUsage([confirmed], 0, 0).unknownCostCalls, undefined, "a clean run is unchanged");
+  assert.equal(aggregateUsage([confirmed], 0, 3).unknownCostCalls, 3);
+  assert.equal(aggregateUsage([confirmed], 0, 3).costKnown, true, "the confirmed total is still known");
+});
+
+test("R3-03: the retry's own result carries the earlier unconfirmed calls", async () => {
+  const firstRun = [
+    { id: "att_a", operationId: "op_long", phase: "started", partIndex: 0, createdAt: "2026-09-23T12:00:00.000Z" },
+    { id: "att_a", operationId: "op_long", phase: "unknown", partIndex: 0, createdAt: "2026-09-23T12:00:00.000Z" },
+    { id: "att_b", operationId: "op_long", phase: "started", partIndex: 1, createdAt: "2026-09-23T12:00:00.000Z" },
+    { id: "att_b", operationId: "op_long", phase: "unknown", partIndex: 1, createdAt: "2026-09-23T12:00:00.000Z" },
+  ];
+  const model = {
+    modelName: "stub-retry",
+    async call(req) {
+      req.onResponseStarted?.();
+      return { text: `[0:05] po ponowieniu ${req.partIndex}`, usage, completed: true };
+    },
+  };
+  const { deps, sourceRef } = engineDeps({ duration: 16, model, completedAttempts: firstRun });
+  const outcome = await analyze(request(sourceRef), deps);
+  assert.equal(outcome.errorClass, null, "the retry itself succeeded");
+  assert.equal(outcome.usage.costKnown, true, "the confirmed calls of this run are known");
+  assert.equal(outcome.usage.unknownCostCalls, 2, "the two earlier calls are reported");
 });
 
 /* -------------------------------------------------------------- provider --- */

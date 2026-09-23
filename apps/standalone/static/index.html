@@ -499,7 +499,14 @@ function ask(q, options = {}) {
       : usage && usage.costKnown === true && typeof usage.costUsd === 'number'
       ? `<span>💰 <b>$${usage.costUsd.toFixed(3)}</b>${typeof tokens === 'number' ? ` · ${(tokens / 1000).toFixed(0)}k tokenów` : ''}</span>`
       : `<span>💰 <b>${T().statCostUnknown}</b></span>`;
-    answerCard.insertAdjacentHTML('beforeend', `<div class="stats"><span>⏱ <b>${elapsed}s</b></span>${parts > 1 ? `<span>${T().statParts.replace('{n}', parts)}</span>` : ''}${cost}${reused && !saved ? `<span>${T().statReused}</span>` : ''}</div>`);
+    // R3-03: a retry shows the cost it confirmed. An earlier run may also have been
+    // charged for calls that were never confirmed, so the total is not presented as
+    // complete without saying how many such calls there were. Only when the total IS
+    // known: an unknown cost already says that nothing here is a full bill.
+    const unknownCalls = usage && usage.costKnown === true && typeof usage.unknownCostCalls === 'number' && usage.unknownCostCalls > 0
+      ? `<span>${(T().statUnknownCalls || '❓ + {n} calls of unknown cost').replace('{n}', String(usage.unknownCostCalls))}</span>`
+      : '';
+    answerCard.insertAdjacentHTML('beforeend', `<div class="stats"><span>⏱ <b>${elapsed}s</b></span>${parts > 1 ? `<span>${T().statParts.replace('{n}', parts)}</span>` : ''}${cost}${unknownCalls}${reused && !saved ? `<span>${T().statReused}</span>` : ''}</div>`);
     options.sourceCard?.remove();
     $('#q2').focus();
   });

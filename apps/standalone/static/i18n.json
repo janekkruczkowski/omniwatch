@@ -55,6 +55,7 @@
       "statReused": "♻️ video already in Qwen",
       "statSaved": "💾 saved analysis - no new cost",
       "statCostUnknown": "cost unknown",
+      "statUnknownCalls": "❓ + {n} calls of unknown cost",
       "examples": [
         "What are the concrete steps to implement this?",
         "Which tools are shown and what do they cost?",
@@ -138,6 +139,7 @@
       "statReused": "♻️ film już był w Qwen",
       "statSaved": "💾 zapisana analiza - bez nowego kosztu",
       "statCostUnknown": "koszt nieznany",
+      "statUnknownCalls": "❓ + {n} wywołań o nieznanym koszcie",
       "examples": [
         "Jakie konkretne kroki pokazuje, żeby to wdrożyć?",
         "Jakie narzędzia są pokazane i ile kosztują?",
@@ -221,6 +223,7 @@
       "statReused": "♻️ Video war schon bei Qwen",
       "statSaved": "💾 gespeicherte Analyse - keine neuen Kosten",
       "statCostUnknown": "Kosten unbekannt",
+      "statUnknownCalls": "❓ + {n} Aufrufe mit unbekannten Kosten",
       "examples": [
         "Welche konkreten Schritte zeigt es zur Umsetzung?",
         "Welche Tools werden gezeigt und was kosten sie?",
@@ -304,6 +307,7 @@
       "statReused": "♻️ el vídeo ya estaba en Qwen",
       "statSaved": "💾 análisis guardado - sin coste nuevo",
       "statCostUnknown": "coste desconocido",
+      "statUnknownCalls": "❓ + {n} llamadas de coste desconocido",
       "examples": [
         "¿Qué pasos concretos muestra para implementarlo?",
         "¿Qué herramientas muestra y cuánto cuestan?",
@@ -387,6 +391,7 @@
       "statReused": "♻️ vidéo déjà chez Qwen",
       "statSaved": "💾 analyse enregistrée - aucun nouveau coût",
       "statCostUnknown": "coût inconnu",
+      "statUnknownCalls": "❓ + {n} appels de coût inconnu",
       "examples": [
         "Quelles étapes concrètes montre-t-elle pour le mettre en place ?",
         "Quels outils sont montrés et combien coûtent-ils ?",

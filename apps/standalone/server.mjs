@@ -479,6 +479,18 @@ export function usagePayload(usage, parts, reused) {
     payload.costUsd = usage.costUsd;
     payload.costKnown = true;
   }
+  // R3-03: a conscious retry reports the cost it confirmed. If the operation was also
+  // charged for calls of an earlier run that were never confirmed, that is said next to
+  // the total instead of letting the number read as the whole story. Only when the
+  // total IS known: otherwise "cost unknown" already says nothing here is a full bill,
+  // and the extra count would only repeat it.
+  if (
+    usage?.costKnown === true &&
+    typeof usage.unknownCostCalls === "number" &&
+    usage.unknownCostCalls > 0
+  ) {
+    payload.unknownCostCalls = usage.unknownCostCalls;
+  }
   return payload;
 }
 

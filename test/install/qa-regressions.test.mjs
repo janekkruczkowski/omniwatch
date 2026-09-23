@@ -27,7 +27,12 @@ import { OmniWatchError } from "../../packages/omniwatch/src/contracts/errors.ts
 import { loadStandaloneConfig, runtimeConfigDocument } from "../../apps/standalone/config.mjs";
 import { createFixtureSource, createRuntimeWiring } from "../../packages/omniwatch/src/runtime/poc.ts";
 import { effectiveMaxFramesPerPart, partPlan } from "../../packages/omniwatch/src/sources/media.ts";
-import { createStandaloneMediaTool, createStandaloneServer, frameTargetPath } from "../../apps/standalone/server.mjs";
+import {
+  createStandaloneMediaTool,
+  createStandaloneServer,
+  frameTargetPath,
+  usagePayload,
+} from "../../apps/standalone/server.mjs";
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const fixtures = path.join(repo, "test/fixtures/beta");
@@ -1717,6 +1722,59 @@ test("QA R2-07: reading a saved answer reports no new cost and is not labelled a
     assert.match(paidRun.stats, /\$0\.010/);
     assert.match(paidRun.stats, new RegExp(i18n.pl.ui.statReused));
     assert.doesNotMatch(paidRun.stats, new RegExp(i18n.pl.ui.statSaved));
+  } finally {
+    globalThis.marked = previousMarked;
+  }
+});
+
+test("QA R3-03: a retry says how many earlier calls have an unknown cost", async () => {
+  // R3-03: after a conscious retry the run reports `costKnown: true` and the cost of
+  // the calls it confirmed. That is correct for what it bills, but the operation may
+  // also have been charged for calls of an earlier run that were never confirmed, so
+  // the total must not read as the whole story.
+  const i18n = JSON.parse(pageI18n);
+  for (const lang of Object.keys(i18n)) {
+    assert.ok(i18n[lang].ui.statUnknownCalls, `statUnknownCalls in ${lang}`);
+    assert.match(i18n[lang].ui.statUnknownCalls, /\{n\}/, `statUnknownCalls in ${lang} is a template`);
+  }
+
+  // The wire shape: the count travels only when there is something to report.
+  const confirmed = { inputTokens: 1000, outputTokens: 500, costUsd: 0.016, costKnown: true, unknownCostCalls: 2 };
+  assert.equal(usagePayload(confirmed, 3, false).unknownCostCalls, 2);
+  assert.equal(
+    usagePayload({ inputTokens: 10, outputTokens: 5, costUsd: 0.001, costKnown: true }, 1, false).unknownCostCalls,
+    undefined,
+    "a run with nothing unconfirmed is unchanged",
+  );
+  assert.equal(
+    usagePayload({ inputTokens: 10, outputTokens: 5, costUsd: null, costKnown: false, unknownCostCalls: 2 }, 1, false).unknownCostCalls,
+    undefined,
+    "with an unknown total, the extra count would only repeat what 'cost unknown' already says",
+  );
+
+  const previousMarked = globalThis.marked;
+  globalThis.marked = { parse: (text) => text };
+  try {
+    const statsFor = async (usage) => {
+      const { dom, sources, submit } = runPage();
+      await new Promise((resolve) => setImmediate(resolve));
+      await new Promise((resolve) => setImmediate(resolve));
+      submit();
+      const card = [...dom.elements.entries()].filter(([id]) => id.startsWith("#dyn-")).pop()[1];
+      const html = [];
+      card.insertAdjacentHTML = (_position, markup) => html.push(markup);
+      sources[sources.length - 1].emit("done", { text: "## Odpowiedz\n- ok", usage });
+      return html.join("");
+    };
+
+    // The retry of the D run: two earlier calls of unknown cost, one confirmed total.
+    const retried = await statsFor({ in: 1000, out: 500, parts: 3, reused: false, costUsd: 0.016, costKnown: true, unknownCostCalls: 2 });
+    assert.match(retried, /\$0\.016/, "the confirmed cost is still shown");
+    assert.match(retried, /\+ 2 wywołań o nieznanym koszcie/, "and the two earlier calls are named");
+    // A run with nothing unconfirmed says nothing extra: the note stays as it was.
+    const clean = await statsFor({ in: 1000, out: 500, parts: 1, reused: false, costUsd: 0.0101, costKnown: true });
+    assert.match(clean, /\$0\.010/);
+    assert.doesNotMatch(clean, /nieznanym koszcie/, "no phantom warning on a clean run");
   } finally {
     globalThis.marked = previousMarked;
   }

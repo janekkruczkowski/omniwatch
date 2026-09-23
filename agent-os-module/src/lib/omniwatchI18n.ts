@@ -62,6 +62,7 @@ const I18N: Record<string, Locale> = {
       "cached": "cached",
       "statParts": "🎞 <b>{n}</b> parts",
       "statReused": "♻️ video already in Qwen",
+      "statUnknownCalls": "❓ + {n} calls of unknown cost",
       "examples": [
         "What are the concrete steps to implement this?",
         "Which tools are shown and what do they cost?",
@@ -162,6 +163,7 @@ const I18N: Record<string, Locale> = {
       "cached": "z cache",
       "statParts": "🎞 <b>{n}</b> części",
       "statReused": "♻️ film już był w Qwen",
+      "statUnknownCalls": "❓ + {n} wywołań o nieznanym koszcie",
       "examples": [
         "Jakie konkretne kroki pokazuje, żeby to wdrożyć?",
         "Jakie narzędzia są pokazane i ile kosztują?",
@@ -262,6 +264,7 @@ const I18N: Record<string, Locale> = {
       "cached": "aus dem Cache",
       "statParts": "🎞 <b>{n}</b> Teile",
       "statReused": "♻️ Video war schon bei Qwen",
+      "statUnknownCalls": "❓ + {n} Aufrufe mit unbekannten Kosten",
       "examples": [
         "Welche konkreten Schritte zeigt es zur Umsetzung?",
         "Welche Tools werden gezeigt und was kosten sie?",
@@ -362,6 +365,7 @@ const I18N: Record<string, Locale> = {
       "cached": "en caché",
       "statParts": "🎞 <b>{n}</b> partes",
       "statReused": "♻️ el vídeo ya estaba en Qwen",
+      "statUnknownCalls": "❓ + {n} llamadas de coste desconocido",
       "examples": [
         "¿Qué pasos concretos muestra para implementarlo?",
         "¿Qué herramientas muestra y cuánto cuestan?",
@@ -462,6 +466,7 @@ const I18N: Record<string, Locale> = {
       "cached": "en cache",
       "statParts": "🎞 <b>{n}</b> parties",
       "statReused": "♻️ vidéo déjà chez Qwen",
+      "statUnknownCalls": "❓ + {n} appels de coût inconnu",
       "examples": [
         "Quelles étapes concrètes montre-t-elle pour le mettre en place ?",
         "Quels outils sont montrés et combien coûtent-ils ?",

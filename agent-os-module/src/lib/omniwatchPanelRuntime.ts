@@ -76,6 +76,9 @@ export function createPanelHostMemory(env: NodeJS.ProcessEnv = process.env): Omn
     env,
     configPath: env.AGENTIC_OS_CONFIG,
     model: createHostAnswerModel(env),
+    // The same `omniwatch.memory.*` channel the answer model logs on, so a failed or
+    // empty expansion is visible next to the call it belongs to (R3-02).
+    log: (line) => console.info(line),
   });
 }
 
@@ -122,7 +125,7 @@ export function createHostAnswerModel(
   const log = options.log ?? ((line: string) => console.info(line));
   return {
     modelName: model,
-    async complete({ system, user, maxOutputTokens }) {
+    async complete({ system, user, maxOutputTokens, temperature, reasoningEffort }) {
       const response = await doFetch(url, {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
@@ -138,6 +141,12 @@ export function createHostAnswerModel(
             { role: "user", content: user },
           ],
           ...(maxOutputTokens ? { max_tokens: maxOutputTokens } : {}),
+          // R3-02: the keyword-expansion call asks for determinism and low reasoning.
+          // `max_tokens` cannot bound thinking (it is not the completion), so the model
+          // has to be told not to spend it; the analysis provider uses the same
+          // `reasoning_effort: "low"` for this model.
+          ...(typeof temperature === "number" ? { temperature } : {}),
+          ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
         }),
       });
       if (!response.ok) throw new Error(`model HTTP ${response.status}`);

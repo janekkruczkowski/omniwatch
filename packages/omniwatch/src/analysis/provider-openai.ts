@@ -119,6 +119,21 @@ const NOT_SENT_CODES = new Set(["ENOTFOUND", "EAI_AGAIN", "ECONNREFUSED", "EHOST
 /** DashScope's refusal of a media URL it cannot (or can no longer) read. */
 const INVALID_MEDIA_URL = /does not appear to be valid|InvalidParameter[^"]*URL|url.{0,40}invalid/i;
 
+/**
+ * Reasoning control for the shared OpenAI-compatible endpoint, as request fields.
+ *
+ * Qwen3.8-Omni-Flash defaults to xhigh thinking. On video parts that can leave the
+ * first response byte behind the provider's ~60 s idle close; on the library's
+ * keyword-expansion call (R3-02) it burned 360-1290 output tokens on a 4-8 word
+ * answer, which `max_tokens` does not bound because reasoning is not the completion.
+ * The documented low setting keeps reasoning while shortening both waits, so it is
+ * one rule in one place rather than a private copy per caller. Empty for any other
+ * model: nothing is sent that the provider did not document.
+ */
+export function reasoningParams(modelName: string): { reasoning_effort: "low" } | Record<string, never> {
+  return /^qwen3\.8-omni-flash(?:$|-)/i.test(modelName) ? { reasoning_effort: "low" } : {};
+}
+
 export function createOpenAiModelPort(options: OpenAiModelPortOptions): OpenAiModelPort {
   const { config } = options;
   const doFetch = options.fetchImpl ?? globalThis.fetch;
@@ -235,10 +250,7 @@ export function createOpenAiModelPort(options: OpenAiModelPortOptions): OpenAiMo
     for (let round = 0; round < 2; round += 1) {
       const body = {
         model: config.modelName,
-        // Qwen3.8-Omni-Flash defaults to xhigh thinking. On video parts that can
-        // leave the first response byte behind the provider's ~60 s idle close.
-        // The documented low setting keeps reasoning while shortening that wait.
-        ...(/^qwen3\.8-omni-flash(?:$|-)/i.test(config.modelName) ? { reasoning_effort: "low" } : {}),
+        ...reasoningParams(config.modelName),
         // Uploads happen here, before the clock below starts: `elapsed_ms` in a
         // transport diagnostic is time on the wire, not upload time.
         messages: await contentPayload(request, round > 0),

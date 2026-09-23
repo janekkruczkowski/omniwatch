@@ -62,12 +62,40 @@ export const ADAPTER_NAME = "agent-os-vault";
 export const NOT_FOUND_TEXT = "nie znalazłem tego w analizach";
 
 /**
+ * Exact answer when the cheap translation step returned nothing usable (R3-02).
+ *
+ * It is deliberately NOT `NOT_FOUND_TEXT`: an empty keyword reply means the library
+ * was never really searched in the notes' language, so claiming "the analyses do not
+ * mention it" would be a lie. The second pass costs no extra call — there is no retry
+ * of the same prompt (that would just pay twice for the same coin flip).
+ */
+export const EXPANSION_FAILED_TEXT = "nie udało się przetłumaczyć zapytania";
+
+/**
  * First sentence of the query-expansion system prompt (R2-02). A host that logs or
  * counts model calls can tell the cheap keyword call apart from the grounded answer:
  * `system.startsWith(QUERY_EXPANSION_SYSTEM)`.
  */
 export const QUERY_EXPANSION_SYSTEM =
   "Jestes filtrem zapytan biblioteki analiz OmniWatch i zamieniasz pytanie na slowa kluczowe.";
+
+/**
+ * The rest of the expansion prompt. Two things matter here (R3-02):
+ *
+ *   - a JSON array, the shortest shape that still carries the keywords: prose replies
+ *     ("Slowa kluczowe: ...") cost reasoning tokens the answer does not need and gave
+ *     the parser filler to strip;
+ *   - ONE language, named by the caller. The old prompt said "polski lub angielski"
+ *     and left the choice to the model, which hedged with both at once ("haslo, ekran,
+ *     trailer, zapowiedz, Claude Opus 5.5, password, teaser"). Half of those can never
+ *     match a note in either language, so the reply inflated the keyword count and with
+ *     it the evidence gate — the hit was there and the gate hid it.
+ */
+export const QUERY_EXPANSION_INSTRUCTIONS = [
+  "Przetlumacz pytanie na slowa kluczowe w jezyku notatek.",
+  "Zwroc WYLACZNIE tablice JSON 4-8 krotkich slow kluczowych i synonimow, np. [\"slowo\", \"keyword\"].",
+  "Bez zdan, bez wyjasnien, bez nazw pol i bez komentarzy.",
+].join(" ");
 
 /** Output cap of the expansion call: keywords are short, this stays cheap. */
 export const EXPANSION_MAX_OUTPUT_TOKENS = 120;
@@ -99,6 +127,28 @@ const FRONTMATTER_OPEN = "---\n";
 const FRONTMATTER_CLOSE = "\n---\n";
 
 /**
+ * One request to the injected host model (D7).
+ *
+ * `temperature` and `reasoningEffort` exist because the two calls this adapter makes
+ * want opposite things (R3-02). The grounded answer is prose and wants the model's
+ * defaults. The keyword-expansion call wants a *deterministic, tiny* reply: with the
+ * model's default reasoning it burned 360-1290 output tokens on 4-8 keywords and took
+ * 10-22 s, which `max_tokens` cannot bound (reasoning is not the completion). Pinning
+ * temperature to 0 and asking for low reasoning is the same lever the analysis
+ * provider already uses for Qwen3.8-Omni-Flash. Both fields are optional, so a host
+ * that ignores them keeps working; only the panel's own adapter applies them.
+ */
+export interface HostModelRequest {
+  system: string;
+  user: string;
+  maxOutputTokens?: number;
+  /** Sampling temperature. The expansion call pins it to 0. */
+  temperature?: number;
+  /** Reasoning effort for models that default to thinking. Mirrors the analysis provider. */
+  reasoningEffort?: "low";
+}
+
+/**
  * Injected host-model port (D7). It is a plain text completion with no tools and no
  * memory access: the adapter hands it retrieved note bodies as data and uses the
  * returned text only as prose. A host without this capability reports `answerModel:
@@ -106,7 +156,7 @@ const FRONTMATTER_CLOSE = "\n---\n";
  */
 export interface HostModelPort {
   readonly modelName?: string;
-  complete(request: { system: string; user: string; maxOutputTokens?: number }): Promise<string>;
+  complete(request: HostModelRequest): Promise<string>;
 }
 
 export interface VaultMemoryOptions {
@@ -120,6 +170,14 @@ export interface VaultMemoryOptions {
   searchLimitDefault?: number;
   /** Default number of notes used as evidence by `answerFromAnalyses`. */
   answerLimitDefault?: number;
+  /**
+   * Where the adapter reports what it did, so a failed expansion is diagnosable from
+   * logs instead of a black box (R3-02). The lines carry the derived keywords and the
+   * gate the second pass was judged on — never a secret and never any note text: the
+   * keywords are the question's own words translated, while the library's content is
+   * the one thing that must not leave the process through a log.
+   */
+  log?: (line: string) => void;
 }
 
 /** A candidate note with the scores used by the retrieval gate. */
@@ -251,11 +309,18 @@ function normalizeParts(parts: unknown): number {
 function normalizeUsage(value: unknown): Usage {
   if (value && typeof value === "object") {
     const record = value as Record<string, unknown>;
+    // R3-03: a retry's note keeps the count of earlier unconfirmed calls, so the note
+    // (not just the live UI) shows that the total is not the whole story. Omitted when
+    // absent, so a note written before the field existed serializes as it always did.
+    const unconfirmed = typeof record.unknownCostCalls === "number" && record.unknownCostCalls > 0
+      ? { unknownCostCalls: Math.trunc(record.unknownCostCalls) }
+      : {};
     return {
       inputTokens: typeof record.inputTokens === "number" ? record.inputTokens : null,
       outputTokens: typeof record.outputTokens === "number" ? record.outputTokens : null,
       costUsd: typeof record.costUsd === "number" ? record.costUsd : null,
       costKnown: record.costKnown === true,
+      ...unconfirmed,
     };
   }
   return { costKnown: false };
@@ -446,6 +511,19 @@ export function detectLanguage(text: string): string | null {
   return /^[\x20-\x7e]+$/.test(value) && /[a-z]{3,}/.test(value) ? "en" : null;
 }
 
+/**
+ * The two languages this adapter can name to the model (R2-02 knows only Polish and
+ * English; a note declaring anything else is passed through by its own code). Anything
+ * unrecognised is described as the note's own language rather than guessed at, so the
+ * expansion prompt never names a language the model would then translate *out* of.
+ */
+export function languageName(code: string): string {
+  const value = typeof code === "string" ? code.trim().toLowerCase() : "";
+  if (value === "pl") return "polski";
+  if (value === "en") return "angielski";
+  return value === "" ? "notatek" : value;
+}
+
 /** Question terms: folded, deduplicated, short words and stop words dropped. */
 export function queryTerms(query: string): string[] {
   const folded = foldText(typeof query === "string" ? query : "");
@@ -475,6 +553,45 @@ export function expansionKeywords(reply: string): string[] {
     if (!terms.includes(token)) terms.push(token);
   }
   return terms.slice(0, MAX_EXPANSION_TERMS);
+}
+
+/**
+ * Keywords from a JSON-array reply (R3-02). The prompt asks for `["slowo", ...]`, so a
+ * bare array is parsed directly; anything else (a fenced block, prose around it, a
+ * reply from a model that ignored the format) falls back to tokenising the whole text.
+ * The fallback is what keeps this from turning a format drift into a false
+ * "could not translate": both paths feed the same folding/dedup rules.
+ *
+ * Returns [] only when the reply really carries no usable keyword, which the caller
+ * reports as EXPANSION_FAILED_TEXT rather than NOT_FOUND_TEXT.
+ */
+export function expansionKeywordsFromReply(reply: string): string[] {
+  const text = typeof reply === "string" ? reply.trim() : "";
+  if (text === "") return [];
+  // The first `[` ... last `]` is the array the prompt asked for. A model that wraps
+  // it in a sentence or a code fence still yields its elements.
+  const open = text.indexOf("[");
+  const close = text.lastIndexOf("]");
+  if (open >= 0 && close > open) {
+    try {
+      const parsed: unknown = JSON.parse(text.slice(open, close + 1));
+      if (Array.isArray(parsed)) {
+        const terms: string[] = [];
+        for (const entry of parsed) {
+          const raw = typeof entry === "string" ? entry : "";
+          for (const token of tokenize(raw)) {
+            if (token.length < 3 || isNoiseToken(token)) continue;
+            if (!terms.includes(token)) terms.push(token);
+            if (terms.length >= MAX_EXPANSION_TERMS) return terms;
+          }
+        }
+        if (terms.length > 0) return terms;
+      }
+    } catch {
+      // Not JSON after all: the prose path below handles it.
+    }
+  }
+  return expansionKeywords(text);
 }
 
 /**
@@ -661,6 +778,18 @@ export function createVaultMemory(options: VaultMemoryOptions): MemoryPort {
   const model = options.model ?? null;
   const searchLimitDefault = options.searchLimitDefault ?? 20;
   const answerLimitDefault = options.answerLimitDefault ?? 5;
+  const sink = options.log ?? (() => undefined);
+  /**
+   * One `omniwatch.memory.*` line, in the same `key=value` shape the core logger emits
+   * (R3-02). Values are the adapter's own counters and the derived keywords — never a
+   * secret, never note text, and never the raw question.
+   */
+  const log = (name: string, fields: Record<string, unknown>): void => {
+    const rendered = Object.entries(fields)
+      .map(([key, value]) => `${key}=${Array.isArray(value) ? value.join(",") : String(value)}`)
+      .join(" ");
+    sink(`omniwatch.${name} ${rendered}`.trim());
+  };
 
   function relativePathFor(analysisId: string): string {
     return `${analysesDir}/${assertSafeId(analysisId)}.md`;
@@ -716,27 +845,56 @@ export function createVaultMemory(options: VaultMemoryOptions): MemoryPort {
    * not enough to reach the evidence gate and the library holds notes in another
    * language, so a question the library can already answer costs no extra call.
    *
+   * The call is pinned to be as small and as repeatable as it can be (R3-02): low
+   * reasoning (the same setting the analysis provider uses for this model) and
+   * temperature 0. With the model's defaults this step spent 360-1290 output tokens
+   * and 10-22 s to return 4-8 keywords, and two runs of the same question gave
+   * different keywords — which is what made the second pass a coin flip.
+   *
    * A failure here is thrown, not swallowed: the caller has already failed to find
    * evidence, and answering NOT_FOUND on top of a broken model call would be a false
    * "the library has nothing" when the truth is "the library could not be searched".
+   * An empty/unusable reply is NOT an error — it returns [] and the caller reports
+   * EXPANSION_FAILED_TEXT. The prompt is never re-sent: a second identical call would
+   * pay again for the same coin flip.
    */
-  async function expansionTerms(query: string): Promise<string[]> {
+  async function expansionTerms(query: string, targetLanguage: string): Promise<string[]> {
     if (!model) return [];
+    // The notes' language is named explicitly, so the model cannot hedge with both
+    // languages at once (R3-02). The language is a property of the library, not of the
+    // question, and it is what the caller already decided this pass needs.
+    const system = [
+      QUERY_EXPANSION_SYSTEM,
+      QUERY_EXPANSION_INSTRUCTIONS,
+      `Jezyk notatek: ${languageName(targetLanguage)}.`,
+    ].join(" ");
     let reply: string;
     try {
       reply = await model.complete({
-        system: [
-          QUERY_EXPANSION_SYSTEM,
-          "Przetlumacz pytanie na slowa kluczowe w jezyku notatek (polski lub angielski).",
-          "Podaj 4-8 slow kluczowych i synonimow, po przecinku, bez zdan i bez wyjasnien.",
-        ].join(" "),
+        system,
         user: `Pytanie: ${query}`,
         maxOutputTokens: EXPANSION_MAX_OUTPUT_TOKENS,
+        // Deterministic and cheap: the answer is a keyword list, not prose.
+        temperature: 0,
+        reasoningEffort: "low",
       });
     } catch (error) {
+      log("memory.expansion_failed", { reason: "model_error", target: targetLanguage });
       throw toOmniWatchError(error, "runtime_unavailable");
     }
-    return expansionKeywords(reply);
+    const keywords = expansionKeywordsFromReply(reply);
+    // The keywords ARE the diagnosis: a failed case is only explainable once it is
+    // known what the model translated the question into (R3-02). They are the
+    // question's own words in another language — the user's input, not the library's —
+    // so they are logged, and no note text or secret ever is. The gate and the count
+    // go with them, because that is what the second pass was judged on.
+    log("memory.expansion", {
+      target: targetLanguage,
+      keywords,
+      contentTerms: keywords.filter(isContentTerm).length,
+      gate: gateThreshold(keywords),
+    });
+    return keywords;
   }
 
   /** Own terms first, then the expansion terms that are new, folded and deduplicated. */
@@ -930,13 +1088,30 @@ export function createVaultMemory(options: VaultMemoryOptions): MemoryPort {
       // topic still costs no model call.
       if (evidence.length === 0) {
         const questionLanguage = detectLanguage(question);
-        const otherLanguageExists = [...first.languages].some((language) => language !== questionLanguage);
-        if (otherLanguageExists) {
-          const keywords = await expansionTerms(question);
-          if (keywords.length > 0) {
-            terms = mergeTerms(own, keywords);
-            evidence = (await evidenceFor(terms, limit, gate)).evidence;
+        const otherLanguage = [...first.languages].find((language) => language !== questionLanguage) ?? null;
+        if (otherLanguage !== null) {
+          const keywords = await expansionTerms(question, otherLanguage);
+          if (keywords.length === 0) {
+            // The model returned nothing usable. Searching with the question's own
+            // words already failed, so there is no honest answer to give: NOT_FOUND
+            // would claim the library lacks the topic, when in fact it was never
+            // searched in the notes' language (R3-02). One deterministic retry of the
+            // same prompt is deliberately not attempted — it would pay twice for the
+            // same coin flip and can fail the same way.
+            return { text: EXPANSION_FAILED_TEXT, refs: [], notFound: true };
           }
+          // The second pass is scored AND gated on the translated terms alone (R3-02).
+          // The question's own words are in the *other* language, so they cannot match
+          // the note this pass exists to find; keeping them in the search would only
+          // let a note the first pass already rejected slip back in under the lower
+          // bar. Judged on the question's terms, the note was measured against Polish
+          // words it can never contain (`zakres`, `ramion`, `filmie`), so the bar was
+          // high for exactly the pass that crosses the language gap and a real hit
+          // failed it. The keywords are the terms the note can actually meet, so they
+          // are the terms it is judged on — and a note is a source only if it meets
+          // that bar, which is what keeps an unrelated note out of the answer.
+          terms = keywords;
+          evidence = (await evidenceFor(terms, limit, gateThreshold(terms))).evidence;
         }
       }
 

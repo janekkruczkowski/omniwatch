@@ -31,7 +31,12 @@ interface Progress {
   stage?: string; meta?: Meta; parts?: number; partsDone?: number;
   fps?: number; reused?: boolean; text?: string;
 }
-interface Stats { seconds: number; tokens: number; parts: number; reused: boolean; cost: number }
+interface Stats {
+  seconds: number; tokens: number; parts: number; reused: boolean; cost: number;
+  /** R3-03: paid calls started but never confirmed, across all runs of the operation.
+   *  A retry's `cost` only covers the calls it confirmed; this is what it does not. */
+  unknownCostCalls?: number;
+}
 /** Which video one card is about. Pinned to the card rather than read from the tab's
  *  current state, because answers stay on screen while the tab moves on: watch video A,
  *  then video B, and the still-visible card for A would otherwise build a brief out of
@@ -684,6 +689,14 @@ function Answer({ card, locale, onSeek, frame, running, source, onRetry }: {
           <span>⏱ {card.stats.seconds}s</span>
           {card.stats.parts > 1 && <span>🎞 {card.stats.parts} parts</span>}
           <span>💰 ${card.stats.cost.toFixed(3)} · {(card.stats.tokens / 1000).toFixed(0)}k tokens</span>
+          {/* R3-03: a retry's cost covers the calls it confirmed. Without this the
+              total would read as the whole bill even though an earlier run may also
+              have been charged. */}
+          {typeof card.stats.unknownCostCalls === "number" && card.stats.unknownCostCalls > 0 && (
+            <span>
+              {(ui.statUnknownCalls || "❓ + {n} calls of unknown cost").replace("{n}", String(card.stats.unknownCostCalls))}
+            </span>
+          )}
           {card.stats.reused && <span>♻️ video already at Qwen</span>}
         </div>
       )}
