@@ -207,6 +207,7 @@ test("an unterminated stream is not a success; partial text is preserved", async
   assert.equal(fetches.length, 1);
   assert.equal(response.completed, false);
   assert.equal(response.text, "## Answer\npartial answer");
+  assert.match(response.failureDetail, /phase=stream code=EOF data_events=2 marker=missing/);
 });
 
 test("a finish_reason is a valid protocol end", async () => {
@@ -217,6 +218,23 @@ test("a finish_reason is a valid protocol end", async () => {
   const response = await port.call(modelRequest(), makeSink());
   assert.equal(response.completed, true);
   assert.equal(response.text, "done");
+});
+
+test("provider accepts a final SSE marker or finish_reason without a trailing newline", async () => {
+  const lastMarker = makeProvider({ respond: async () => sseResponse([
+    dataLine({ choices: [{ delta: { content: "saved text" } }] }),
+    "data: [DONE]",
+  ]) });
+  const marked = await lastMarker.port.call(modelRequest(), makeSink());
+  assert.equal(marked.completed, true);
+  assert.equal(marked.text, "saved text");
+
+  const lastFinish = makeProvider({ respond: async () => sseResponse([
+    `data: ${JSON.stringify({ choices: [{ delta: { content: "final" }, finish_reason: "stop" }] })}`,
+  ]) });
+  const finished = await lastFinish.port.call(modelRequest(), makeSink());
+  assert.equal(finished.completed, true);
+  assert.equal(finished.text, "final");
 });
 
 test("missing usage is reported as unknown cost, not as zero", async () => {

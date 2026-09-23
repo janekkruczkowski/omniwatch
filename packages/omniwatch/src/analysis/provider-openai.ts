@@ -274,6 +274,31 @@ export function createOpenAiModelPort(options: OpenAiModelPortOptions): OpenAiMo
     let sawProtocolEnd = false;
     let aborted = false;
     let streamFailure = "";
+    let dataEvents = 0;
+    const consumeLine = (line: string): void => {
+      if (!line.startsWith("data:")) return;
+      const payload = line.slice(5).trim();
+      if (!payload) return;
+      dataEvents += 1;
+      if (payload === "[DONE]") {
+        sawProtocolEnd = true;
+        return;
+      }
+      let event: {
+        choices?: Array<{ delta?: { content?: string }; finish_reason?: string | null }>;
+        usage?: unknown;
+      };
+      try {
+        event = JSON.parse(payload);
+      } catch {
+        return;
+      }
+      const choice = event.choices?.[0];
+      const delta = choice?.delta?.content;
+      if (typeof delta === "string" && delta.length) text += delta;
+      if (choice && choice.finish_reason) sawProtocolEnd = true;
+      if (event.usage) usage = mapUsage(event.usage);
+    };
 
     try {
       for (;;) {
@@ -290,29 +315,7 @@ export function createOpenAiModelPort(options: OpenAiModelPortOptions): OpenAiMo
         buffer += decoder.decode(chunk.value, { stream: true });
         const lines = buffer.split("\n");
         buffer = lines.pop() ?? "";
-        for (const line of lines) {
-          if (!line.startsWith("data:")) continue;
-          const payload = line.slice(5).trim();
-          if (!payload) continue;
-          if (payload === "[DONE]") {
-            sawProtocolEnd = true;
-            continue;
-          }
-          let event: {
-            choices?: Array<{ delta?: { content?: string }; finish_reason?: string | null }>;
-            usage?: unknown;
-          };
-          try {
-            event = JSON.parse(payload);
-          } catch {
-            continue;
-          }
-          const choice = event.choices?.[0];
-          const delta = choice?.delta?.content;
-          if (typeof delta === "string" && delta.length) text += delta;
-          if (choice && choice.finish_reason) sawProtocolEnd = true;
-          if (event.usage) usage = mapUsage(event.usage);
-        }
+        for (const line of lines) consumeLine(line);
       }
     } finally {
       clearTimers();
@@ -323,8 +326,13 @@ export function createOpenAiModelPort(options: OpenAiModelPortOptions): OpenAiMo
       }
     }
 
+    // SSE senders may close immediately after their final data line without a
+    // trailing newline. That line is still a complete protocol marker/payload.
+    buffer += decoder.decode();
+    for (const line of buffer.split("\n")) consumeLine(line);
+    if (sawProtocolEnd) return { text, usage, completed: true };
     if (aborted) return { text, usage, completed: false, failureDetail: streamFailure };
-    return { text, usage, completed: sawProtocolEnd };
+    return { text, usage, completed: false, failureDetail: `phase=stream code=EOF data_events=${dataEvents} marker=missing` };
   }
 
   return {
