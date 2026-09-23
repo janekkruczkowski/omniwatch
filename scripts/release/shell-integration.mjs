@@ -32,11 +32,16 @@ export const AGENT_OS_INTEGRATION_FILES = [
   "src/app/api/omniwatch/media/[...path]/handler.ts",
   "src/app/api/omniwatch/i18n/route.ts",
   "src/app/api/omniwatch/i18n/handler.ts",
+  // the analysis library in the host Vault: search + grounded answers (F5, D7)
+  "src/app/api/omniwatch/library/route.ts",
+  "src/app/api/omniwatch/library/handler.ts",
   // UI
   "src/components/OmniWatchView.tsx",
   "src/components/ChannelScan.tsx",
   "src/components/ScoutView.tsx",
   "src/components/OmniMarkdown.tsx",
+  "src/components/OmniLibrary.tsx",
+  "src/components/OmniVaultLabel.tsx",
   // analysis libs the integration needs
   "src/lib/omniwatchMemory.ts",
   "src/lib/omniwatchHost.ts",

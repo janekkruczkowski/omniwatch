@@ -426,6 +426,45 @@ function scoreNote(terms: string[], title: string, content: string): { score: nu
   return { score, contentScore };
 }
 
+/** Evidence per note handed to the host model (characters of note body). */
+export const EVIDENCE_CHARS_PER_NOTE = 1600;
+
+/**
+ * The note passages that carry the question's terms, in document order and bounded.
+ * A 200-character search excerpt is enough to recognise a hit but not to answer from:
+ * live QA showed the model saying "not found" because the excerpt stopped just before
+ * the sentence that held the answer. Lines are ranked by how many distinct question
+ * terms they carry; the best ones are kept up to the budget, then put back in order.
+ */
+export function evidencePassage(terms: string[], content: string, maxChars = EVIDENCE_CHARS_PER_NOTE): string {
+  const lines = content.split(/\r?\n/).map((line) => line.trim()).filter((line) => line !== "");
+  const ranked = lines
+    .map((line, index) => {
+      const tokens = tokenize(line);
+      const hits = terms.filter((term) => tokens.some((token) => tokensMatch(term, token))).length;
+      return { line, index, hits };
+    })
+    .filter((item) => item.hits > 0)
+    .sort((a, b) => b.hits - a.hits || a.index - b.index);
+  const picked: { line: string; index: number }[] = [];
+  const taken = new Set<number>();
+  let used = 0;
+  const take = (index: number): void => {
+    if (taken.has(index) || index >= lines.length) return;
+    const line = lines[index].length > maxChars ? lines[index].slice(0, maxChars) : lines[index];
+    if (used + line.length + 1 > maxChars) return;
+    taken.add(index);
+    picked.push({ line, index });
+    used += line.length + 1;
+  };
+  // Each matching line, then the line after it: an answer often runs on to the next
+  // line, and the surrounding note text reaches the model as data, not as a cut quote.
+  for (const item of ranked) take(item.index);
+  for (const item of ranked) take(item.index + 1);
+  if (picked.length === 0) return content.slice(0, maxChars);
+  return picked.sort((a, b) => a.index - b.index).map((item) => item.line).join("\n");
+}
+
 /** Offset of the first body token matching any question term, or -1. */
 function firstMatchOffset(terms: string[], content: string): number {
   const folded = foldText(content);
@@ -633,10 +672,13 @@ export function createVaultMemory(options: VaultMemoryOptions): MemoryPort {
         );
       }
 
+      const terms = queryTerms(question);
       const refs: MemoryRef[] = [];
+      const passages: string[] = [];
       for (const note of evidence) {
         const found = await memory.readAnalysis(note.analysisId);
         if (found) refs.push(found.memoryRef);
+        passages.push(found ? evidencePassage(terms, found.result.content) : note.excerpt);
       }
       const blocks = evidence.map((note, index) => {
         const ref = refs[index];
@@ -645,7 +687,7 @@ export function createVaultMemory(options: VaultMemoryOptions): MemoryPort {
           `zrodlo: ${note.sourceUrl}`,
           `sciezka: ${ref ? ref.relativePath : note.relativePath}`,
           "",
-          note.excerpt,
+          passages[index],
         ].join("\n");
       });
 

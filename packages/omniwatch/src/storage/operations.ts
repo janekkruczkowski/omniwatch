@@ -586,6 +586,22 @@ export function classifyOperationRecovery(store: StorePort, operationId: string)
       delivery,
     };
   }
+  if (operation.state === "pending" && lastAttempt?.phase === "unknown") {
+    // The uncertain call was already recorded as `unknown` and the user explicitly
+    // chose to retry it (`resolveUnknownOutcome(..., "retry")` is the only path that
+    // puts such an operation back to pending). The new call has not started - if it
+    // had, its own `started` attempt would be the last one - so this is admitted
+    // work, not an interrupted call. Without this, any worker's recovery pass turned
+    // the user's confirmed retry straight back into outcome_unknown (QA FAIL-A).
+    return {
+      operation,
+      classification: "unpaid_retryable",
+      action: "retry_paid_call",
+      requiresUserDecision: false,
+      lastAttempt,
+      delivery,
+    };
+  }
   if (lastAttempt && (lastAttempt.phase === "started" || lastAttempt.phase === "unknown")) {
     return {
       operation,

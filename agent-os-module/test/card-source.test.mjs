@@ -44,7 +44,7 @@ function loadView() {
 
   const dir = mkdtempSync(path.join(tmpdir(), "omniwatch-card-"));
   writeFileSync(path.join(dir, "OmniWatchView.js"), out);
-  for (const stub of ["OmniMarkdown", "ChannelScan"]) {
+  for (const stub of ["OmniMarkdown", "ChannelScan", "OmniLibrary"]) {
     writeFileSync(path.join(dir, `${stub}.js`),
       "module.exports = { __esModule: true, default: () => null, TS_RE: /x/g, toSec: () => 0 };");
   }
@@ -168,4 +168,13 @@ test("the form submits the mode that was clicked, and follow-ups are questions",
   assert.match(source, /e\.preventDefault\(\); submit\(\); \}/, "and ⌘↵");
   assert.match(source, /ask\(followUp, undefined, "ask"\)/, "a follow-up is always a question");
   assert.doesNotMatch(source, /cards\.length > 0 \? "ask"/, "the cards.length guess is gone");
+});
+
+test("FAIL-A: only a retryable (outcome_unknown) failure offers a retry, and it carries id + consent only", () => {
+  const warning = "Wywołanie modelu ma nieznany wynik; ponowienie moze oznaczac drugi koszt u dostawcy.";
+  assert.deepEqual(view.retryOffer({ retryable: true, retryWarning: warning }, "op_1"), { operationId: "op_1", warning });
+  assert.equal(view.retryOffer({ retryable: true, operationId: "op_2", retryWarning: warning }).operationId, "op_2");
+  assert.equal(view.retryOffer({ error: "source_unavailable" }, "op_3"), undefined, "an ordinary failure has no paid retry");
+  assert.equal(view.retryOffer({ retryable: true }), undefined, "no operation id, no retry");
+  assert.deepEqual(view.retryBody("op_1"), { retryOperation: "op_1", confirmRetry: true });
 });
