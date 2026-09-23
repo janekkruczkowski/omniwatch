@@ -151,7 +151,7 @@ test("empty focus is a general summary, and the attempt snapshot carries the pro
   assert.equal(intent.phase, "intent");
   assert.equal(intent.partIndex, 0);
   assert.equal(intent.model, "fixture-omni");
-  assert.match(intent.requestSummary, /"promptVersion":"prompt-v1\/summary"/);
+  assert.match(intent.requestSummary, /"promptVersion":"prompt-v2\/summary"/);
   // The attempt snapshot is what reaches SQLite; it must never carry the API key.
   assert.doesNotMatch(intent.requestSummary, /test-key-not-a-secret/);
 });

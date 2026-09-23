@@ -42,7 +42,7 @@ import type {
 } from "../contracts/ports.ts";
 import { buildConversationContext, conversationIdForSource, estimateTokens } from "./context.ts";
 import type { ConversationContext, ConversationTurnSource } from "./context.ts";
-import { buildMergePrompt, buildPartNotesPrompt, buildWholePrompt } from "./prompt.ts";
+import { buildMergePrompt, buildPartNotesPrompt, buildWholePrompt, promptDate } from "./prompt.ts";
 import { parseTimestamp, shiftTimestamps } from "../sources/media.ts";
 
 /** Default room for conversation history when the host does not declare one. */
@@ -126,6 +126,24 @@ function aggregateUsage(responses: ModelCallResponse[]): Usage {
   };
 }
 
+/**
+ * The date written into every prompt. A confirmed retry of the same operation keeps the
+ * date of its first recorded attempt: the prompt is part of the checkpoint fingerprint,
+ * so a retry on the next day must not change it and re-pay for parts already answered.
+ */
+export function promptDateFor(
+  completedAttempts: AttemptRecord[] | undefined,
+  operationId: string,
+  now: string,
+): string {
+  const earliest = (completedAttempts ?? [])
+    .filter((attempt) => attempt.operationId === operationId && typeof attempt.createdAt === "string")
+    .map((attempt) => attempt.createdAt)
+    .filter((value) => /^\d{4}-\d{2}-\d{2}/.test(value))
+    .sort()[0];
+  return promptDate(earliest ?? now);
+}
+
 const INCOMPLETE_NOTE =
   "\n\n_[Analiza niekompletna: odpowiedz modelu nie zostala potwierdzona jako ukonczona. "
   + "Zachowano tekst czesciowy; ponowienie tego wywolania moze kosztowac drugi raz.]_";
@@ -196,6 +214,7 @@ export async function analyze(request: AnalysisRequest, deps: AnalysisDeps): Pro
   const parentTurnId = request.parentTurnId ?? null;
   const turnId = `turn_${sha256Hex(analysisKey).slice(0, 16)}`;
   const createdAt = deps.clock.now().toISOString();
+  const today = promptDateFor(deps.completedAttempts, operationId, createdAt);
 
   emit("running", "prepare", {
     message: `przygotowuje material (${sourceRef.platform})`,
@@ -346,6 +365,7 @@ export async function analyze(request: AnalysisRequest, deps: AnalysisDeps): Pro
       focus: normalizedFocus,
       question,
       history: context.turns,
+      today,
     });
     const outcome = await runCall(0, prompt.messages, [parts[0]], prompt.version);
     if (outcome.kind === "ok") {
@@ -369,6 +389,7 @@ export async function analyze(request: AnalysisRequest, deps: AnalysisDeps): Pro
         partIndex: part.index,
         partCount: parts.length,
         startSeconds: part.startSeconds,
+        today,
       });
       const outcome = await runCall(part.index, prompt.messages, [part], prompt.version);
       if (outcome.kind === "ok") {
@@ -398,6 +419,7 @@ export async function analyze(request: AnalysisRequest, deps: AnalysisDeps): Pro
         question,
         notes: notes.map((text, index) => ({ index, startSeconds: parts[index].startSeconds, text })),
         history: context.turns,
+        today,
       });
       emit("running", "merge", { itemCount: parts.length, message: "scalam notatki" });
       const merged = await runCall(parts.length, mergePrompt.messages, [], mergePrompt.version);
