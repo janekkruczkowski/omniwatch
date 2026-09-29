@@ -1,0 +1,233 @@
+[
+  {
+    "name": "interview--reference",
+    "scored": true,
+    "theirs": {
+      "segments": 3,
+      "cues": 45,
+      "spans": 0,
+      "words": 91
+    },
+    "mine": {
+      "cues": 26,
+      "spans": 0,
+      "words": 85
+    },
+    "words": {
+      "matched": 82,
+      "of": 91,
+      "ratio": 0.9010989010989011
+    },
+    "breaks": {
+      "hit": 31,
+      "of": 42
+    },
+    "boardRows": 0,
+    "invented": false,
+    "failed": []
+  },
+  {
+    "name": "interview--swap-host",
+    "scored": false,
+    "kind": "generate",
+    "why": "a target for the generation gate, not a reference for extraction",
+    "theirs": {
+      "segments": 3,
+      "cues": 46,
+      "spans": 0,
+      "words": 92
+    }
+  },
+  {
+    "name": "interview--swap-lang",
+    "scored": false,
+    "kind": "generate",
+    "why": "a target for the generation gate, not a reference for extraction",
+    "theirs": {
+      "segments": 3,
+      "cues": 40,
+      "spans": 0,
+      "words": 82
+    }
+  },
+  {
+    "name": "interview--swap-ride",
+    "scored": false,
+    "kind": "generate",
+    "why": "a target for the generation gate, not a reference for extraction",
+    "theirs": {
+      "segments": 3,
+      "cues": 51,
+      "spans": 0,
+      "words": 110
+    }
+  },
+  {
+    "name": "podcast--reference",
+    "scored": true,
+    "theirs": {
+      "segments": 3,
+      "cues": 20,
+      "spans": 0,
+      "words": 69
+    },
+    "mine": {
+      "cues": 30,
+      "spans": 0,
+      "words": 68
+    },
+    "words": {
+      "matched": 67,
+      "of": 69,
+      "ratio": 0.9710144927536232
+    },
+    "breaks": {
+      "hit": 17,
+      "of": 17
+    },
+    "boardRows": 0,
+    "invented": false,
+    "failed": []
+  },
+  {
+    "name": "podcast--swap-app",
+    "scored": false,
+    "kind": "generate",
+    "why": "a target for the generation gate, not a reference for extraction",
+    "theirs": {
+      "segments": 3,
+      "cues": 19,
+      "spans": 0,
+      "words": 71
+    }
+  },
+  {
+    "name": "podcast--swap-host",
+    "scored": false,
+    "kind": "generate",
+    "why": "a target for the generation gate, not a reference for extraction",
+    "theirs": {
+      "segments": 3,
+      "cues": 20,
+      "spans": 0,
+      "words": 64
+    }
+  },
+  {
+    "name": "podcast--swap-item",
+    "scored": false,
+    "kind": "generate",
+    "why": "a target for the generation gate, not a reference for extraction",
+    "theirs": {
+      "segments": 3,
+      "cues": 22,
+      "spans": 0,
+      "words": 70
+    }
+  },
+  {
+    "name": "ranking-football--reference-gpt",
+    "scored": true,
+    "theirs": {
+      "segments": 2,
+      "cues": 24,
+      "spans": 8,
+      "words": 67
+    },
+    "mine": {
+      "cues": 26,
+      "spans": 8,
+      "words": 68
+    },
+    "words": {
+      "matched": 67,
+      "of": 67,
+      "ratio": 1
+    },
+    "breaks": {
+      "hit": 21,
+      "of": 22
+    },
+    "boardRows": 5,
+    "invented": false,
+    "failed": []
+  },
+  {
+    "name": "ranking-football--reference",
+    "scored": true,
+    "theirs": {
+      "segments": 2,
+      "cues": 24,
+      "spans": 8,
+      "words": 67
+    },
+    "mine": {
+      "cues": 26,
+      "spans": 8,
+      "words": 68
+    },
+    "words": {
+      "matched": 67,
+      "of": 67,
+      "ratio": 1
+    },
+    "breaks": {
+      "hit": 21,
+      "of": 22
+    },
+    "boardRows": 5,
+    "invented": false,
+    "failed": []
+  },
+  {
+    "name": "ranking-football--swap-effect",
+    "scored": false,
+    "kind": "generate",
+    "why": "a target for the generation gate, not a reference for extraction",
+    "theirs": {
+      "segments": 2,
+      "cues": 22,
+      "spans": 7,
+      "words": 69
+    }
+  },
+  {
+    "name": "ranking-football--swap-host",
+    "scored": true,
+    "theirs": {
+      "segments": 2,
+      "cues": 24,
+      "spans": 8,
+      "words": 67
+    },
+    "mine": {
+      "cues": 26,
+      "spans": 8,
+      "words": 68
+    },
+    "words": {
+      "matched": 67,
+      "of": 67,
+      "ratio": 1
+    },
+    "breaks": {
+      "hit": 21,
+      "of": 22
+    },
+    "boardRows": 5,
+    "invented": false,
+    "failed": []
+  },
+  {
+    "name": "ranking-football--swap-topic",
+    "scored": false,
+    "kind": "generate",
+    "why": "a target for the generation gate, not a reference for extraction",
+    "theirs": {
+      "segments": 2,
+      "cues": 30,
+      "spans": 13,
+      "words": 86
+    }
+  }
+]

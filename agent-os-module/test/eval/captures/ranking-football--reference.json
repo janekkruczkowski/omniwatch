@@ -1,0 +1,706 @@
+{
+  "version": "omniwatch.blueprint/1",
+  "canvas": {
+    "width": 720,
+    "height": 1280,
+    "fps": 30,
+    "seconds": 20
+  },
+  "regions": [
+    {
+      "id": "top-banner",
+      "role": "text",
+      "rect": [
+        0,
+        0.03,
+        1,
+        0.11
+      ],
+      "z": 5,
+      "label": "Top title banner",
+      "paint": {
+        "fill": "#ffffff",
+        "radius": 0,
+        "border": null
+      }
+    },
+    {
+      "id": "presenter-stage",
+      "role": "figure",
+      "rect": [
+        0,
+        0.14,
+        1,
+        0.42
+      ],
+      "z": 1,
+      "label": "Presenter webcam stage"
+    },
+    {
+      "id": "caption-area",
+      "role": "text",
+      "rect": [
+        0,
+        0.56,
+        1,
+        0.1
+      ],
+      "z": 10,
+      "label": "Dynamic subtitle area"
+    },
+    {
+      "id": "tier-board",
+      "role": "panel",
+      "rect": [
+        0,
+        0.66,
+        1,
+        0.34
+      ],
+      "z": 2,
+      "label": "Tier list board",
+      "grid": {
+        "rows": 5,
+        "cols": 2
+      }
+    },
+    {
+      "id": "s-label",
+      "role": "cell",
+      "rect": [
+        0,
+        0.66,
+        0.1,
+        0.068
+      ],
+      "z": 3,
+      "label": "S tier label",
+      "parent": "tier-board",
+      "at": {
+        "row": 1,
+        "col": 1
+      },
+      "paint": {
+        "fill": "#ff5c5c",
+        "radius": 0,
+        "border": null
+      }
+    },
+    {
+      "id": "a-label",
+      "role": "cell",
+      "rect": [
+        0,
+        0.728,
+        0.1,
+        0.068
+      ],
+      "z": 3,
+      "label": "A tier label",
+      "parent": "tier-board",
+      "at": {
+        "row": 2,
+        "col": 1
+      },
+      "paint": {
+        "fill": "#ffa34d",
+        "radius": 0,
+        "border": null
+      }
+    },
+    {
+      "id": "b-label",
+      "role": "cell",
+      "rect": [
+        0,
+        0.796,
+        0.1,
+        0.068
+      ],
+      "z": 3,
+      "label": "B tier label",
+      "parent": "tier-board",
+      "at": {
+        "row": 3,
+        "col": 1
+      },
+      "paint": {
+        "fill": "#ffd65c",
+        "radius": 0,
+        "border": null
+      }
+    },
+    {
+      "id": "c-label",
+      "role": "cell",
+      "rect": [
+        0,
+        0.864,
+        0.1,
+        0.068
+      ],
+      "z": 3,
+      "label": "C tier label",
+      "parent": "tier-board",
+      "at": {
+        "row": 4,
+        "col": 1
+      },
+      "paint": {
+        "fill": "#e6f25c",
+        "radius": 0,
+        "border": null
+      }
+    },
+    {
+      "id": "d-label",
+      "role": "cell",
+      "rect": [
+        0,
+        0.932,
+        0.1,
+        0.068
+      ],
+      "z": 3,
+      "label": "D tier label",
+      "parent": "tier-board",
+      "at": {
+        "row": 5,
+        "col": 1
+      },
+      "paint": {
+        "fill": "#5cff8c",
+        "radius": 0,
+        "border": null
+      }
+    },
+    {
+      "id": "s-slot",
+      "role": "cell",
+      "rect": [
+        0.1,
+        0.66,
+        0.9,
+        0.068
+      ],
+      "z": 3,
+      "label": "S tier slot",
+      "parent": "tier-board",
+      "at": {
+        "row": 1,
+        "col": 2
+      },
+      "paint": {
+        "fill": "#222222",
+        "radius": 0,
+        "border": null
+      }
+    },
+    {
+      "id": "a-slot",
+      "role": "cell",
+      "rect": [
+        0.1,
+        0.728,
+        0.9,
+        0.068
+      ],
+      "z": 3,
+      "label": "A tier slot",
+      "parent": "tier-board",
+      "at": {
+        "row": 2,
+        "col": 2
+      },
+      "paint": {
+        "fill": "#222222",
+        "radius": 0,
+        "border": null
+      }
+    },
+    {
+      "id": "b-slot",
+      "role": "cell",
+      "rect": [
+        0.1,
+        0.796,
+        0.9,
+        0.068
+      ],
+      "z": 3,
+      "label": "B tier slot",
+      "parent": "tier-board",
+      "at": {
+        "row": 3,
+        "col": 2
+      },
+      "paint": {
+        "fill": "#222222",
+        "radius": 0,
+        "border": null
+      }
+    },
+    {
+      "id": "c-slot",
+      "role": "cell",
+      "rect": [
+        0.1,
+        0.864,
+        0.9,
+        0.068
+      ],
+      "z": 3,
+      "label": "C tier slot",
+      "parent": "tier-board",
+      "at": {
+        "row": 4,
+        "col": 2
+      },
+      "paint": {
+        "fill": "#222222",
+        "radius": 0,
+        "border": null
+      }
+    },
+    {
+      "id": "d-slot",
+      "role": "cell",
+      "rect": [
+        0.1,
+        0.932,
+        0.9,
+        0.068
+      ],
+      "z": 3,
+      "label": "D tier slot",
+      "parent": "tier-board",
+      "at": {
+        "row": 5,
+        "col": 2
+      },
+      "paint": {
+        "fill": "#222222",
+        "radius": 0,
+        "border": null
+      }
+    },
+    {
+      "id": "cr7-portrait",
+      "role": "overlay",
+      "rect": [
+        0.06,
+        0.22,
+        0.18,
+        0.16
+      ],
+      "z": 4,
+      "label": "Cristiano Ronaldo portrait",
+      "paint": {
+        "fill": "#ffffff",
+        "radius": 0.15,
+        "border": {
+          "color": "#cccccc",
+          "width": 0.005
+        }
+      }
+    },
+    {
+      "id": "messi-portrait",
+      "role": "overlay",
+      "rect": [
+        0.06,
+        0.22,
+        0.18,
+        0.16
+      ],
+      "z": 4,
+      "label": "Lionel Messi portrait",
+      "paint": {
+        "fill": "#ffffff",
+        "radius": 0.15,
+        "border": {
+          "color": "#cccccc",
+          "width": 0.005
+        }
+      }
+    },
+    {
+      "id": "board-overlay",
+      "role": "overlay",
+      "rect": [
+        0.1,
+        0.66,
+        0.9,
+        0.34
+      ],
+      "z": 4,
+      "label": "Timed meme overlays on board"
+    }
+  ],
+  "tracks": [
+    {
+      "region": "top-banner",
+      "kind": "text",
+      "varies": "fixed",
+      "fill": "draw",
+      "style": {
+        "color": "#000000",
+        "background": null,
+        "outline": null,
+        "font": "display",
+        "weight": 900,
+        "size": 0.04,
+        "case": "upper",
+        "align": "center",
+        "emphasis": null
+      },
+      "items": [
+        {
+          "start": 0,
+          "end": 20,
+          "value": "RANKING THE BEST FOOTBALLERS \u26bd\ud83d\udd25"
+        }
+      ]
+    },
+    {
+      "region": "presenter-stage",
+      "kind": "video",
+      "varies": "fixed",
+      "fill": "cut",
+      "style": null,
+      "items": [
+        {
+          "start": 0,
+          "end": 20,
+          "value": "Young woman with dark hair, heavy eye makeup, black spiked cap, choker, and dangling earrings, speaking into a microphone in front of posters and a light blue door."
+        }
+      ]
+    },
+    {
+      "region": "caption-area",
+      "kind": "text",
+      "varies": "episode",
+      "fill": "draw",
+      "style": {
+        "color": "#ffffff",
+        "background": null,
+        "outline": "#000000",
+        "font": "sans",
+        "weight": 800,
+        "size": 0.035,
+        "case": "as-is",
+        "align": "center",
+        "emphasis": {
+          "style": "highlight",
+          "color": "#00bfff"
+        }
+      },
+      "items": [
+        {
+          "start": 0,
+          "end": 1.5,
+          "value": "Ronaldo is D tier.",
+          "beat": 1
+        },
+        {
+          "start": 1.5,
+          "end": 4,
+          "value": "Bro has more [[hair gel]] than trophies at this point.",
+          "beat": 1
+        },
+        {
+          "start": 4,
+          "end": 7,
+          "value": "Built like a Greek god, plays like a Greek tragedy.",
+          "beat": 1
+        },
+        {
+          "start": 7,
+          "end": 10,
+          "value": "But hey, at least he's got the most followers on Instagram.",
+          "beat": 1
+        },
+        {
+          "start": 10,
+          "end": 14,
+          "value": "Messi? Man won a World Cup looking like somebody's tired dad.",
+          "beat": 2
+        },
+        {
+          "start": 14,
+          "end": 19,
+          "value": "Walks around for 89 minutes, touches the ball three times, and somehow you just watched a hat trick.",
+          "beat": 2
+        },
+        {
+          "start": 19,
+          "end": 20,
+          "value": "Definitely S tier.",
+          "beat": 2
+        }
+      ]
+    },
+    {
+      "region": "s-label",
+      "kind": "text",
+      "varies": "fixed",
+      "fill": "draw",
+      "style": {
+        "color": "#000000",
+        "background": null,
+        "outline": null,
+        "font": "sans",
+        "weight": 900,
+        "size": 0.03,
+        "case": "upper",
+        "align": "center",
+        "emphasis": null
+      },
+      "items": [
+        {
+          "start": 0,
+          "end": 20,
+          "value": "S"
+        }
+      ]
+    },
+    {
+      "region": "a-label",
+      "kind": "text",
+      "varies": "fixed",
+      "fill": "draw",
+      "style": {
+        "color": "#000000",
+        "background": null,
+        "outline": null,
+        "font": "sans",
+        "weight": 900,
+        "size": 0.03,
+        "case": "upper",
+        "align": "center",
+        "emphasis": null
+      },
+      "items": [
+        {
+          "start": 0,
+          "end": 20,
+          "value": "A"
+        }
+      ]
+    },
+    {
+      "region": "b-label",
+      "kind": "text",
+      "varies": "fixed",
+      "fill": "draw",
+      "style": {
+        "color": "#000000",
+        "background": null,
+        "outline": null,
+        "font": "sans",
+        "weight": 900,
+        "size": 0.03,
+        "case": "upper",
+        "align": "center",
+        "emphasis": null
+      },
+      "items": [
+        {
+          "start": 0,
+          "end": 20,
+          "value": "B"
+        }
+      ]
+    },
+    {
+      "region": "c-label",
+      "kind": "text",
+      "varies": "fixed",
+      "fill": "draw",
+      "style": {
+        "color": "#000000",
+        "background": null,
+        "outline": null,
+        "font": "sans",
+        "weight": 900,
+        "size": 0.03,
+        "case": "upper",
+        "align": "center",
+        "emphasis": null
+      },
+      "items": [
+        {
+          "start": 0,
+          "end": 20,
+          "value": "C"
+        }
+      ]
+    },
+    {
+      "region": "d-label",
+      "kind": "text",
+      "varies": "fixed",
+      "fill": "draw",
+      "style": {
+        "color": "#000000",
+        "background": null,
+        "outline": null,
+        "font": "sans",
+        "weight": 900,
+        "size": 0.03,
+        "case": "upper",
+        "align": "center",
+        "emphasis": null
+      },
+      "items": [
+        {
+          "start": 0,
+          "end": 20,
+          "value": "D"
+        }
+      ]
+    },
+    {
+      "region": "s-slot",
+      "kind": "image",
+      "varies": "episode",
+      "fill": "supply",
+      "style": null,
+      "items": [
+        {
+          "start": 0,
+          "end": 20,
+          "value": "Square meme image of a crying face with a football drawn on it."
+        }
+      ]
+    },
+    {
+      "region": "a-slot",
+      "kind": "image",
+      "varies": "episode",
+      "fill": "supply",
+      "style": null,
+      "items": [
+        {
+          "start": 0,
+          "end": 20,
+          "value": "Portrait photo of Erling Haaland."
+        }
+      ]
+    },
+    {
+      "region": "b-slot",
+      "kind": "image",
+      "varies": "episode",
+      "fill": "supply",
+      "style": null,
+      "items": [
+        {
+          "start": 0,
+          "end": 20,
+          "value": "Two portraits side-by-side: Kevin De Bruyne and Jude Bellingham."
+        }
+      ]
+    },
+    {
+      "region": "c-slot",
+      "kind": "image",
+      "varies": "episode",
+      "fill": "supply",
+      "style": null,
+      "items": [
+        {
+          "start": 0,
+          "end": 20,
+          "value": "Two portraits side-by-side: Harry Kane and Luka Modri\u0107."
+        }
+      ]
+    },
+    {
+      "region": "d-slot",
+      "kind": "image",
+      "varies": "episode",
+      "fill": "supply",
+      "style": null,
+      "items": [
+        {
+          "start": 0,
+          "end": 10,
+          "value": "Three images side-by-side: Antoine Griezmann celebrating, Neymar Jr., and Karim Benzema."
+        },
+        {
+          "start": 10,
+          "end": 20,
+          "value": "Four images side-by-side: Antoine Griezmann, Neymar Jr., Karim Benzema, and a cutout of Cristiano Ronaldo."
+        }
+      ]
+    },
+    {
+      "region": "cr7-portrait",
+      "kind": "image",
+      "varies": "episode",
+      "fill": "supply",
+      "style": null,
+      "items": [
+        {
+          "start": 0,
+          "end": 10,
+          "value": "Cutout portrait of Cristiano Ronaldo."
+        }
+      ]
+    },
+    {
+      "region": "messi-portrait",
+      "kind": "image",
+      "varies": "episode",
+      "fill": "supply",
+      "style": null,
+      "items": [
+        {
+          "start": 10,
+          "end": 20,
+          "value": "Cutout portrait of Lionel Messi."
+        }
+      ]
+    },
+    {
+      "region": "board-overlay",
+      "kind": "image",
+      "varies": "episode",
+      "fill": "generate",
+      "style": null,
+      "items": [
+        {
+          "start": 2,
+          "end": 4,
+          "value": "Split image showing slicked-back hair with hair gel next to a golden trophy on a pitch.",
+          "beat": 1
+        },
+        {
+          "start": 4,
+          "end": 7,
+          "value": "Split image showing a classical Greek statue next to actors performing a Greek tragedy.",
+          "beat": 1
+        },
+        {
+          "start": 7,
+          "end": 10,
+          "value": "Mock Instagram profile screenshot for 'Penaldo' showing 679 million followers.",
+          "beat": 1
+        },
+        {
+          "start": 12,
+          "end": 14,
+          "value": "Photo of Diego Maradona holding the World Cup trophy.",
+          "beat": 2
+        },
+        {
+          "start": 14,
+          "end": 19,
+          "value": "Split image showing a player resting on grass next to a football wearing three top hats.",
+          "beat": 2
+        }
+      ]
+    }
+  ]
+}

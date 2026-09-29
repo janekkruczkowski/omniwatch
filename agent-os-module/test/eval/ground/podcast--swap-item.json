@@ -1,0 +1,122 @@
+{
+  "note": "Ground truth read from another project's authored source, for SCORING ONLY. Their words live here so our own extraction can be compared against them; nothing in this file is rendered, shipped, or used as our content.",
+  "source": "examples/podcast/swap-item.svml",
+  "segments": [
+    {
+      "id": "opening-question",
+      "cues": [
+        "OK pretty boy",
+        "so what is",
+        "the one single thing",
+        "that you literally",
+        "can't live without?"
+      ],
+      "spans": [],
+      "words": [
+        "OK",
+        "pretty",
+        "boy",
+        "so",
+        "what",
+        "is",
+        "the",
+        "one",
+        "single",
+        "thing",
+        "that",
+        "you",
+        "literally",
+        "can't",
+        "live",
+        "without?"
+      ]
+    },
+    {
+      "id": "daily-retinol",
+      "cues": [
+        "Retinol.",
+        "Every single night",
+        "for three years. {~lifestyle}",
+        "After my cleanser,",
+        "before my",
+        "moisturizer,",
+        "I literally set",
+        "an alarm for it. You set an alarm",
+        "for face cream?"
+      ],
+      "spans": [],
+      "words": [
+        "Retinol.",
+        "Every",
+        "single",
+        "night",
+        "for",
+        "three",
+        "years.",
+        "{~lifestyle}",
+        "After",
+        "my",
+        "cleanser,",
+        "before",
+        "my",
+        "moisturizer,",
+        "I",
+        "literally",
+        "set",
+        "an",
+        "alarm",
+        "for",
+        "it.",
+        "You",
+        "set",
+        "an",
+        "alarm",
+        "for",
+        "face",
+        "cream?"
+      ]
+    },
+    {
+      "id": "skin-is-asking",
+      "cues": [
+        "You know what",
+        "needs an alarm?",
+        "That forehead.",
+        "Here. Wait no!",
+        "I wash my face",
+        "with bar soap! God, I know",
+        "where the pores",
+        "come from!"
+      ],
+      "spans": [],
+      "words": [
+        "You",
+        "know",
+        "what",
+        "needs",
+        "an",
+        "alarm?",
+        "That",
+        "forehead.",
+        "Here.",
+        "Wait",
+        "no!",
+        "I",
+        "wash",
+        "my",
+        "face",
+        "with",
+        "bar",
+        "soap!",
+        "God,",
+        "I",
+        "know",
+        "where",
+        "the",
+        "pores",
+        "come",
+        "from!"
+      ]
+    }
+  ]
+}

@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
 import { validateBlueprint } from "@/lib/omniwatchBlueprint";
+import { measureBlueprint } from "@/lib/omniwatchMeasure";
+import { videoDir } from "@/lib/omniwatch";
+import { existsSync } from "node:fs";
+import path from "node:path";
 import { writeEpisode } from "@/lib/omniwatchEpisode";
 import { produce } from "@/lib/omniwatchProduce";
 import { STILL_MODELS, VIDEO_MODELS, type StillModel, type VideoModel } from "@/lib/omniwatchBroll";
@@ -25,10 +29,33 @@ export async function POST(req: Request) {
   const parsed: unknown = await req.json().catch(() => null);
   if (!isObj(parsed)) return NextResponse.json({ error: "Send a JSON object with a blueprint." }, { status: 400 });
 
-  const checked = validateBlueprint(parsed.blueprint);
+  const checked = validateBlueprint(parsed.blueprint, { preserveGeometry: true });
   if (!checked.ok) return NextResponse.json({ error: `blueprint: ${checked.error}` }, { status: 400 });
+  // Measure layer: boxes from the SOURCE film at Omni timeline loci. Skip only if
+  // caller already measured (measure:false). Without sourceId we refuse — no template fake.
   let bp = checked.blueprint;
-  const notes = [...checked.notes];
+  const skipMeasure = parsed.measure === false;
+  const measureNotes: string[] = [...checked.notes];
+  if (!skipMeasure) {
+    const sourceIdEarly = typeof parsed.sourceId === "string" ? parsed.sourceId.trim() : "";
+    let sourcePath: string | undefined;
+    if (sourceIdEarly) {
+      try {
+        const dir = videoDir(sourceIdEarly);
+        for (const f of ["master.mp4", "source.mp4"]) {
+          const cand = path.join(dir, f);
+          if (existsSync(cand)) { sourcePath = cand; break; }
+        }
+      } catch {
+        return NextResponse.json({ error: "bad sourceId" }, { status: 400 });
+      }
+    }
+    const measured = await measureBlueprint(bp, { sourcePath });
+    if (!measured.ok) return NextResponse.json({ error: measured.error }, { status: measured.status ?? 500 });
+    bp = measured.blueprint;
+    measureNotes.push(...measured.notes);
+  }
+  const notes = measureNotes;
 
   const topic = typeof parsed.topic === "string" ? parsed.topic.trim() : "";
   if (topic.length > MAX_TOPIC) return NextResponse.json({ error: `topic too long (max ${MAX_TOPIC})` }, { status: 413 });

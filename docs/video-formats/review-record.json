@@ -1,0 +1,186 @@
+{
+  "review_run_id": "studio-eng-20260922",
+  "skill": "plan-eng-review",
+  "skill_path": "/Users/janek/.claude/skills/gstack/.agents/skills/gstack-plan-eng-review/SKILL.md",
+  "started_session_id": "17176-1790094648-60741389",
+  "tel_start": "1790094648",
+  "recorded_at": "2026-09-22T16:52:40.298669Z",
+  "branch": "omni/codex-handoff",
+  "base_commit": "e6ede8583cc51b87e7d638c7652b2918bedf2081",
+  "scope": "Film studio plan; OmniWatch excluded",
+  "completion": "DONE_WITH_CONCERNS",
+  "review": {
+    "skill": "plan-eng-review",
+    "timestamp": "2026-09-22T16:52:40.298669Z",
+    "status": "issues_open",
+    "unresolved": 1,
+    "critical_gaps": 0,
+    "issues_found": 12,
+    "mode": "full-plan-review-batch-acceptance",
+    "commit": "e6ede8583cc51b87e7d638c7652b2918bedf2081"
+  },
+  "external_attempt": {
+    "skill": "codex-plan-review",
+    "timestamp": "2026-09-22T16:52:40.298669Z",
+    "status": "skipped",
+    "source": "none",
+    "host": "codex",
+    "outside_provider": "claude-code",
+    "outside_status": "unavailable",
+    "phase": "plan-review",
+    "commit": "e6ede8583cc51b87e7d638c7652b2918bedf2081",
+    "reason": "authentication",
+    "completed": false
+  },
+  "external_result": {
+    "status": "unavailable",
+    "provider": "claude-code",
+    "result": "",
+    "error": {
+      "code": "authentication",
+      "message": "Claude Code authentication failed. Run claude interactively in this execution context to authenticate."
+    },
+    "session_id": "67f719c2-e88b-4246-9a79-bb4c07b3db1d",
+    "usage": {
+      "input_tokens": 0,
+      "cache_creation_input_tokens": 0,
+      "cache_read_input_tokens": 0,
+      "output_tokens": 0,
+      "server_tool_use": {
+        "web_search_requests": 0,
+        "web_fetch_requests": 0
+      },
+      "service_tier": "standard",
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 0,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "inference_geo": "",
+      "iterations": [],
+      "speed": "standard"
+    },
+    "modelUsage": {},
+    "exit_code": 1
+  },
+  "native_review": {
+    "skill": "codex-plan-review",
+    "timestamp": "2026-09-22T16:52:40.298669Z",
+    "status": "issues_open",
+    "source": "in-host",
+    "host": "codex",
+    "outside_provider": "claude-code",
+    "outside_status": "unavailable",
+    "phase": "plan-review",
+    "commit": "e6ede8583cc51b87e7d638c7652b2918bedf2081",
+    "completed": true,
+    "issues_found": 4,
+    "proposal_amended": true,
+    "user_accepted": false
+  },
+  "decision_proposal": {
+    "decision": "Studio eng review: proposal with LangGraph JS, optional capabilities and own versioned format; pending batch acceptance.",
+    "rationale": "Reuse existing instruments in one local package. Distinct source/reference understanding, revision-aware reuse, command control during generation, bounded provider liability and fresh live eval trials. No implementation authorized by this review.",
+    "scope": "branch",
+    "source": "skill",
+    "confidence": 8
+  },
+  "learnings": [
+    {
+      "skill": "plan-eng-review",
+      "type": "pitfall",
+      "key": "studio-eval-success-does-not-prove-generation",
+      "insight": "Existing eval-text filters to scored and can exit zero with no evaluated cases. eval-generate uses mock-host and no new content, so historical pass totals do not prove content replacement. Freeze source-level fixtures and require complete scoring in the new harness.",
+      "confidence": 9,
+      "source": "observed",
+      "files": [
+        "scripts/eval-text.mjs",
+        "scripts/eval-generate.mjs",
+        "docs/video-formats/ENG-REVIEW.md"
+      ]
+    },
+    {
+      "skill": "plan-eng-review",
+      "type": "architecture",
+      "key": "studio-revision-reuse-and-live-evals",
+      "insight": "Studio plan needs separate identities for revision-bound provider operations and reusable assets. Live model trials must bypass response cache and cross-trial single-flight, even when inputs and configuration match. Both are proposed acceptance invariants; not implemented.",
+      "confidence": 9,
+      "source": "inferred",
+      "files": [
+        "docs/video-formats/TECHNICAL.md",
+        "docs/video-formats/TEST-PLAN.md"
+      ]
+    }
+  ],
+  "global_metadata_attempts": [
+    {
+      "tool": "gstack-review-log",
+      "exit_code": 1,
+      "output": "/Users/janek/.codex/skills/gstack/bin/gstack-review-log: line 72: /Users/janek/.gstack/projects/janekkruczkowski-omniwatch/omni-codex-handoff-reviews.jsonl: Operation not permitted"
+    },
+    {
+      "tool": "gstack-review-log",
+      "exit_code": 1,
+      "output": "/Users/janek/.codex/skills/gstack/bin/gstack-review-log: line 72: /Users/janek/.gstack/projects/janekkruczkowski-omniwatch/omni-codex-handoff-reviews.jsonl: Operation not permitted"
+    },
+    {
+      "tool": "gstack-review-log",
+      "exit_code": 1,
+      "output": "/Users/janek/.codex/skills/gstack/bin/gstack-review-log: line 72: /Users/janek/.gstack/projects/janekkruczkowski-omniwatch/omni-codex-handoff-reviews.jsonl: Operation not permitted"
+    },
+    {
+      "tool": "gstack-decision-log",
+      "exit_code": 1,
+      "output": "74 |   // semantics) — pass 0o600 for stores holding sensitive content so the\n75 |   // file never exists world-readable.\n76 |   if (opts.mode !== undefined) {\n77 |     appendFileSync(path, line + \"\\n\", { encoding: \"utf-8\", mode: opts.mode });\n78 |   } else {\n79 |     appendFileSync(path, line + \"\\n\", { encoding: \"utf-8\" });\n         ^\nEPERM: operation not permitted, open '/Users/janek/.gstack/projects/janekkruczkowski-omniwatch/decisions.jsonl'\n    path: \"/Users/janek/.gstack/projects/janekkruczkowski-omniwatch/decisions.jsonl\",\n syscall: \"open\",\n   errno: -1,\n    code: \"EPERM\"\n\n      at appendJsonl (/Users/janek/.claude/skills/gstack/lib/jsonl-store.ts:79:5)\n      at appendEvent (/Users/janek/.claude/skills/gstack/lib/gstack-decision.ts:214:3)\n      at /Users/janek/.claude/skills/gstack/bin/gstack-decision-log:113:1\n      at loadAndEvaluateModule (2:1)\n\nBun v1.3.13 (macOS arm64)"
+    },
+    {
+      "tool": "gstack-learnings-log",
+      "exit_code": 1,
+      "output": "/Users/janek/.codex/skills/gstack/bin/gstack-learnings-log: line 88: /Users/janek/.gstack/projects/janekkruczkowski-omniwatch/learnings.jsonl: Operation not permitted"
+    },
+    {
+      "tool": "gstack-learnings-log",
+      "exit_code": 1,
+      "output": "/Users/janek/.codex/skills/gstack/bin/gstack-learnings-log: line 88: /Users/janek/.gstack/projects/janekkruczkowski-omniwatch/learnings.jsonl: Operation not permitted"
+    }
+  ],
+  "implementation_executed": false,
+  "paid_evals_executed": false,
+  "counts": {
+    "architecture": 6,
+    "code_quality": 2,
+    "test_gaps": 2,
+    "performance": 2,
+    "native_refinements": 4,
+    "tasks": 14,
+    "test_groups": 18,
+    "parallel_lanes": 4
+  },
+  "acceptance": "pending_batch_acceptance",
+  "validation": {
+    "status": "passed",
+    "markdown_files_checked": 9,
+    "checks": [
+      "local markdown links",
+      "code fences",
+      "14 serialized tasks and references",
+      "acyclic task dependencies",
+      "18 planned test groups",
+      "final review-report heading and pending acceptance"
+    ],
+    "runtime_or_model_tests": false
+  },
+  "artifacts_sha256": {
+    "docs/video-formats/CEO-REVIEW.md": "fa8d57d126e23a4f1a0c7aef796ba2adf13c08ac8751dd3bf617704fe85975b0",
+    "docs/video-formats/CONCEPT.md": "b561194bcb3383986f492f3030b3e822b0994ff82898c4b178af4b2f3dcdf0d6",
+    "docs/video-formats/ENG-REVIEW.md": "8aa366717b66004e5080fe28aa7fec51a903cfa33ef36343505aa6e899be730c",
+    "docs/video-formats/EVAL-PLAN.md": "540b9f8212cfa007a3d40760b40d5b053256659f3465aaf134d05bf2f5d0ba0d",
+    "docs/video-formats/GRAPH-DECISION.md": "c2ccf16af8217eac23d03a8205c92a15178f6ad5e4e29a82ebd4bb26bf3c5bf5",
+    "docs/video-formats/START.md": "e240c8b6216f696629356e310bbd9466578a95ffce620dd77623e1b80916e1e7",
+    "docs/video-formats/TASKS.md": "c053162910791a879202ff6ae0ca8374df48958c3da842ca41606f06d7bf2c1f",
+    "docs/video-formats/TECHNICAL.md": "1880a6ca3f3dd52c1255acdb2c1df32b9b201c3198ae6e21be0674b8abc773fa",
+    "docs/video-formats/TEST-PLAN.md": "b0888fd2ed4c61fe2958ef0557c97afee0901b7b16546a23e107853e10dd3d88",
+    "docs/video-formats/tasks-eng-review.jsonl": "3dc0a92d573a40a876e85e080aba4f0e85844aff106911db5e6f3aa8699b804c"
+  },
+  "completed_at": "2026-09-22T16:53:50.089525Z",
+  "git_checkpoint": "not_created; repository metadata is read-only in this session, existing unrelated changes preserved"
+}

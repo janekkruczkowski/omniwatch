@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<title>Projekt w toku</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500&amp;family=Geist+Mono:wght@400;500&amp;family=Newsreader:opsz,wght@6..72,300;6..72,400&amp;display=swap">
+<style>
+body{margin:0;background:#FAF9F6;color:#111111;font-family:'Geist',system-ui,sans-serif;font-size:14px;line-height:1.45;letter-spacing:-0.005em;-webkit-font-smoothing:antialiased}
+*{box-sizing:border-box}
+a{color:#111111}a:hover{color:#0007CB}
+h1,h2,h3,p{margin:0}
+b,strong{font-weight:500}
+.d{font-family:'Geist',system-ui,sans-serif;font-weight:300;letter-spacing:-0.035em}
+.m{font-family:'Geist Mono',ui-monospace,monospace;font-variant-numeric:tabular-nums;letter-spacing:0}
+.mut{color:#585858}
+.lbl{font-family:'Geist Mono',ui-monospace,monospace;font-size:11px;font-weight:400;letter-spacing:.1em;text-transform:uppercase;color:#585858}
+.serif{font-family:'Newsreader',Georgia,serif;font-weight:300;letter-spacing:-0.01em}
+.card{background:#FFFFFF;border:1px solid #DEDBD6;border-radius:4px}
+.chip{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 8px;border-radius:4px;font-family:'Geist Mono',ui-monospace,monospace;font-size:11px;font-weight:400;letter-spacing:.08em;text-transform:uppercase;white-space:nowrap;border:1px solid transparent}
+.c-you{background:#0007CB;color:#FFFFFF}
+.c-ok{background:transparent;color:#2F6B4F;border-color:#BCD3C4}
+.c-bad{background:#F6E3DF;color:#A3261B}
+.c-run{background:transparent;color:#111111;border-color:#D3CEC6}
+.c-pay{background:#F3E9D2;color:#6B4A0E}
+.c-free{background:#F1EEE9;color:#585858}
+.dot{width:6px;height:6px;border-radius:50%;background:currentColor;display:inline-block}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;padding:0 16px;border-radius:4px;font:400 14px/1 'Geist',sans-serif;border:1px solid transparent;cursor:pointer;text-decoration:none;white-space:nowrap}
+.b-pri{background:#000000;color:#FFFFFF}.b-pri:hover{background:#111111;color:#FFFFFF}
+.b-sec{background:#FFFFFF;color:#111111;border-color:#111111}
+.b-dng{background:transparent;color:#A3261B;border-color:#E3C4BE}
+.ico{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+.nav{padding:20px 2px;margin:0 10px;text-decoration:none;color:#888888;font-weight:400}.nav.on{color:#111111;box-shadow:inset 0 -2px 0 #111111}
+.field{height:44px;border:1px solid #DEDBD6;border-radius:4px;background:#FFFFFF;padding:0 14px;font:inherit;color:#111111;width:100%}
+.seg{display:flex;border:1px solid #DEDBD6;border-radius:4px;background:#FFFFFF;overflow:hidden}.seg label{flex:1;display:flex;align-items:center;justify-content:center;height:42px;font-size:13px;color:#585858;cursor:pointer;white-space:nowrap;padding:0 8px;border-left:1px solid #DEDBD6}.seg label:first-child{border-left:0}.seg .on{background:#111111;color:#FFFFFF}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+summary{cursor:pointer;list-style:none}summary::-webkit-details-marker{display:none}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+@keyframes shim{0%{background-position:200% 0}100%{background-position:-200% 0}}
+.live{animation:pulse 1.4s ease-in-out infinite}
+.shim{background:linear-gradient(90deg,#111111 0%,#111111 40%,#B8B8B8 50%,#111111 60%,#111111 100%);background-size:200% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;animation:shim 2.2s linear infinite}
+.st{display:grid;grid-template-columns:24px minmax(0,1fr) 72px 72px;gap:12px;align-items:center;padding:11px 0;border-top:1px solid #F1EEE9;font-size:13.5px}
+.ok{width:20px;height:20px;border-radius:50%;background:#E4EEE7;color:#2F6B4F;display:flex;align-items:center;justify-content:center}
+.wait{width:20px;height:20px;border-radius:50%;border:1.5px dashed #B8B8B8}
+.rd{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:14px;padding:14px 0;border-top:1px solid #F1EEE9;align-items:start}
+</style>
+</head>
+<body>
+<div style="width: 1440px; height: 1400px; background: #FAF9F6">
+<header style="height: 64px; display: flex; align-items: center; justify-content: space-between; padding: 0 64px; border-bottom: 1px solid #DEDBD6">
+<div style="display: flex; align-items: center; gap: 40px">
+<a href="Main.html" class="d" style="font-size: 24px; text-decoration: none">Studio<span style="color: #0007CB">.</span></a>
+<nav style="display: flex; gap: 4px" aria-label="Główne"><a class="nav on" href="Main.html">Projekty</a><a class="nav" href="Main.html">Szablony</a><a class="nav" href="Shorty.html">Shorty</a><a class="nav" href="JakToDziala.html">Jak to działa</a></nav>
+</div>
+<div style="display: flex; align-items: center; gap: 14px"><span class="mut">Wydano we wrześniu</span><span class="m" style="font-weight: 500">4,82 USD</span><span style="width: 36px; height: 36px; border-radius: 50%; background: #111111; color: #FAF9F6; display: flex; align-items: center; justify-content: center; font-weight: 500; font-size: 13px">JK</span></div>
+</header>
+
+<main style="padding: 28px 64px 80px; display: flex; flex-direction: column; gap: 24px">
+<a href="Main.html" style="display: flex; align-items: center; gap: 6px; font-weight: 500; text-decoration: none; align-self: flex-start"><svg class="ico" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"></path></svg>Projekty</a>
+
+<section class="card" style="padding: 24px 28px; display: flex; gap: 40px; align-items: center">
+<div style="flex-grow: 1; display: flex; flex-direction: column; gap: 10px">
+<div style="display: flex; gap: 8px"><span class="chip c-run"><span class="dot live"></span>W toku · nic nie musisz robić</span></div>
+<h1 class="d" style="font-size: 44px; line-height: 1.05">Demo SaaS</h1>
+<p style="font-size: 16px">Montażysta poprawia film po uwagach kontroli. <b>Gotowe za ok. 4 min.</b> Damy znać, gdy będzie co obejrzeć.</p>
+</div>
+<dl style="display: grid; grid-template-columns: repeat(3, auto); gap: 4px 32px; margin: 0; flex-shrink: 0">
+<dt class="lbl">Kroki</dt><dt class="lbl">Czas</dt><dt class="lbl">Wydano</dt>
+<dd class="d" style="margin: 0; font-size: 28px">7 / 10</dd><dd class="d" style="margin: 0; font-size: 28px">6 min</dd><dd class="d" style="margin: 0; font-size: 28px">1,04 <span style="font-size: 16px">USD</span></dd>
+<dd></dd><dd></dd><dd class="m mut" style="margin: 0; font-size: 12px">jeszcze ok. 0,05</dd>
+</dl>
+<button type="button" class="btn b-dng"><svg class="ico" viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"></path></svg>Zatrzymaj</button>
+</section>
+
+<div style="display: grid; grid-template-columns: minmax(0, 1fr) 460px; gap: 24px; align-items: start">
+<section class="card" style="padding: 24px 28px; display: flex; flex-direction: column; gap: 18px">
+<div style="display: flex; gap: 24px; align-items: flex-start">
+<img src="img/po-1.jpg" alt="Aktualnie oglądane cięcie" style="width: 180px; height: 320px; border-radius: 4px; object-fit: cover; flex-shrink: 0">
+<div style="display: flex; flex-direction: column; gap: 10px; padding-top: 4px">
+<span class="lbl">Teraz</span>
+<p class="d shim" style="font-size: 28px; line-height: 1.15">Kontrola ogląda cięcie 7 z 12</p>
+<p class="mut" style="font-size: 15px">Sprawdza, czy napisy nie zasłaniają twarzy i czy cięcie trzyma rytm wzorca (~1,5 s).</p>
+<div style="display: flex; flex-direction: column; gap: 6px; margin-top: 8px">
+<div style="height: 6px; border-radius: 4px; background: #F1EEE9; overflow: hidden"><div style="width: 58%; height: 6px; background: #111111"></div></div>
+<span class="m mut" style="font-size: 12px">7 / 12 cięć · runda 2</span>
+</div>
+</div>
+</div>
+
+<div style="display: flex; flex-direction: column">
+<div style="display: flex; justify-content: space-between; align-items: baseline; padding-bottom: 8px"><h2 style="font-size: 17px; font-weight: 500">Montażysta ↔ kontrola, na żywo</h2><span class="m mut" style="font-size: 12.5px">limit: 3 rundy · 0,15 USD</span></div>
+<ol style="list-style: none; margin: 0; padding: 0">
+<li class="rd"><span class="chip c-free">Runda 1</span><div style="display: flex; flex-direction: column; gap: 4px"><p><b>Kontrola:</b> napisy zasłaniają twarz prezentera w 0:12–0:15.</p><p><b>Montażysta zmienił:</b> przesunął napisy nad okno prezentera.</p></div><span class="m mut">0,02</span></li>
+<li class="rd"><span class="chip c-free">Runda 1</span><div style="display: flex; flex-direction: column; gap: 4px"><p><b>Kontrola:</b> cięcie 7 trwa 4,1 s — wzorzec tnie co ~1,5 s.</p><p><b>Montażysta zmienił:</b> podzielił je na dwa ujęcia.</p></div><span class="m mut">0,02</span></li>
+<li class="rd"><span class="chip c-run"><span class="dot live"></span>Runda 2</span><div style="display: flex; flex-direction: column; gap: 4px"><p><b>Kontrola:</b> <span class="shim">ogląda poprawioną wersję…</span></p></div><span class="m mut">…</span></li>
+</ol>
+</div>
+</section>
+
+<section class="card" style="padding: 22px 24px; display: flex; flex-direction: column">
+<div style="display: flex; justify-content: space-between; align-items: baseline; padding-bottom: 8px"><h2 style="font-size: 17px; font-weight: 500">Kroki</h2><span class="lbl" style="display: grid; grid-template-columns: 72px 72px; gap: 12px; text-align: right"><span>czas</span><span>koszt</span></span></div>
+<div class="st"><span class="ok"><svg class="ico" style="width: 12px; height: 12px" viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"></path></svg></span><span>Wczytanie szablonu</span><span class="m mut" style="text-align: right">2 s</span><span class="m mut" style="text-align: right">0,00</span></div>
+<div class="st"><span class="ok"><svg class="ico" style="width: 12px; height: 12px" viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"></path></svg></span><span>Analiza materiału</span><span class="m mut" style="text-align: right">48 s</span><span class="m mut" style="text-align: right">0,04</span></div>
+<div class="st"><span class="ok"><svg class="ico" style="width: 12px; height: 12px" viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"></path></svg></span><span>Scenariusz <span class="mut">· 2 rundy</span></span><span class="m mut" style="text-align: right">1:10</span><span class="m mut" style="text-align: right">0,06</span></div>
+<div class="st"><span class="ok"><svg class="ico" style="width: 12px; height: 12px" viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"></path></svg></span><span>Twoja decyzja: treść <span class="mut">· zatwierdzona</span></span><span class="m mut" style="text-align: right">—</span><span class="m mut" style="text-align: right">—</span></div>
+<div class="st"><span class="ok"><svg class="ico" style="width: 12px; height: 12px" viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"></path></svg></span><span>Głos lektora <span class="chip c-pay" style="height: 20px; font-size: 11px">płatne</span></span><span class="m mut" style="text-align: right">14 s</span><span class="m" style="text-align: right; font-weight: 500">0,16</span></div>
+<div class="st"><span class="ok"><svg class="ico" style="width: 12px; height: 12px" viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"></path></svg></span><span>Prezenter AI <span class="chip c-pay" style="height: 20px; font-size: 11px">płatne</span></span><span class="m mut" style="text-align: right">2:40</span><span class="m" style="text-align: right; font-weight: 500">0,67</span></div>
+<div class="st" style="background: #F1EEE9; margin: 0 -12px; padding-left: 12px; padding-right: 12px; border-radius: 4px"><span class="dot live" style="width: 10px; height: 10px; color: #111111; margin-left: 5px"></span><span style="font-weight: 500; color: #111111">Montaż i kontrola</span><span class="m" style="text-align: right; color: #111111">1:02</span><span class="m" style="text-align: right; color: #111111">0,11</span></div>
+<div class="st"><span class="wait"></span><span class="mut">Kontrola techniczna</span><span></span><span class="m mut" style="text-align: right">~0,00</span></div>
+<div class="st"><span class="wait"></span><span class="mut">Werdykt krytyka</span><span></span><span class="m mut" style="text-align: right">~0,01</span></div>
+<div class="st"><span class="wait"></span><span class="mut">Gotowy film — obejrzysz Ty</span><span></span><span></span></div>
+<div style="display: flex; justify-content: space-between; border-top: 2px solid #111111; padding-top: 12px; margin-top: 4px; font-weight: 500"><span>Razem</span><span class="m">1,04 USD</span></div>
+</section>
+</div>
+</main>
+</div>
+</body>
+</html>

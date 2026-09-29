@@ -3,7 +3,9 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { createProject } from "@/lib/videoProjects";
 import { validateBlueprint, defaultFill, type BlueprintRegion } from "@/lib/omniwatchBlueprint";
+import { measureBlueprint } from "@/lib/omniwatchMeasure";
 import { composeBlueprint } from "@/lib/omniwatchCompose";
+import { normalizeRecipe, type FormatRecipe } from "@/lib/omniwatchRecipe";
 import { videoDir, run } from "@/lib/omniwatch";
 import { assetPath } from "@/lib/omniwatchAssets";
 
@@ -106,6 +108,12 @@ export interface CloneInput {
   output?: { width?: unknown; height?: unknown } | null;
   title?: string;
   debugRegions?: boolean;
+  /** Proof snapshots: only draw items active at this second. */
+  activeAt?: number;
+  /** How the format looks. Normally the measure step's own, written back into the project so
+   *  a render can be redone from what is on disk; a caller may pass one to draw the same
+   *  geometry in a different set of clothes. */
+  recipe?: unknown;
   /** Also cut the slots that ask to be SUPPLIED.
    *
    *  A reproduction and a new episode want opposite things here. "supply" marks the file
@@ -127,12 +135,35 @@ export type CloneOut =
   | { ok: false; error: string; status: number };
 
 export async function buildClone(parsed: CloneInput): Promise<CloneOut> {
-  const checked = validateBlueprint(parsed.blueprint);
+  const checked = validateBlueprint(parsed.blueprint, { preserveGeometry: true });
   if (!checked.ok) return { ok: false, error: `blueprint: ${checked.error}`, status: 400 };
-  const bp = checked.blueprint;
 
   const fill = parsed.fill === "empty" ? "empty" : parsed.fill === "assets" ? "assets" : "trace";
   const sourceId = typeof parsed.sourceId === "string" ? parsed.sourceId.trim() : "";
+  // Resolve source BEFORE measure — geometry comes from the film, not a template.
+  let sourcePathForMeasure: string | undefined;
+  if (sourceId) {
+    try {
+      const dir = videoDir(sourceId);
+      for (const f of ["master.mp4", "source.mp4"]) {
+        const cand = path.join(dir, f);
+        if (existsSync(cand)) { sourcePathForMeasure = cand; break; }
+      }
+    } catch {
+      return { ok: false, error: "bad sourceId", status: 400 };
+    }
+  }
+  const measured = await measureBlueprint(checked.blueprint, { sourcePath: sourcePathForMeasure });
+  if (!measured.ok) return { ok: false, error: measured.error, status: measured.status ?? 500 };
+  const bp = measured.blueprint;
+  // A recipe the caller handed in wins over the measured one — that is how the same film gets
+  // redrawn in someone else's colours. With neither, normalize fills the contract with the
+  // defaults, so the composer is never left guessing.
+  const recipe: FormatRecipe = parsed.recipe !== undefined
+    ? normalizeRecipe(parsed.recipe, bp.canvas)
+    : measured.recipe ?? normalizeRecipe(null, bp.canvas);
+  const omniTracks = checked.blueprint.tracks;
+  const measuredLayout = measured.layout;
   if (fill === "trace" && !sourceId) {
     return { ok: false, error: "trace needs sourceId — the watched video to cut from", status: 400 };
   }
@@ -163,6 +194,8 @@ export async function buildClone(parsed: CloneInput): Promise<CloneOut> {
 
   const title = typeof parsed.title === "string" && parsed.title.trim() ? parsed.title.trim() : "clone";
   const { slug, cwd } = await createProject(title);
+  await writeFile(path.join(cwd, "layout.json"), JSON.stringify(measuredLayout, null, 2));
+  await writeFile(path.join(cwd, "content-tracks.json"), JSON.stringify(omniTracks, null, 2));
   const assets = path.join(cwd, "assets");
   await mkdir(assets, { recursive: true });
 
@@ -176,6 +209,8 @@ export async function buildClone(parsed: CloneInput): Promise<CloneOut> {
   // Material taken from the source, one piece per item: the region's rectangle over that
   // item's own stretch of time. This is the third way a slot gets filled, and the only one
   // that costs nothing and invents nothing.
+  const covering = (r: BlueprintRegion) => r.rect[2] * r.rect[3] >= 0.95;
+
   if (fill === "assets" && wantsCut && source) {
     const srcSize = await sourceSize(source);
     if (!srcSize) return { ok: false, error: "could not read the source's dimensions", status: 502 };
@@ -185,6 +220,8 @@ export async function buildClone(parsed: CloneInput): Promise<CloneOut> {
       // An asset the caller actually supplied wins over a cut of the original.
       const r = byId.get(t.region);
       if (!r) continue;
+      // Same rule as trace: a full-frame cut under redrawn text doubles every overlay.
+      if (covering(r)) continue;
       for (let i = 0; i < t.items.length; i++) {
         const it = t.items[i];
         if (isObj(parsed.assets) && (`${t.region}:${i}` in parsed.assets || t.region in parsed.assets)) continue;
@@ -204,7 +241,6 @@ export async function buildClone(parsed: CloneInput): Promise<CloneOut> {
     // showed the caption twice, once from the full-frame cut and once from its own. Left
     // out, the trace is a genuine reassembly: a rect that is wrong shows as a gap or a
     // displacement, which is the whole point of measuring this way.
-    const covering = (r: BlueprintRegion) => r.rect[2] * r.rect[3] >= 0.95;
     for (const r of bp.regions) {
       if (covering(r)) continue;
       const name = `rg-${r.id.replace(/[^a-z0-9_-]/gi, "")}.mp4`;
@@ -275,18 +311,24 @@ export async function buildClone(parsed: CloneInput): Promise<CloneOut> {
     ? { ...bp, canvas: { ...bp.canvas, width: frameSize.w, height: frameSize.h } }
     : bp;
 
+  // Cuts from the watched file already carry its burned-in title and captions. Redrawing
+  // those tracks on top is what put a white "RANKING…" across the presenter. Trace always
+  // skips that; assets+cut does the same whenever nothing was newly generated into `given`.
   const html = composeBlueprint(framed, {
+    recipe,
     // A cut is the whole region for the whole piece; its timing is already in the pixels.
     // A generated asset is the opposite: it fills one item, on that item's own clock.
+    activeAt: typeof parsed.activeAt === "number" ? parsed.activeAt : undefined,
     regionAsset: (id) => cutFor.get(id) ?? null,
     assetFor: (t, _it, i) =>
       given.get(`${t.region}:${i}`) ?? given.get(t.region)
       ?? cutItems.get(`${t.region}:${i}`) ?? cutFor.get(t.region) ?? null,
     audioUrl,
     debugRegions: parsed.debugRegions === true,
-    tracedPixels: fill === "trace",
+    tracedPixels: fill === "trace" || (cutFor.size + cutItems.size > 0 && given.size === 0),
   });
   await writeFile(path.join(cwd, "index.html"), html);
+  await writeFile(path.join(cwd, "recipe.json"), JSON.stringify(recipe, null, 2));
   await writeFile(path.join(cwd, "hyperframes.json"), JSON.stringify({
     name: slug, composition: "index.html",
     width: Math.round(framed.canvas.width), height: Math.round(framed.canvas.height),

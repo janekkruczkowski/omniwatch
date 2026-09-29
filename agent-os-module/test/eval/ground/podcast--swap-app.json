@@ -1,0 +1,120 @@
+{
+  "note": "Ground truth read from another project's authored source, for SCORING ONLY. Their words live here so our own extraction can be compared against them; nothing in this file is rendered, shipped, or used as our content.",
+  "source": "examples/podcast/swap-app.svml",
+  "segments": [
+    {
+      "id": "opening-question",
+      "cues": [
+        "OK big guy",
+        "so what is",
+        "the one single thing",
+        "that you literally",
+        "can't live without?"
+      ],
+      "spans": [],
+      "words": [
+        "OK",
+        "big",
+        "guy",
+        "so",
+        "what",
+        "is",
+        "the",
+        "one",
+        "single",
+        "thing",
+        "that",
+        "you",
+        "literally",
+        "can't",
+        "live",
+        "without?"
+      ]
+    },
+    {
+      "id": "daily-cheatgpt",
+      "cues": [
+        "CheatGPT. Every single day",
+        "since sophomore year. {~lifestyle}",
+        "For my essays,",
+        "my emails,",
+        "and even",
+        "my wedding vows. You used AI",
+        "on your vows?"
+      ],
+      "spans": [],
+      "words": [
+        "CheatGPT.",
+        "Every",
+        "single",
+        "day",
+        "since",
+        "sophomore",
+        "year.",
+        "{~lifestyle}",
+        "For",
+        "my",
+        "essays,",
+        "my",
+        "emails,",
+        "and",
+        "even",
+        "my",
+        "wedding",
+        "vows.",
+        "You",
+        "used",
+        "AI",
+        "on",
+        "your",
+        "vows?"
+      ]
+    },
+    {
+      "id": "brain-is-asking",
+      "cues": [
+        "And guess what?",
+        "She cried.",
+        "Sent you the link. Wait no!",
+        "I have a PhD Pee Aych Dee>! And I have",
+        "a 4.0 four point oh>.",
+        "Which of us",
+        "looks tired?"
+      ],
+      "spans": [],
+      "words": [
+        "And",
+        "guess",
+        "what?",
+        "She",
+        "cried.",
+        "Sent",
+        "you",
+        "the",
+        "link.",
+        "Wait",
+        "no!",
+        "I",
+        "have",
+        "a",
+        "PhD",
+        "Pee",
+        "Aych",
+        "Dee>!",
+        "And",
+        "I",
+        "have",
+        "a",
+        "4.0",
+        "four",
+        "point",
+        "oh>.",
+        "Which",
+        "of",
+        "us",
+        "looks",
+        "tired?"
+      ]
+    }
+  ]
+}

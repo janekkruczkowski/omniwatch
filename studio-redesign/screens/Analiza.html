@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<title>Analiza wzorca — agenci pracują</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500&amp;family=Geist+Mono:wght@400;500&amp;family=Newsreader:opsz,wght@6..72,300;6..72,400&amp;display=swap">
+<style>
+body{margin:0;background:#FAF9F6;color:#111111;font-family:'Geist',system-ui,sans-serif;font-size:14px;line-height:1.45;letter-spacing:-0.005em;-webkit-font-smoothing:antialiased}
+*{box-sizing:border-box}
+a{color:#111111}a:hover{color:#0007CB}
+h1,h2,h3,p{margin:0}
+b,strong{font-weight:500}
+.d{font-family:'Geist',system-ui,sans-serif;font-weight:300;letter-spacing:-0.035em}
+.m{font-family:'Geist Mono',ui-monospace,monospace;font-variant-numeric:tabular-nums;letter-spacing:0}
+.mut{color:#585858}
+.lbl{font-family:'Geist Mono',ui-monospace,monospace;font-size:11px;font-weight:400;letter-spacing:.1em;text-transform:uppercase;color:#585858}
+.serif{font-family:'Newsreader',Georgia,serif;font-weight:300;letter-spacing:-0.01em}
+.card{background:#FFFFFF;border:1px solid #DEDBD6;border-radius:4px}
+.chip{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 8px;border-radius:4px;font-family:'Geist Mono',ui-monospace,monospace;font-size:11px;font-weight:400;letter-spacing:.08em;text-transform:uppercase;white-space:nowrap;border:1px solid transparent}
+.c-you{background:#0007CB;color:#FFFFFF}
+.c-ok{background:transparent;color:#2F6B4F;border-color:#BCD3C4}
+.c-run{background:transparent;color:#111111;border-color:#D3CEC6}
+.c-free{background:#F1EEE9;color:#585858}
+.dot{width:6px;height:6px;border-radius:50%;background:currentColor;display:inline-block}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;padding:0 16px;border-radius:4px;font:400 14px/1 'Geist',sans-serif;border:1px solid transparent;cursor:pointer;text-decoration:none;white-space:nowrap}
+.b-pri{background:#000000;color:#FFFFFF}
+.b-dng{background:transparent;color:#A3261B;border-color:#E3C4BE}
+.ico{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+.nav{padding:20px 2px;margin:0 10px;text-decoration:none;color:#888888;font-weight:400}.nav.on{color:#111111;box-shadow:inset 0 -2px 0 #111111}
+.field{height:44px;border:1px solid #DEDBD6;border-radius:4px;background:#FFFFFF;padding:0 14px;font:inherit;color:#111111;width:100%}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+@keyframes shim{0%{background-position:200% 0}100%{background-position:-200% 0}}
+@keyframes scan{0%{left:0}100%{left:100%}}
+@keyframes blink{0%,80%,100%{opacity:.2}40%{opacity:1}}
+.live{animation:pulse 1.4s ease-in-out infinite}
+.shim{background:linear-gradient(90deg,#111111 0%,#111111 40%,#B8B8B8 50%,#111111 60%,#111111 100%);background-size:200% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;animation:shim 2.2s linear infinite}
+.step{display:flex;align-items:center;gap:8px;font-family:'Geist Mono',monospace;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#888888}
+.sq{width:20px;height:20px;border-radius:4px;border:1px solid #D3CEC6;display:flex;align-items:center;justify-content:center;font-size:10.5px;color:#585858}
+.av{width:40px;height:40px;border-radius:4px;display:flex;align-items:center;justify-content:center;font-family:'Geist Mono',monospace;font-size:11px;letter-spacing:.04em;flex-shrink:0}
+.ag{padding:24px;display:flex;flex-direction:column;gap:16px}
+.ag-h{display:flex;align-items:center;gap:12px}
+.ag-f{display:flex;justify-content:space-between;border-top:1px solid #DEDBD6;padding-top:12px;margin-top:auto;font-size:13px;color:#414141}
+.det{display:inline-flex;align-items:center;height:32px;padding:0 10px;border-radius:4px;background:#F1EEE9;font-size:14px;color:#111111}
+.box{position:absolute;border:1px solid #FFFFFF;outline:1px solid rgba(0,0,0,.35)}
+.box span{position:absolute;left:-1px;top:-19px;height:18px;padding:0 5px;background:#111111;color:#FFFFFF;font-family:'Geist Mono',monospace;font-size:9.5px;letter-spacing:.08em;line-height:18px;white-space:nowrap}
+.msg{display:grid;grid-template-columns:32px minmax(0,1fr);gap:12px}
+.msg .av{width:32px;height:32px;font-size:10.5px}
+.bub{display:flex;flex-direction:column;gap:3px}
+.who{display:flex;gap:8px;align-items:baseline}
+.tdot{width:6px;height:6px;border-radius:50%;background:#585858;display:inline-block;animation:blink 1.2s infinite}
+</style>
+</head>
+<body>
+<div style="width: 1440px; height: 2140px; background: #FAF9F6">
+<header style="height: 64px; display: flex; align-items: center; justify-content: space-between; padding: 0 64px; border-bottom: 1px solid #DEDBD6">
+<div style="display: flex; align-items: center; gap: 30px">
+<a href="Main.html" class="d" style="font-size: 24px; text-decoration: none">Studio<span style="color: #0007CB">.</span></a>
+<nav style="display: flex" aria-label="Główne"><a class="nav on" href="Main.html">Projekty</a><a class="nav" href="Main.html">Szablony</a><a class="nav" href="Shorty.html">Shorty</a><a class="nav" href="JakToDziala.html">Jak to działa</a></nav>
+</div>
+<div style="display: flex; align-items: center; gap: 14px"><span class="lbl">Wrzesień</span><span class="m">4,82 USD</span><span style="width: 32px; height: 32px; border-radius: 4px; background: #111111; color: #FAF9F6; display: flex; align-items: center; justify-content: center; font-size: 12px">JK</span></div>
+</header>
+
+<main style="padding: 28px 64px 80px; display: flex; flex-direction: column; gap: 32px">
+<div style="display: flex; align-items: center; justify-content: space-between">
+<a href="Main.html" style="display: flex; align-items: center; gap: 6px; text-decoration: none"><svg class="ico" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"></path></svg>Projekty</a>
+<ol style="display: flex; align-items: center; gap: 12px; list-style: none; margin: 0; padding: 0" aria-label="Etapy">
+<li class="step" style="color: #111111"><span class="sq" style="background: #111111; border-color: #111111; color: #FFFFFF"><svg class="ico" style="width: 11px; height: 11px" viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"></path></svg></span>Pobranie</li>
+<li style="width: 24px; height: 1px; background: #D3CEC6"></li>
+<li class="step" style="color: #111111" aria-current="step"><span class="sq" style="border-color: #111111; color: #111111"><span class="dot live"></span></span>Analiza wzorca</li>
+<li style="width: 24px; height: 1px; background: #D3CEC6"></li>
+<li class="step"><span class="sq">3</span>Reżyser ↔ krytyk</li>
+<li style="width: 24px; height: 1px; background: #D3CEC6"></li>
+<li class="step"><span class="sq">4</span>Twoja decyzja</li>
+<li style="width: 24px; height: 1px; background: #D3CEC6"></li>
+<li class="step"><span class="sq">5</span>Zapisany szablon</li>
+</ol>
+</div>
+
+<section style="display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 48px; align-items: end">
+<div style="display: flex; flex-direction: column; gap: 14px">
+<div style="display: flex; gap: 8px; align-items: center"><span class="chip c-run"><span class="dot live"></span>W toku · nic nie musisz robić</span><span class="lbl">Ranking z TikToka · szablon</span></div>
+<h1 class="d" style="font-size: 56px; line-height: 1">Agenci rozbierają wzorzec na części</h1>
+<p class="serif" style="font-size: 18px; line-height: 1.45; color: #414141; max-width: 720px">Pięciu analityków ogląda film jednocześnie — każdy patrzy na jedną rzecz. Kiedy skończą, reżyser złoży z tego szablon, a krytyk go sprawdzi. Zawołamy Cię dopiero do gotowego podglądu.</p>
+</div>
+<div style="display: flex; gap: 36px; align-items: flex-end">
+<dl style="display: grid; grid-template-columns: repeat(3, auto); gap: 6px 36px; margin: 0">
+<dt class="lbl">Analitycy</dt><dt class="lbl">Czas</dt><dt class="lbl">Wydano</dt>
+<dd class="d" style="margin: 0; font-size: 36px; line-height: 1">3 / 5</dd><dd class="d" style="margin: 0; font-size: 36px; line-height: 1">1:12</dd><dd class="d" style="margin: 0; font-size: 36px; line-height: 1">0,02 <span style="font-size: 16px">USD</span></dd>
+<dd></dd><dd class="m mut" style="margin: 0; font-size: 12px">całość ~3 min</dd><dd class="m mut" style="margin: 0; font-size: 12px">całość 0,03–0,05</dd>
+</dl>
+<button type="button" class="btn b-dng"><svg class="ico" viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"></path></svg>Zatrzymaj</button>
+</div>
+</section>
+
+<div style="display: grid; grid-template-columns: 340px minmax(0, 1fr); gap: 32px; align-items: start">
+<section style="background: #F1EEE9; border-radius: 4px; padding: 20px; display: flex; flex-direction: column; gap: 14px" aria-label="Wzorzec z tym, co znaleźli agenci">
+<div style="display: flex; justify-content: space-between"><span class="lbl" style="color: #111111">Wzorzec</span><span class="lbl">0:20 · 9:16</span></div>
+<div style="position: relative; width: 300px; height: 533px">
+<img src="img/rank-wzorzec.jpg" alt="Klatka z filmu-wzorca" style="width: 300px; height: 533px; object-fit: cover; border-radius: 4px; display: block">
+<div class="box" style="left: 6px; top: 22px; width: 288px; height: 38px"><span>TYTUŁ</span></div>
+<div class="box" style="left: 25px; top: 127px; width: 68px; height: 70px"><span>OKIENKO</span></div>
+<div class="box" style="left: 105px; top: 90px; width: 180px; height: 190px"><span>OSOBA</span></div>
+<div class="box" style="left: 70px; top: 270px; width: 160px; height: 22px; border-color: #0007CB; outline-color: #0007CB"><span style="background: #0007CB">NAPISY</span></div>
+<div class="box" style="left: 4px; top: 312px; width: 292px; height: 216px"><span>TABELA S–D</span></div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 8px">
+<div style="display: flex; justify-content: space-between"><span class="lbl" style="color: #111111">Cięcia</span><span class="m" style="font-size: 13px">11 z ~16</span></div>
+<div style="position: relative; height: 32px; background: #FFFFFF; border: 1px solid #DEDBD6; border-radius: 4px; overflow: hidden">
+<span style="position: absolute; top: 5px; bottom: 5px; left: 6%; width: 2px; background: #111111"></span>
+<span style="position: absolute; top: 5px; bottom: 5px; left: 12%; width: 2px; background: #111111"></span>
+<span style="position: absolute; top: 5px; bottom: 5px; left: 17%; width: 2px; background: #111111"></span>
+<span style="position: absolute; top: 5px; bottom: 5px; left: 24%; width: 2px; background: #111111"></span>
+<span style="position: absolute; top: 5px; bottom: 5px; left: 29%; width: 2px; background: #111111"></span>
+<span style="position: absolute; top: 5px; bottom: 5px; left: 35%; width: 2px; background: #111111"></span>
+<span style="position: absolute; top: 5px; bottom: 5px; left: 41%; width: 2px; background: #111111"></span>
+<span style="position: absolute; top: 5px; bottom: 5px; left: 46%; width: 2px; background: #111111"></span>
+<span style="position: absolute; top: 5px; bottom: 5px; left: 52%; width: 2px; background: #111111"></span>
+<span style="position: absolute; top: 5px; bottom: 5px; left: 58%; width: 2px; background: #111111"></span>
+<span style="position: absolute; top: 5px; bottom: 5px; left: 63%; width: 2px; background: #111111"></span>
+<span style="position: absolute; top: 0; bottom: 0; left: 66%; width: 2px; background: #0007CB"></span>
+</div>
+<p style="font-size: 13.5px; color: #414141">Ramki pojawiają się, gdy agent coś znajdzie. Kliknij ramkę, aby zobaczyć, kto ją dodał.</p>
+</div>
+</section>
+
+<div style="display: flex; flex-direction: column; gap: 40px">
+<section style="display: flex; flex-direction: column; gap: 16px">
+<div style="display: flex; justify-content: space-between; align-items: baseline"><h2 class="d" style="font-size: 32px">Analitycy</h2><span class="lbl">5 pracuje równolegle · 3 skończyło</span></div>
+<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px">
+
+<article class="card ag">
+<div class="ag-h"><span class="av" style="background: #111111; color: #FFFFFF">KA</span><div style="display: flex; flex-direction: column; flex-grow: 1"><b style="font-size: 17px">Kadr i układ</b><span style="font-size: 14px; color: #585858">gdzie co stoi w kadrze</span></div><span class="chip c-ok">Gotowe</span></div>
+<p class="serif" style="font-size: 19px; line-height: 1.4; color: #111111">5 stref: tytuł u góry, mówiąca osoba, okienko z twarzą kandydata, napisy na styku i tabela S–D w dolnej połowie.</p>
+<div class="ag-f"><span class="m">18 s</span><span class="m">0,004 USD</span></div>
+</article>
+
+<article class="card ag">
+<div class="ag-h"><span class="av" style="background: #111111; color: #FFFFFF">NA</span><div style="display: flex; flex-direction: column; flex-grow: 1"><b style="font-size: 17px">Styl napisów</b><span style="font-size: 14px; color: #585858">krój, grubość, rytm</span></div><span class="chip c-ok">Gotowe</span></div>
+<div style="height: 88px; background: #3A3E4A; border-radius: 4px; display: flex; align-items: center; justify-content: center"><span style="font: 900 34px 'Helvetica Neue', Arial, sans-serif; color: #FFFFFF; -webkit-text-stroke: 1.5px #000000; paint-order: stroke fill; white-space: nowrap">hair gel than</span></div>
+<div style="display: flex; flex-wrap: wrap; gap: 6px"><span class="det">najgrubszy krój</span><span class="det">biały + czarny obrys</span><span class="det">3 słowa na raz</span></div>
+<div class="ag-f"><span class="m">22 s</span><span class="m">0,003 USD</span></div>
+</article>
+
+<article class="card ag" style="border-color: #111111">
+<div class="ag-h"><span class="av" style="background: #FFFFFF; color: #111111; border: 1px solid #111111">MO</span><div style="display: flex; flex-direction: column; flex-grow: 1"><b style="font-size: 17px">Rytm montażu</b><span style="font-size: 14px; color: #585858">cięcia i tempo</span></div><span class="chip c-run"><span class="dot live"></span>Pracuje</span></div>
+<p class="shim" style="font-size: 18px">Liczę cięcia klatka po klatce…</p>
+<div style="display: flex; flex-direction: column; gap: 8px">
+<div style="height: 6px; background: #F1EEE9; border-radius: 2px; overflow: hidden"><div style="width: 69%; height: 6px; background: #111111"></div></div>
+<div style="display: flex; justify-content: space-between; font-size: 15px"><span><b>11</b> z ~16 cięć</span><span>średnio co <b>1,2 s</b></span></div>
+</div>
+<div class="ag-f"><span class="m">41 s…</span><span class="m">0,004 USD</span></div>
+</article>
+
+<article class="card ag" style="border-color: #111111">
+<div class="ag-h"><span class="av" style="background: #FFFFFF; color: #111111; border: 1px solid #111111">OP</span><div style="display: flex; flex-direction: column; flex-grow: 1"><b style="font-size: 17px">Konstrukcja opowieści</b><span style="font-size: 14px; color: #585858">co widz słyszy i kiedy</span></div><span class="chip c-run"><span class="dot live"></span>Pracuje</span></div>
+<p class="shim" style="font-size: 18px">Słucham mowy i dzielę ją na części…</p>
+<ol style="list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px">
+<li style="padding: 10px; background: #111111; color: #FFFFFF; border-radius: 4px; display: flex; flex-direction: column; gap: 4px"><span class="m" style="font-size: 10.5px; letter-spacing: .08em">HAK</span><span style="font-size: 13.5px">tytuł + werdykt</span></li>
+<li style="padding: 10px; background: #111111; color: #FFFFFF; border-radius: 4px; display: flex; flex-direction: column; gap: 4px"><span class="m" style="font-size: 10.5px; letter-spacing: .08em">KONTEKST</span><span style="font-size: 13.5px">pusta tabela</span></li>
+<li style="padding: 10px; border: 1px dashed #111111; border-radius: 4px; display: flex; flex-direction: column; gap: 4px"><span class="m" style="font-size: 10.5px; letter-spacing: .08em">DOWODY</span><span style="font-size: 13.5px">×4 na razie</span></li>
+<li style="padding: 10px; border: 1px dashed #B8B8B8; border-radius: 4px; display: flex; flex-direction: column; gap: 4px; color: #585858"><span class="m" style="font-size: 10.5px; letter-spacing: .08em">PUENTA</span><span style="font-size: 13.5px">jeszcze nie</span></li>
+</ol>
+<div class="ag-f"><span class="m">39 s…</span><span class="m">0,005 USD</span></div>
+</article>
+
+<article class="card ag">
+<div class="ag-h"><span class="av" style="background: #111111; color: #FFFFFF">DE</span><div style="display: flex; flex-direction: column; flex-grow: 1"><b style="font-size: 17px">Spis detali</b><span style="font-size: 14px; color: #585858">drobiazgi, które robią styl</span></div><span class="chip c-ok">Gotowe</span></div>
+<div style="display: flex; flex-wrap: wrap; gap: 6px"><span class="det">emoji w tytule</span><span class="det">okienko z twarzą ×7</span><span class="det">zdjęcia w tabeli</span><span class="det">wycinki memów</span><span class="det">mikrofon w kadrze</span></div>
+<div class="ag-f"><span class="m">25 s</span><span class="m">0,003 USD</span></div>
+</article>
+
+<article class="ag" style="border: 1px dashed #B8B8B8; border-radius: 4px; background: #FAF9F6">
+<div class="ag-h"><span class="av" style="border: 1px dashed #888888; color: #414141">RE</span><div style="display: flex; flex-direction: column; flex-grow: 1"><b style="font-size: 17px">Reżyser</b><span style="font-size: 14px; color: #585858">składa szablon z wyników</span></div><span class="chip c-free">Czeka na 2</span></div>
+<p style="font-size: 15px; color: #414141">Zacznie, gdy skończą montaż i opowieść. Potem krytyk porówna podgląd ze wzorcem — najwyżej 3 rundy, limit na dyskusję 0,09 USD.</p>
+</article>
+</div>
+</section>
+
+<section class="card" style="display: flex; flex-direction: column">
+<div style="display: flex; justify-content: space-between; align-items: center; padding: 18px 24px; border-bottom: 1px solid #DEDBD6"><h2 style="font-size: 17px; font-weight: 500; display: flex; align-items: center; gap: 10px"><span class="dot live" style="color: #0007CB"></span>Na żywo</h2><span class="lbl">po polsku · skrót</span></div>
+<ol style="list-style: none; margin: 0; padding: 24px; display: flex; flex-direction: column; gap: 18px">
+<li class="msg"><span class="av" style="background: #F1EEE9; color: #414141">ST</span><div class="bub"><div class="who"><b>Studio</b><span class="m mut" style="font-size: 12px">10:36:02</span></div><p style="font-size: 15px; color: #414141">Pobrano wzorzec: 0:20, pion 1080×1920. Bez opłat.</p></div></li>
+<li class="msg"><span class="av" style="background: #111111; color: #FFFFFF">KA</span><div class="bub"><div class="who"><b>Kadr</b><span class="m mut" style="font-size: 12px">10:36:05</span></div><p style="font-size: 15px">Tabela zajmuje całą dolną połowę i nie znika — to stały element.</p></div></li>
+<li class="msg"><span class="av" style="background: #111111; color: #FFFFFF">NA</span><div class="bub"><div class="who"><b>Napisy</b><span class="m mut" style="font-size: 12px">10:36:09</span></div><p style="font-size: 15px">Krój bardzo gruby, biały z czarnym obrysem. Po 3 słowa.</p></div></li>
+<li class="msg"><span class="av" style="background: #111111; color: #FFFFFF">DE</span><div class="bub"><div class="who"><b>Detale</b><span class="m mut" style="font-size: 12px">10:36:14</span></div><p style="font-size: 15px">Okienko z twarzą kandydata wraca przy każdym nazwisku — 7 razy.</p></div></li>
+<li class="msg"><span class="av" style="background: #FFFFFF; color: #111111; border: 1px solid #111111">MO</span><div class="bub"><div class="who"><b>Montaż</b><span class="m mut" style="font-size: 12px">10:36:31</span></div><p style="font-size: 15px">Cięcia co ~1,2 s, szybciej przy werdyktach.</p></div></li>
+<li class="msg"><span class="av" style="background: #FFFFFF; color: #111111; border: 1px solid #111111">OP</span><div class="bub"><div class="who"><b>Opowieść</b><span class="m mut" style="font-size: 12px">10:36:40</span></div><p style="font-size: 15px">Hak to tytuł i pierwszy werdykt w ciągu 2 s.</p></div></li>
+<li class="msg"><span class="av" style="background: #FFFFFF; color: #111111; border: 1px solid #111111">OP</span><div class="bub" style="justify-content: center"><span style="display: flex; gap: 4px; align-items: center; height: 22px" aria-label="Opowieść pisze"><span class="tdot"></span><span class="tdot" style="animation-delay: .2s"></span><span class="tdot" style="animation-delay: .4s"></span></span></div></li>
+</ol>
+<form style="border-top: 1px solid #DEDBD6; padding: 16px 24px; display: flex; gap: 12px; align-items: end">
+<div style="display: flex; flex-direction: column; gap: 8px; flex-grow: 1"><label for="note" class="lbl" style="color: #111111">Uwaga dla reżysera, zanim zacznie</label><input id="note" class="field" placeholder="np. prezenter ma być duży, jak we wzorcu"></div>
+<button type="submit" class="btn b-pri">Wyślij</button>
+</form>
+</section>
+</div>
+</div>
+</main>
+</div>
+</body>
+</html>

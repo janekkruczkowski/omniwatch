@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<title>Agent się zatrzymał — telefon</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500&amp;family=Geist+Mono:wght@400;500&amp;family=Newsreader:opsz,wght@6..72,300;6..72,400&amp;display=swap">
+<style>
+body{margin:0;background:#FAF9F6;color:#111111;font-family:'Geist',system-ui,sans-serif;font-size:14px;line-height:1.45;letter-spacing:-0.005em;-webkit-font-smoothing:antialiased}
+*{box-sizing:border-box}
+a{color:#111111}a:hover{color:#0007CB}
+h1,h2,h3,p{margin:0}
+b,strong{font-weight:500}
+.d{font-family:'Geist',system-ui,sans-serif;font-weight:300;letter-spacing:-0.035em}
+.m{font-family:'Geist Mono',ui-monospace,monospace;font-variant-numeric:tabular-nums;letter-spacing:0}
+.mut{color:#585858}
+.lbl{font-family:'Geist Mono',ui-monospace,monospace;font-size:11px;font-weight:400;letter-spacing:.1em;text-transform:uppercase;color:#585858}
+.serif{font-family:'Newsreader',Georgia,serif;font-weight:300;letter-spacing:-0.01em}
+.card{background:#FFFFFF;border:1px solid #DEDBD6;border-radius:4px}
+.chip{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 8px;border-radius:4px;font-family:'Geist Mono',ui-monospace,monospace;font-size:11px;font-weight:400;letter-spacing:.08em;text-transform:uppercase;white-space:nowrap;border:1px solid transparent}
+.c-you{background:#0007CB;color:#FFFFFF}
+.c-ok{background:transparent;color:#2F6B4F;border-color:#BCD3C4}
+.c-bad{background:#F6E3DF;color:#A3261B}
+.c-run{background:transparent;color:#111111;border-color:#D3CEC6}
+.c-pay{background:#F3E9D2;color:#6B4A0E}
+.c-free{background:#F1EEE9;color:#585858}
+.dot{width:6px;height:6px;border-radius:50%;background:currentColor;display:inline-block}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;padding:0 16px;border-radius:4px;font:400 14px/1 'Geist',sans-serif;border:1px solid transparent;cursor:pointer;text-decoration:none;white-space:nowrap}
+.b-pri{background:#000000;color:#FFFFFF}.b-pri:hover{background:#111111;color:#FFFFFF}
+.b-sec{background:#FFFFFF;color:#111111;border-color:#111111}
+.b-dng{background:transparent;color:#A3261B;border-color:#E3C4BE}
+.ico{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+.nav{padding:20px 2px;margin:0 10px;text-decoration:none;color:#888888;font-weight:400}.nav.on{color:#111111;box-shadow:inset 0 -2px 0 #111111}
+.field{height:44px;border:1px solid #DEDBD6;border-radius:4px;background:#FFFFFF;padding:0 14px;font:inherit;color:#111111;width:100%}
+.seg{display:flex;border:1px solid #DEDBD6;border-radius:4px;background:#FFFFFF;overflow:hidden}.seg label{flex:1;display:flex;align-items:center;justify-content:center;height:42px;font-size:13px;color:#585858;cursor:pointer;white-space:nowrap;padding:0 8px;border-left:1px solid #DEDBD6}.seg label:first-child{border-left:0}.seg .on{background:#111111;color:#FFFFFF}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+summary{cursor:pointer;list-style:none}summary::-webkit-details-marker{display:none}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+@keyframes shim{0%{background-position:200% 0}100%{background-position:-200% 0}}
+.live{animation:pulse 1.4s ease-in-out infinite}
+.shim{background:linear-gradient(90deg,#111111 0%,#111111 40%,#B8B8B8 50%,#111111 60%,#111111 100%);background-size:200% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;animation:shim 2.2s linear infinite}
+.pb{display:grid;grid-template-columns:28px minmax(0,1fr);gap:12px;padding:12px 0;border-top:1px solid #F1EEE9;font-size:14.5px}
+.pn{width:28px;height:28px;border-radius:50%;background:#F6E3DF;color:#A3261B;display:flex;align-items:center;justify-content:center;font-weight:500;font-size:13px}
+</style>
+</head>
+<body>
+<div style="width: 390px; height: 1180px; background: #FAF9F6">
+<header style="height: 56px; display: flex; align-items: center; gap: 8px; padding: 0 8px; border-bottom: 1px solid #DEDBD6">
+<a href="M-Start.html" aria-label="Wróć do projektów" style="width: 44px; height: 44px; display: flex; align-items: center; justify-content: center"><svg class="ico" style="width: 22px; height: 22px" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"></path></svg></a>
+<span style="font-weight: 500">Julian — historia</span>
+</header>
+<main style="padding: 16px 16px 40px; display: flex; flex-direction: column; gap: 16px">
+<section class="card" style="padding: 16px; display: flex; flex-direction: column; gap: 8px; border: 1px solid #E3C4BE">
+<span class="chip c-bad" style="align-self: flex-start"><svg class="ico" style="width: 13px; height: 13px" viewBox="0 0 24 24"><path d="M12 3l10 18H2z"></path><path d="M12 10v4M12 17.5v.5"></path></svg>Agent się zatrzymał</span>
+<p style="font-size: 16px">Kontrola nie przeszła w <b>2 punktach</b>. Głos i prezenter są już nagrane.</p>
+<div class="pb"><span class="pn">1</span><p><b>Napisy zasłaniają twarz</b> <span class="mut">w 0:12–0:15</span></p></div>
+<div class="pb"><span class="pn">2</span><p><b>Film ma 47 s</b> <span class="mut">— limit 40 s</span></p></div>
+<div class="pb"><span class="pn" style="background: #F1EEE9; color: #414141">i</span><p class="mut">Brak oceny krytyka — nie blokuje.</p></div>
+</section>
+<section style="display: flex; flex-direction: column; gap: 10px">
+<h2 class="d" style="font-size: 22px">Co robimy?</h2>
+<div class="card" style="padding: 16px; display: flex; flex-direction: column; gap: 8px; border: 1px solid #111111">
+<span class="lbl" style="color: #2F6B4F">Polecane</span>
+<b style="font-size: 16px">Popraw i złóż ponownie</b>
+<p class="mut" style="font-size: 13.5px">Bez nowych zakupów · ok. 0,02 USD · ~2 min</p>
+<button type="button" class="btn b-pri">Popraw</button>
+</div>
+<div class="card" style="padding: 16px; display: flex; flex-direction: column; gap: 8px">
+<b style="font-size: 16px">Zaakceptuj mimo to</b>
+<p class="mut" style="font-size: 13.5px">Film taki, jaki jest.</p>
+<button type="button" class="btn b-sec">Zaakceptuj</button>
+</div>
+<div class="card" style="padding: 16px; display: flex; flex-direction: column; gap: 8px">
+<b style="font-size: 16px">Porzuć projekt</b>
+<p class="mut" style="font-size: 13.5px">Wydane 0,64 USD nie wracają.</p>
+<button type="button" class="btn b-dng">Porzuć</button>
+</div>
+</section>
+</main>
+</div>
+</body>
+</html>

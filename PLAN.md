@@ -1,5 +1,9 @@
 # Plan równoległej pracy agentów
 
+> **Dokument historyczny — oznaczono 2026-09-22.** Aktualny stan: [STAN.md](agent-os-module/docs/STAN.md).
+> Odłożony szkic techniczny (priorytety nieuzgodnione): [ZADANIA.md](agent-os-module/docs/ZADANIA.md).
+> Poniższe otwarte zadania i wyniki opisują moment powstania dokumentu.
+
 Stan na 2026-09-20, po sesji, w której powstał skan kanału. Ten dokument istnieje po to,
 żeby po kompakcie sesji dało się rozdać zadania agentom bez czytania całej historii.
 

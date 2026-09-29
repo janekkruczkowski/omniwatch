@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<title>Studio — start</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500&amp;family=Geist+Mono:wght@400;500&amp;family=Newsreader:opsz,wght@6..72,300;6..72,400&amp;display=swap">
+<style>
+body{margin:0;background:#FAF9F6;color:#111111;font-family:'Geist',system-ui,sans-serif;font-size:14px;line-height:1.45;letter-spacing:-0.005em;-webkit-font-smoothing:antialiased}
+*{box-sizing:border-box}
+a{color:#111111}a:hover{color:#0007CB}
+h1,h2,h3,p{margin:0}
+b,strong{font-weight:500}
+.d{font-family:'Geist',system-ui,sans-serif;font-weight:300;letter-spacing:-0.035em}
+.m{font-family:'Geist Mono',ui-monospace,monospace;font-variant-numeric:tabular-nums;letter-spacing:0}
+.mut{color:#585858}
+.lbl{font-family:'Geist Mono',ui-monospace,monospace;font-size:11px;font-weight:400;letter-spacing:.1em;text-transform:uppercase;color:#585858}
+.serif{font-family:'Newsreader',Georgia,serif;font-weight:300;letter-spacing:-0.01em}
+.card{background:#FFFFFF;border:1px solid #DEDBD6;border-radius:4px}
+.chip{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 8px;border-radius:4px;font-family:'Geist Mono',ui-monospace,monospace;font-size:11px;font-weight:400;letter-spacing:.08em;text-transform:uppercase;white-space:nowrap;border:1px solid transparent}
+.c-you{background:#0007CB;color:#FFFFFF}
+.c-ok{background:transparent;color:#2F6B4F;border-color:#BCD3C4}
+.c-bad{background:#F6E3DF;color:#A3261B}
+.c-run{background:transparent;color:#111111;border-color:#D3CEC6}
+.c-pay{background:#F3E9D2;color:#6B4A0E}
+.c-free{background:#F1EEE9;color:#585858}
+.dot{width:6px;height:6px;border-radius:50%;background:currentColor;display:inline-block}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;padding:0 16px;border-radius:4px;font:400 14px/1 'Geist',sans-serif;border:1px solid transparent;cursor:pointer;text-decoration:none;white-space:nowrap}
+.b-pri{background:#000000;color:#FFFFFF}.b-pri:hover{background:#111111;color:#FFFFFF}
+.b-sec{background:#FFFFFF;color:#111111;border-color:#111111}
+.b-dng{background:transparent;color:#A3261B;border-color:#E3C4BE}
+.ico{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+.nav{padding:20px 2px;margin:0 10px;text-decoration:none;color:#888888;font-weight:400}.nav.on{color:#111111;box-shadow:inset 0 -2px 0 #111111}
+.field{height:44px;border:1px solid #DEDBD6;border-radius:4px;background:#FFFFFF;padding:0 14px;font:inherit;color:#111111;width:100%}
+.seg{display:flex;border:1px solid #DEDBD6;border-radius:4px;background:#FFFFFF;overflow:hidden}.seg label{flex:1;display:flex;align-items:center;justify-content:center;height:42px;font-size:13px;color:#585858;cursor:pointer;white-space:nowrap;padding:0 8px;border-left:1px solid #DEDBD6}.seg label:first-child{border-left:0}.seg .on{background:#111111;color:#FFFFFF}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+summary{cursor:pointer;list-style:none}summary::-webkit-details-marker{display:none}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+@keyframes shim{0%{background-position:200% 0}100%{background-position:-200% 0}}
+.live{animation:pulse 1.4s ease-in-out infinite}
+.shim{background:linear-gradient(90deg,#111111 0%,#111111 40%,#B8B8B8 50%,#111111 60%,#111111 100%);background-size:200% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;animation:shim 2.2s linear infinite}
+.thumb{width:72px;height:128px;border-radius:4px;object-fit:cover;background:#111111;flex-shrink:0}
+.prow{display:grid;grid-template-columns:minmax(0,1fr) 110px 190px 100px 90px;align-items:center;gap:16px;padding:14px 20px;border-top:1px solid #F1EEE9;text-decoration:none;color:#111111}
+.prow:hover{background:#F1EEE9}
+</style>
+</head>
+<body>
+<div style="width: 1440px; height: 1800px; background: #FAF9F6">
+<header style="height: 64px; display: flex; align-items: center; justify-content: space-between; padding: 0 64px; border-bottom: 1px solid #DEDBD6">
+<div style="display: flex; align-items: center; gap: 40px">
+<a href="Main.html" class="d" style="font-size: 24px; text-decoration: none">Studio<span style="color: #0007CB">.</span></a>
+<nav style="display: flex; gap: 4px" aria-label="Główne">
+<a class="nav on" href="Main.html">Projekty</a>
+<a class="nav" href="#szablony">Szablony</a>
+<a class="nav" href="Shorty.html">Shorty</a><a class="nav" href="JakToDziala.html">Jak to działa</a>
+</nav>
+</div>
+<div style="display: flex; align-items: center; gap: 14px">
+<span class="mut">Wydano we wrześniu</span><span class="m" style="font-weight: 500">4,82 USD</span>
+<span style="width: 36px; height: 36px; border-radius: 50%; background: #111111; color: #FAF9F6; display: flex; align-items: center; justify-content: center; font-weight: 500; font-size: 13px">JK</span>
+</div>
+</header>
+
+<main style="padding: 48px 120px 80px; display: flex; flex-direction: column; gap: 56px">
+<aside style="background: #F1EEE9; border-radius: 4px; padding: 16px 20px; display: flex; align-items: center; gap: 16px; margin-bottom: -24px">
+<span class="chip" style="background: #111111; color: #FFFFFF">Pierwszy raz?</span>
+<p style="font-size: 15px; flex-grow: 1">Zobacz, kim są reżyser, krytyk i reszta ekipy — i co robisz Ty, od wrzucenia filmu do gotowego MP4.</p>
+<a href="JakToDziala.html" style="font-size: 14px; white-space: nowrap">Jak to działa →</a>
+<button type="button" aria-label="Zamknij" style="width: 44px; height: 44px; border: 0; background: transparent; display: flex; align-items: center; justify-content: center; cursor: pointer"><svg class="ico" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
+</aside>
+<section style="display: flex; flex-direction: column; gap: 24px">
+<div style="display: flex; align-items: flex-end; justify-content: space-between">
+<div style="display: flex; flex-direction: column; gap: 8px">
+<h1 class="d" style="font-size: 56px; line-height: 1">3 projekty czekają na Ciebie</h1>
+<p class="mut" style="font-size: 16px">Agenci skończyli swoją część. Reszta idzie sama — 2 projekty są w produkcji.</p>
+</div>
+<div style="display: flex; flex-direction: column; gap: 8px; align-items: flex-end"><a href="Analiza.html" class="chip c-run" style="text-decoration: none"><span class="dot live"></span>Ranking z TikToka — 5 agentów analizuje wzorzec</a><a href="WToku.html" class="chip c-run" style="text-decoration: none"><span class="dot live"></span>Demo SaaS — montaż, ok. 4 min</a></div>
+</div>
+
+<div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px">
+<article class="card" style="padding: 16px; display: flex; gap: 16px">
+<img class="thumb" src="img/rank-podglad.jpg" alt="Podgląd szablonu rankingu">
+<div style="display: flex; flex-direction: column; gap: 8px; flex-grow: 1; min-width: 0">
+<span class="chip c-you" style="align-self: flex-start"><span class="dot"></span>Akceptacja szablonu</span>
+<h2 class="d" style="font-size: 20px">Ranking piłkarzy</h2>
+<p style="font-size: 13.5px">Agenci nie zgodzili się w 1 sprawie — rozstrzygnij.</p>
+<p class="m mut" style="font-size: 12px">czeka 19 min · 0,11 USD</p>
+<a href="Szablon.html" class="btn b-pri" style="margin-top: auto; align-self: flex-start; min-height: 40px">Zdecyduj<svg class="ico" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"></path></svg></a>
+</div>
+</article>
+<article class="card" style="padding: 16px; display: flex; gap: 16px">
+<img class="thumb" src="img/film-0.jpg" alt="Klatka z filmu Qwen demo">
+<div style="display: flex; flex-direction: column; gap: 8px; flex-grow: 1; min-width: 0">
+<span class="chip c-you" style="align-self: flex-start"><span class="dot"></span>Akceptacja treści</span>
+<h2 class="d" style="font-size: 20px">Qwen demo — wersja 2</h2>
+<p style="font-size: 13.5px">Scenariusz na 34 s gotowy. Zatwierdzenie: <b>0,73 USD</b>.</p>
+<p class="m mut" style="font-size: 12px">czeka 6 min · 0,19 USD</p>
+<a href="Tresc.html" class="btn b-pri" style="margin-top: auto; align-self: flex-start; min-height: 40px">Zdecyduj<svg class="ico" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"></path></svg></a>
+</div>
+</article>
+<article class="card" style="padding: 16px; display: flex; gap: 16px; border-color: #E3C4BE">
+<img class="thumb" src="img/przed-1.jpg" alt="Klatka z problemem">
+<div style="display: flex; flex-direction: column; gap: 8px; flex-grow: 1; min-width: 0">
+<span class="chip c-bad" style="align-self: flex-start"><svg class="ico" style="width: 13px; height: 13px" viewBox="0 0 24 24"><path d="M12 3l10 18H2z"></path><path d="M12 10v4M12 17.5v.5"></path></svg>Agent się zatrzymał</span>
+<h2 class="d" style="font-size: 20px">Julian — historia</h2>
+<p style="font-size: 13.5px">Kontrola nie przeszła w 2 punktach.</p>
+<p class="m mut" style="font-size: 12px">czeka 1 h · 0,64 USD</p>
+<a href="Zatrzymany.html" class="btn b-pri" style="margin-top: auto; align-self: flex-start; min-height: 40px">Zobacz<svg class="ico" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"></path></svg></a>
+</div>
+</article>
+</div>
+</section>
+
+<section style="display: flex; flex-direction: column; gap: 20px">
+<h2 class="d" style="font-size: 26px">Zacznij coś nowego</h2>
+<div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px">
+<button type="button" class="card" aria-pressed="true" style="padding: 20px; display: flex; gap: 14px; text-align: left; font: inherit; cursor: pointer; border: 1px solid #111111; background: #FFFFFF">
+<span style="width: 44px; height: 44px; border-radius: 4px; background: #111111; color: #FAF9F6; display: flex; align-items: center; justify-content: center"><svg class="ico" style="width: 20px; height: 20px" viewBox="0 0 24 24"><path d="M12 3l9 5-9 5-9-5z"></path><path d="M3 13l9 5 9-5"></path></svg></span>
+<span style="display: flex; flex-direction: column; gap: 4px"><span style="font-weight: 500; font-size: 16px">Nowy szablon z wzorca</span><span class="mut" style="font-size: 13px">Wrzuć film, którego styl chcesz powtórzyć.</span><span class="m mut" style="font-size: 12px">ok. 0,03–0,05 USD · 2–10 min</span></span>
+</button>
+<button type="button" class="card" aria-pressed="false" style="padding: 20px; display: flex; gap: 14px; text-align: left; font: inherit; cursor: pointer; background: #FFFFFF">
+<span style="width: 44px; height: 44px; border-radius: 4px; background: #F1EEE9; display: flex; align-items: center; justify-content: center"><svg class="ico" style="width: 20px; height: 20px" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M7 4v16M17 4v16M3 9h4M3 15h4M17 9h4M17 15h4"></path></svg></span>
+<span style="display: flex; flex-direction: column; gap: 4px"><span style="font-weight: 500; font-size: 16px">Nowy film z szablonu</span><span class="mut" style="font-size: 13px">Szablon + Twój materiał = gotowy film.</span><span class="m mut" style="font-size: 12px">płatne: głos i prezenter, pytamy przed</span></span>
+</button>
+<a href="Shorty.html" class="card" style="padding: 20px; display: flex; gap: 14px; text-decoration: none; color: #111111">
+<span style="width: 44px; height: 44px; border-radius: 4px; background: #F1EEE9; display: flex; align-items: center; justify-content: center"><svg class="ico" style="width: 20px; height: 20px" viewBox="0 0 24 24"><circle cx="6" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><path d="M8.5 7.5L20 18M8.5 16.5L20 6"></path></svg></span>
+<span style="display: flex; flex-direction: column; gap: 4px"><span style="font-weight: 500; font-size: 16px">Shorty z długiego filmu</span><span class="mut" style="font-size: 13px">Podcast albo wywiad → 2–4 pionowe klipy.</span><span class="m mut" style="font-size: 12px">do 0,30 USD · limit ustawiasz Ty</span></span>
+</a>
+</div>
+
+<form class="card" style="padding: 28px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px 32px">
+<div style="grid-column: span 2; display: flex; gap: 16px; align-items: stretch">
+<div style="flex-grow: 1; border: 1.5px dashed #B8B8B8; border-radius: 4px; display: flex; align-items: center; gap: 16px; padding: 18px 20px; background: #F1EEE9">
+<svg class="ico" style="width: 24px; height: 24px" viewBox="0 0 24 24"><path d="M12 20V8M6 14l6-6 6 6M4 4h16"></path></svg>
+<div style="display: flex; flex-direction: column"><span style="font-weight: 500">Upuść film-wzorzec (MP4)</span><span class="mut" style="font-size: 13px">albo <u>wybierz z dysku</u></span></div>
+</div>
+<div style="width: 460px; display: flex; flex-direction: column; gap: 6px; justify-content: center">
+<label for="wz-link" style="font-weight: 500">…albo wklej link</label>
+<input id="wz-link" class="field" placeholder="youtube.com/shorts/… · tiktok.com/…">
+<span class="mut" style="font-size: 12px">Pobieranie jest bezpłatne.</span>
+</div>
+</div>
+<fieldset style="border: 0; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px">
+<legend style="font-weight: 500; margin-bottom: 8px">Kadr</legend>
+<div class="seg">
+<label><input class="sr" type="radio" name="kadr">9:16 pion</label>
+<label><input class="sr" type="radio" name="kadr">16:9 poziom</label>
+<label class="on"><input class="sr" type="radio" name="kadr" checked="">Jak wzorzec</label>
+</div>
+</fieldset>
+<fieldset style="border: 0; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px">
+<legend style="font-weight: 500; margin-bottom: 8px">Prezenter AI w kadrze</legend>
+<div class="seg">
+<label class="on"><input class="sr" type="radio" name="prez" checked="">Tak</label>
+<label><input class="sr" type="radio" name="prez">Nie</label>
+</div>
+<span class="mut" style="font-size: 12px">Płatny przy każdym filmie: ok. 1 USD za minutę.</span>
+</fieldset>
+<div style="display: flex; flex-direction: column; gap: 6px">
+<label for="wz-kto" style="font-weight: 500">Dla kogo <span class="mut" style="font-weight: 400">(opcjonalnie)</span></label>
+<input id="wz-kto" class="field" placeholder="np. dla starszych widzów">
+</div>
+<div style="display: flex; flex-direction: column; gap: 6px">
+<label for="wz-cel" style="font-weight: 500">Cel albo marka <span class="mut" style="font-weight: 400">(opcjonalnie)</span></label>
+<input id="wz-cel" class="field" placeholder="np. marka korporacyjna, zapisy na demo">
+</div>
+<div style="grid-column: span 2; display: flex; align-items: center; justify-content: space-between; border-top: 1px solid #F1EEE9; padding-top: 20px">
+<p class="mut">Reżyser zbuduje szablon, krytyk go sprawdzi. Ty zatwierdzasz z podglądu. <span class="m" style="color: #111111">ok. 0,03–0,05 USD</span></p>
+<button type="submit" class="btn b-pri">Zbuduj szablon</button>
+</div>
+</form>
+</section>
+
+<section style="display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 32px">
+<div style="display: flex; flex-direction: column; gap: 16px">
+<h2 class="d" style="font-size: 26px">Wszystkie projekty</h2>
+<div class="card" style="overflow: hidden">
+<div class="prow lbl" style="border-top: 0; padding-top: 12px; padding-bottom: 12px"><span>Nazwa</span><span>Rodzaj</span><span>Stan</span><span style="text-align: right">Koszt</span><span style="text-align: right">Zmiana</span></div>
+<a class="prow" href="Szablon.html"><span style="font-weight: 500">Ranking piłkarzy</span><span class="mut">szablon</span><span><span class="chip c-you"><span class="dot"></span>Czeka na Ciebie</span></span><span class="m" style="text-align: right">0,11 USD</span><span class="m mut" style="text-align: right">10:40</span></a>
+<a class="prow" href="Tresc.html"><span style="font-weight: 500">Qwen demo — wersja 2</span><span class="mut">film</span><span><span class="chip c-you"><span class="dot"></span>Czeka na Ciebie</span></span><span class="m" style="text-align: right">0,19 USD</span><span class="m mut" style="text-align: right">10:34</span></a>
+<a class="prow" href="Zatrzymany.html"><span style="font-weight: 500">Julian — historia</span><span class="mut">film</span><span><span class="chip c-bad"><span class="dot"></span>Zatrzymany</span></span><span class="m" style="text-align: right">0,64 USD</span><span class="m mut" style="text-align: right">09:52</span></a>
+<a class="prow" href="Analiza.html"><span style="font-weight: 500">Ranking z TikToka</span><span class="mut">szablon</span><span><span class="chip c-run"><span class="dot live"></span>Analiza wzorca</span></span><span class="m" style="text-align: right">0,02 USD</span><span class="m mut" style="text-align: right">teraz</span></a>
+<a class="prow" href="WToku.html"><span style="font-weight: 500">Demo SaaS</span><span class="mut">film</span><span><span class="chip c-run"><span class="dot"></span>W toku · montaż</span></span><span class="m" style="text-align: right">1,04 USD</span><span class="m mut" style="text-align: right">teraz</span></a>
+<a class="prow" href="Film.html"><span style="font-weight: 500">Qwen demo — wersja 1</span><span class="mut">film</span><span><span class="chip c-ok"><span class="dot"></span>Gotowy</span></span><span class="m" style="text-align: right">0,79 USD</span><span class="m mut" style="text-align: right">wczoraj</span></a>
+<a class="prow" href="Shorty.html"><span style="font-weight: 500">Podcast o polityce</span><span class="mut">shorty</span><span><span class="chip c-ok"><span class="dot"></span>4 shorty</span></span><span class="m" style="text-align: right">0,21 USD</span><span class="m mut" style="text-align: right">wczoraj</span></a>
+</div>
+</div>
+<div id="szablony" style="display: flex; flex-direction: column; gap: 16px">
+<h2 class="d" style="font-size: 26px">Zapisane szablony</h2>
+<article class="card" style="padding: 14px; display: flex; gap: 14px">
+<img src="img/film-0.jpg" alt="" style="width: 60px; height: 107px; border-radius: 4px; object-fit: cover">
+<div style="display: flex; flex-direction: column; gap: 6px">
+<span style="font-weight: 500">Julian — historia i detale</span>
+<span style="display: flex; gap: 6px; flex-wrap: wrap"><span class="chip c-pay" style="height: 22px; font-size: 11.5px">prezenter</span><span class="chip c-pay" style="height: 22px; font-size: 11.5px">głos</span><span class="chip c-free" style="height: 22px; font-size: 11.5px">napisy, obraz</span></span>
+<a href="Tresc.html" style="font-weight: 500; font-size: 13px; margin-top: auto">Nowy film z tego szablonu →</a>
+</div>
+</article>
+<article class="card" style="padding: 14px; display: flex; gap: 14px">
+<img src="img/short-1.jpg" alt="" style="width: 60px; height: 107px; border-radius: 4px; object-fit: cover">
+<div style="display: flex; flex-direction: column; gap: 6px">
+<span style="font-weight: 500">Wywiad, dwie osoby</span>
+<span style="display: flex; gap: 6px; flex-wrap: wrap"><span class="chip c-free" style="height: 22px; font-size: 11.5px">bez opłat</span></span>
+<a href="#" style="font-weight: 500; font-size: 13px; margin-top: auto">Nowy film z tego szablonu →</a>
+</div>
+</article>
+</div>
+</section>
+</main>
+</div>
+</body>
+</html>

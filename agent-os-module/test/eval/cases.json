@@ -1,0 +1,75 @@
+{
+  "//": [
+    "The gate. Each case is a real film in the cache and a set of claims that must hold after",
+    "the pipeline has looked at it.",
+    "",
+    "The point of the set is that the films DISAGREE with each other. One has a tier board;",
+    "most do not. One is twenty seconds; one is twenty-one minutes. A pipeline that quietly",
+    "assumes the first film's shape passes on the first film and fails here, which is the only",
+    "place that failure is cheap.",
+    "",
+    "`expect.board` is the sharpest of these. It is false for every film that has no grid of",
+    "rows, and a run that reports rows anyway has invented the format it was told to measure."
+  ],
+  "cases": [
+    {
+      "id": "tier-list-9x16",
+      "source": "3acd67c83aff434a",
+      "what": "20s short-form ranking with a five-row tier board, inserts laid over it",
+      "seconds": 20,
+      "at": 8.5,
+      "expect": { "board": true, "rows": 5, "inserts": true, "shortForm": true }
+    },
+    {
+      "id": "talking-head-short",
+      "source": "t5c28Hsvr_8",
+      "what": "46s talking head about a tool — captions and screen inserts, no board at all",
+      "seconds": 46,
+      "at": 20,
+      "expect": { "board": false, "shortForm": true }
+    },
+    {
+      "id": "short-unknown",
+      "source": "e651548f49c09bad",
+      "what": "46s short-form clip, format not a ranking",
+      "seconds": 46,
+      "at": 20,
+      "expect": { "board": false, "shortForm": true }
+    },
+    {
+      "id": "explainer-2min",
+      "source": "cd1586216ebd2b03",
+      "what": "127s explainer with a presenter and screen capture",
+      "seconds": 127,
+      "at": 60,
+      "expect": { "board": false, "shortForm": false }
+    },
+    {
+      "id": "long-form-8min",
+      "source": "StKa9LhH_-k",
+      "what": "510s landscape video — the case where the job is to CUT, not to clone a format",
+      "seconds": 510,
+      "at": 200,
+      "expect": { "board": false, "shortForm": false },
+      "slow": true
+    },
+    {
+      "id": "long-form-16min",
+      "source": "ymgH8jS6Wb8",
+      "what": "967s review — same: a source to cut from, not a format to copy",
+      "seconds": 967,
+      "at": 400,
+      "expect": { "board": false, "shortForm": false },
+      "slow": true
+    },
+    {
+      "id": "long-form-21min",
+      "source": "Fz89dJTZsko",
+      "what": "1286s video — the longest thing the pipeline should survive being pointed at",
+      "seconds": 1286,
+      "at": 600,
+      "expect": { "board": false, "shortForm": false },
+      "slow": true
+    }
+  ]
+}

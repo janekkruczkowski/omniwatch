@@ -1,0 +1,155 @@
+{
+  "note": "Ground truth read from another project's authored source, for SCORING ONLY. Their words live here so our own extraction can be compared against them; nothing in this file is rendered, shipped, or used as our content.",
+  "source": "examples/ranking-football/reference-gpt.svml",
+  "segments": [
+    {
+      "id": "ronaldo",
+      "cues": [
+        "Ronaldo is D tier.",
+        "Bro has more",
+        "hair gel than trophies",
+        "at this point.",
+        "Built like",
+        "a Greek god,",
+        "plays like",
+        "a Greek tragedy.",
+        "But hey,",
+        "at least he's got",
+        "the most followers",
+        "on Instagram."
+      ],
+      "spans": [
+        {
+          "id": "hair-gel",
+          "from": 6,
+          "to": 13
+        },
+        {
+          "id": "trophy",
+          "from": 10,
+          "to": 13
+        },
+        {
+          "id": "greek-god",
+          "from": 16,
+          "to": 23
+        },
+        {
+          "id": "greek-tragedy",
+          "from": 21,
+          "to": 23
+        },
+        {
+          "id": "penaldo-social",
+          "from": 28,
+          "to": 34
+        }
+      ],
+      "words": [
+        "Ronaldo",
+        "is",
+        "D",
+        "tier.",
+        "Bro",
+        "has",
+        "more",
+        "hair",
+        "gel",
+        "than",
+        "trophies",
+        "at",
+        "this",
+        "point.",
+        "Built",
+        "like",
+        "a",
+        "Greek",
+        "god,",
+        "plays",
+        "like",
+        "a",
+        "Greek",
+        "tragedy.",
+        "But",
+        "hey,",
+        "at",
+        "least",
+        "he's",
+        "got",
+        "the",
+        "most",
+        "followers",
+        "on",
+        "Instagram."
+      ]
+    },
+    {
+      "id": "messi",
+      "cues": [
+        "Messi? Man won",
+        "a World Cup",
+        "looking like",
+        "somebody's tired dad.",
+        "Walks around",
+        "for 89 minutes,",
+        "touches the ball",
+        "three times,",
+        "and somehow",
+        "you just watched",
+        "a hat trick.",
+        "Definitely S tier."
+      ],
+      "spans": [
+        {
+          "id": "tired-dad",
+          "from": 6,
+          "to": 10
+        },
+        {
+          "id": "walks-around",
+          "from": 13,
+          "to": 28
+        },
+        {
+          "id": "hat-trick",
+          "from": 23,
+          "to": 28
+        }
+      ],
+      "words": [
+        "Messi?",
+        "Man",
+        "won",
+        "a",
+        "World",
+        "Cup",
+        "looking",
+        "like",
+        "somebody's",
+        "tired",
+        "dad.",
+        "Walks",
+        "around",
+        "for",
+        "89",
+        "minutes,",
+        "touches",
+        "the",
+        "ball",
+        "three",
+        "times,",
+        "and",
+        "somehow",
+        "you",
+        "just",
+        "watched",
+        "a",
+        "hat",
+        "trick.",
+        "Definitely",
+        "S",
+        "tier."
+      ]
+    }
+  ]
+}

@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<title>Shorty z długiego filmu</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500&amp;family=Geist+Mono:wght@400;500&amp;family=Newsreader:opsz,wght@6..72,300;6..72,400&amp;display=swap">
+<style>
+body{margin:0;background:#FAF9F6;color:#111111;font-family:'Geist',system-ui,sans-serif;font-size:14px;line-height:1.45;letter-spacing:-0.005em;-webkit-font-smoothing:antialiased}
+*{box-sizing:border-box}
+a{color:#111111}a:hover{color:#0007CB}
+h1,h2,h3,p{margin:0}
+b,strong{font-weight:500}
+.d{font-family:'Geist',system-ui,sans-serif;font-weight:300;letter-spacing:-0.035em}
+.m{font-family:'Geist Mono',ui-monospace,monospace;font-variant-numeric:tabular-nums;letter-spacing:0}
+.mut{color:#585858}
+.lbl{font-family:'Geist Mono',ui-monospace,monospace;font-size:11px;font-weight:400;letter-spacing:.1em;text-transform:uppercase;color:#585858}
+.serif{font-family:'Newsreader',Georgia,serif;font-weight:300;letter-spacing:-0.01em}
+.card{background:#FFFFFF;border:1px solid #DEDBD6;border-radius:4px}
+.chip{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 8px;border-radius:4px;font-family:'Geist Mono',ui-monospace,monospace;font-size:11px;font-weight:400;letter-spacing:.08em;text-transform:uppercase;white-space:nowrap;border:1px solid transparent}
+.c-you{background:#0007CB;color:#FFFFFF}
+.c-ok{background:transparent;color:#2F6B4F;border-color:#BCD3C4}
+.c-bad{background:#F6E3DF;color:#A3261B}
+.c-run{background:transparent;color:#111111;border-color:#D3CEC6}
+.c-pay{background:#F3E9D2;color:#6B4A0E}
+.c-free{background:#F1EEE9;color:#585858}
+.dot{width:6px;height:6px;border-radius:50%;background:currentColor;display:inline-block}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;padding:0 16px;border-radius:4px;font:400 14px/1 'Geist',sans-serif;border:1px solid transparent;cursor:pointer;text-decoration:none;white-space:nowrap}
+.b-pri{background:#000000;color:#FFFFFF}.b-pri:hover{background:#111111;color:#FFFFFF}
+.b-sec{background:#FFFFFF;color:#111111;border-color:#111111}
+.b-dng{background:transparent;color:#A3261B;border-color:#E3C4BE}
+.ico{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+.nav{padding:20px 2px;margin:0 10px;text-decoration:none;color:#888888;font-weight:400}.nav.on{color:#111111;box-shadow:inset 0 -2px 0 #111111}
+.field{height:44px;border:1px solid #DEDBD6;border-radius:4px;background:#FFFFFF;padding:0 14px;font:inherit;color:#111111;width:100%}
+.seg{display:flex;border:1px solid #DEDBD6;border-radius:4px;background:#FFFFFF;overflow:hidden}.seg label{flex:1;display:flex;align-items:center;justify-content:center;height:42px;font-size:13px;color:#585858;cursor:pointer;white-space:nowrap;padding:0 8px;border-left:1px solid #DEDBD6}.seg label:first-child{border-left:0}.seg .on{background:#111111;color:#FFFFFF}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+summary{cursor:pointer;list-style:none}summary::-webkit-details-marker{display:none}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+@keyframes shim{0%{background-position:200% 0}100%{background-position:-200% 0}}
+.live{animation:pulse 1.4s ease-in-out infinite}
+.shim{background:linear-gradient(90deg,#111111 0%,#111111 40%,#B8B8B8 50%,#111111 60%,#111111 100%);background-size:200% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;animation:shim 2.2s linear infinite}
+.ph{display:flex;align-items:center;gap:8px;font-weight:500;font-size:13.5px}
+.okc{width:20px;height:20px;border-radius:50%;background:#E4EEE7;color:#2F6B4F;display:flex;align-items:center;justify-content:center}
+.sh{display:flex;flex-direction:column;overflow:hidden}
+.sh .pl{position:relative;height:500px;background:#111111}
+.sh .pl img{width:100%;height:500px;object-fit:cover;display:block}
+</style>
+</head>
+<body>
+<div style="width: 1440px; height: 1560px; background: #FAF9F6">
+<header style="height: 64px; display: flex; align-items: center; justify-content: space-between; padding: 0 64px; border-bottom: 1px solid #DEDBD6">
+<div style="display: flex; align-items: center; gap: 40px">
+<a href="Main.html" class="d" style="font-size: 24px; text-decoration: none">Studio<span style="color: #0007CB">.</span></a>
+<nav style="display: flex; gap: 4px" aria-label="Główne"><a class="nav" href="Main.html">Projekty</a><a class="nav" href="Main.html">Szablony</a><a class="nav on" href="Shorty.html">Shorty</a><a class="nav" href="JakToDziala.html">Jak to działa</a></nav>
+</div>
+<div style="display: flex; align-items: center; gap: 14px"><span class="mut">Wydano we wrześniu</span><span class="m" style="font-weight: 500">4,82 USD</span><span style="width: 36px; height: 36px; border-radius: 50%; background: #111111; color: #FAF9F6; display: flex; align-items: center; justify-content: center; font-weight: 500; font-size: 13px">JK</span></div>
+</header>
+
+<main style="padding: 40px 64px 80px; display: flex; flex-direction: column; gap: 28px">
+<div style="display: flex; flex-direction: column; gap: 8px">
+<h1 class="d" style="font-size: 56px; line-height: 1">Shorty z długiego filmu</h1>
+<p class="mut" style="font-size: 16px">Wywiad, podcast albo wykład → 2–4 samodzielne klipy po 20–60 s, z kadrem na mówcę i napisami.</p>
+</div>
+
+<form class="card" style="padding: 24px; display: grid; grid-template-columns: minmax(0, 1fr) 300px 380px 150px auto; gap: 20px; align-items: end">
+<div style="display: flex; flex-direction: column; gap: 6px">
+<label for="sh-link" style="font-weight: 500">Plik MP4 albo link</label>
+<div style="display: flex; gap: 8px"><button type="button" class="btn b-sec" style="padding: 0 14px"><svg class="ico" viewBox="0 0 24 24"><path d="M12 20V8M6 14l6-6 6 6M4 4h16"></path></svg>Plik</button><input id="sh-link" class="field" value="youtube.com/watch?v=… (podcast o polityce)"></div>
+</div>
+<fieldset style="border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px"><legend style="font-weight: 500; margin-bottom: 6px">Proporcje</legend>
+<div class="seg"><label class="on"><input class="sr" type="radio" name="pr" checked="">9:16</label><label><input class="sr" type="radio" name="pr">1:1</label><label><input class="sr" type="radio" name="pr">4:5</label></div></fieldset>
+<fieldset style="border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px"><legend style="font-weight: 500; margin-bottom: 6px">Kadrowanie</legend>
+<div class="seg"><label class="on"><input class="sr" type="radio" name="kd" checked="">Automatyczne</label><label><input class="sr" type="radio" name="kd">Za mówcą</label><label><input class="sr" type="radio" name="kd">Podział</label></div></fieldset>
+<div style="display: flex; flex-direction: column; gap: 6px"><label for="sh-lim" style="font-weight: 500">Limit</label><input id="sh-lim" class="field m" value="0,30 USD"></div>
+<button type="submit" class="btn b-pri">Zrób shorty</button>
+</form>
+
+<section class="card" style="padding: 20px 24px; display: flex; align-items: center; gap: 28px">
+<span class="chip c-ok"><svg class="ico" style="width: 13px; height: 13px" viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"></path></svg>Gotowe</span>
+<p style="font-weight: 500">Podcast o polityce · 58 min → <b>4 shorty</b></p>
+<div style="display: flex; gap: 20px; margin-left: auto">
+<span class="ph"><span class="okc"><svg class="ico" style="width: 12px; height: 12px" viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"></path></svg></span>Transkrypcja</span>
+<span class="ph"><span class="okc"><svg class="ico" style="width: 12px; height: 12px" viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"></path></svg></span>Wybór momentów</span>
+<span class="ph"><span class="okc"><svg class="ico" style="width: 12px; height: 12px" viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"></path></svg></span>Cięcie i kadr</span>
+<span class="ph"><span class="okc"><svg class="ico" style="width: 12px; height: 12px" viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"></path></svg></span>Napisy</span>
+</div>
+<span class="m" style="font-weight: 500">0,21 USD · 6 min</span>
+</section>
+
+<div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px">
+<article class="card sh">
+<div class="pl"><img src="img/short-0.jpg" alt="Short 1"><span class="chip" style="position: absolute; left: 12px; top: 12px; background: #111111; color: #FAF9F6">Podział · 2 osoby</span></div>
+<div style="padding: 18px; display: flex; flex-direction: column; gap: 10px">
+<div style="display: flex; justify-content: space-between"><span class="m mut" style="font-size: 12px">12:04–12:49 · 45 s</span><span class="m" style="font-size: 12px; font-weight: 500">9/10</span></div>
+<h2 style="font-size: 17px; font-weight: 500; line-height: 1.3">Pandemia, której nikt nie pamięta</h2>
+<p style="font-size: 13.5px">„Te przypadki…” — <span class="mut">hak</span></p>
+<p class="mut" style="font-size: 13px"><b style="color: #111111">Dlaczego ten moment:</b> zaskakujący fakt w pierwszym zdaniu, reakcja rozmówcy w kadrze.</p>
+<a href="#" class="btn b-sec" style="min-height: 40px"><svg class="ico" viewBox="0 0 24 24"><path d="M12 4v12M6 10l6 6 6-6M4 20h16"></path></svg>Pobierz</a>
+</div>
+</article>
+<article class="card sh">
+<div class="pl"><img src="img/short-1.jpg" alt="Short 2"><span class="chip" style="position: absolute; left: 12px; top: 12px; background: #111111; color: #FAF9F6">Za mówcą</span></div>
+<div style="padding: 18px; display: flex; flex-direction: column; gap: 10px">
+<div style="display: flex; justify-content: space-between"><span class="m mut" style="font-size: 12px">21:30–22:08 · 38 s</span><span class="m" style="font-size: 12px; font-weight: 500">8/10</span></div>
+<h2 style="font-size: 17px; font-weight: 500; line-height: 1.3">Opowieści, w które wierzymy</h2>
+<p style="font-size: 13.5px">„Na podstawie różnych…” — <span class="mut">hak</span></p>
+<p class="mut" style="font-size: 13px"><b style="color: #111111">Dlaczego ten moment:</b> zamknięta myśl od pytania do puenty, bez kontekstu z wcześniej.</p>
+<a href="#" class="btn b-sec" style="min-height: 40px"><svg class="ico" viewBox="0 0 24 24"><path d="M12 4v12M6 10l6 6 6-6M4 20h16"></path></svg>Pobierz</a>
+</div>
+</article>
+<article class="card sh">
+<div class="pl"><img src="img/short-3.jpg" alt="Short 3"><span class="chip" style="position: absolute; left: 12px; top: 12px; background: #111111; color: #FAF9F6">Za mówcą</span></div>
+<div style="padding: 18px; display: flex; flex-direction: column; gap: 10px">
+<div style="display: flex; justify-content: space-between"><span class="m mut" style="font-size: 12px">34:12–34:41 · 29 s</span><span class="m" style="font-size: 12px; font-weight: 500">8/10</span></div>
+<h2 style="font-size: 17px; font-weight: 500; line-height: 1.3">Tygodnie, które zmieniły wszystko</h2>
+<p style="font-size: 13.5px">„Nigdy nie doświadczyliśmy…” — <span class="mut">hak</span></p>
+<p class="mut" style="font-size: 13px"><b style="color: #111111">Dlaczego ten moment:</b> mocne tempo, jeden mówca, gotowy tytuł w wypowiedzi.</p>
+<a href="#" class="btn b-sec" style="min-height: 40px"><svg class="ico" viewBox="0 0 24 24"><path d="M12 4v12M6 10l6 6 6-6M4 20h16"></path></svg>Pobierz</a>
+</div>
+</article>
+<article class="card sh">
+<div class="pl"><img src="img/short-4.jpg" alt="Short 4"><span class="chip" style="position: absolute; left: 12px; top: 12px; background: #111111; color: #FAF9F6">Automatyczne · archiwum</span></div>
+<div style="padding: 18px; display: flex; flex-direction: column; gap: 10px">
+<div style="display: flex; justify-content: space-between"><span class="m mut" style="font-size: 12px">47:55–48:47 · 52 s</span><span class="m" style="font-size: 12px; font-weight: 500">7/10</span></div>
+<h2 style="font-size: 17px; font-weight: 500; line-height: 1.3">Miliony ludzi, zapomniana grypa</h2>
+<p style="font-size: 13.5px">„Miliony zupełnie…” — <span class="mut">hak</span></p>
+<p class="mut" style="font-size: 13px"><b style="color: #111111">Dlaczego ten moment:</b> materiał archiwalny daje obraz, nie tylko gadającą głowę.</p>
+<a href="#" class="btn b-sec" style="min-height: 40px"><svg class="ico" viewBox="0 0 24 24"><path d="M12 4v12M6 10l6 6 6-6M4 20h16"></path></svg>Pobierz</a>
+</div>
+</article>
+</div>
+</main>
+</div>
+</body>
+</html>

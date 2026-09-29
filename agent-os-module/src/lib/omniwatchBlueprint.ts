@@ -125,6 +125,28 @@ export type FontShape = (typeof FONT_SHAPES)[number];
 export const TEXT_CASES = ["as-is", "upper", "lower", "title"] as const;
 export type TextCase = (typeof TEXT_CASES)[number];
 
+/** Whether an item is on screen from the first frame, or arrives partway through and stays.
+ *
+ *  Today's renderer only knows the first of these: a tile is drawn in its row from frame
+ *  zero, whatever the reference does. That is why a cloned tier board is a wallpaper — the
+ *  subject being talked about should first sit beside the presenter and only land in its row
+ *  when the verdict is said, and there was no field to say so.
+ *
+ *  "from-start" is the default and is exactly today's behaviour: nothing about an existing
+ *  blueprint changes by this field existing. "on-cue" is new: the item waits at `waitsAt`
+ *  until it moves into place — see IR-CONTRACT-V2 §3. */
+export const HOLD_KINDS = ["from-start", "on-cue"] as const;
+export type Hold = (typeof HOLD_KINDS)[number];
+
+/** How a thing enters or leaves — IR-CONTRACT-V2 §2.
+ *
+ *  A closed set, because that is the question a model answers reliably. How LONG it takes and
+ *  how FAR it travels are not here: those are continuous quantities, and they belong to the
+ *  code that clamps them. "cut" is the default everywhere and means today's behaviour — the
+ *  element is simply there. */
+export const MOVE_SHAPES = ["cut", "fade", "pop", "drift", "swell"] as const;
+export type MoveShape = (typeof MOVE_SHAPES)[number];
+
 /** The look of words, which is not decoration — it is how a format reads.
  *
  *  Measured against a reference: its title was BLACK ON WHITE and we drew white on black;
@@ -212,10 +234,54 @@ export interface BlueprintItem {
    *  structure, such as a title that holds for the whole video. This is the field that lets
    *  a format be lifted out later: the unit is whatever carries a beat. */
   beat?: number;
+  /** Where this one item sits, when that is not simply "all of its region".
+   *
+   *  Most items fill their region: a caption fills its band, a tile fills its slot. An INSERT
+   *  does not. The reference drops a photograph over its tier board for two seconds, then a
+   *  second one beside it, each a different size in a different place, and the region they
+   *  share is only "the area inserts appear in". Without a box of its own, every insert in a
+   *  film is drawn at the size of the area they all share — which is how a layer of five
+   *  timed photographs came out as nothing at all, and then as one stretched rectangle.
+   *
+   *  A fraction of the CANVAS, exactly like a region's, so the two can be compared without
+   *  knowing which region an item belongs to. */
+  rect?: Rect;
   /** For kind "text": the exact words on screen. For image/video: what is depicted, as an
    *  instruction a generator can act on. For "color": a hex value. Never empty — an empty
    *  item is a gap, and a gap is expressed by not having an item. */
   value: string;
+  /** Whether this item is on screen from the first frame, or waits and then lands.
+   *  Absent means "from-start" — today's behaviour, unchanged. See `Hold` and
+   *  IR-CONTRACT-V2 §3. */
+  hold?: Hold;
+  /** The id of the region this item waits AT before it lands, when `hold` is "on-cue".
+   *  Not necessarily a region declared elsewhere in this blueprint — it may name a spot
+   *  that only `omniwatchStage` knows how to place, the way `omniwatchStage.ts` derives a
+   *  waiting box beside the presenter when nothing was declared for it. Absent or ignored
+   *  when `hold` is "from-start". */
+  waitsAt?: string;
+  /** The second at which the item takes its final place, when `hold` is "on-cue".
+   *
+   *  `hold` and `waitsAt` say that an item waits and where — they never said for how long.
+   *  Absent, the implementation took the landing moment to be `item.start`, so the icon
+   *  appeared already moving instead of sitting beside the presenter for the reference's few
+   *  seconds of "this is what we're talking about" before it drops. That absence is today's
+   *  behaviour and stays the default: nothing about an existing blueprint changes.
+   *
+   *  Filled by the ALIGNER (`omniwatchCues`) from the window of words the item is anchored
+   *  to — the sentence that introduces it, ending where the verdict is said — never by Omni,
+   *  because a second is exactly the kind of continuous quantity Omni is not trusted with.
+   *  See IR-CONTRACT-V2 §3. Must fall within `[start, end]`; a value outside that window is
+   *  refused rather than clamped, the same way a malformed `rect` is refused — clamping it
+   *  would quietly draw a landing that was never actually measured. */
+  landsAt?: number;
+  /** How this item enters, and how it leaves. Absent means "cut" on both — it is simply
+   *  there and then simply gone, which is what every blueprint written before today did.
+   *
+   *  Held loosely on purpose: the validator settles the shape, and `omniwatchMotion`
+   *  clamps the numbers. Nothing between them needs to know the ranges. */
+  arrival?: unknown;
+  departure?: unknown;
 }
 
 export interface BlueprintTrack {
@@ -359,13 +425,418 @@ function readStyle(v: unknown, at: string): { style?: TextStyle; error?: string 
  *  track cannot affect a single pixel, and rejecting a twenty-region blueprint over it
  *  turns a modelling slip into a lost analysis. Those are dropped and NAMED, so a slip
  *  stays visible instead of becoming a silent habit. */
+export type ValidateOpts = {
+  /** Keep region rects as given — for measure-from-source. */
+  preserveGeometry?: boolean;
+  /**
+   * Snap a tier list onto the authored 9:16 template below.
+   *
+   * Off by default, and that default changed deliberately. The template exists to rescue a
+   * capture whose geometry was guessed: it hard-codes a banner height, a board top and five
+   * equal rows, taken from one reference. Once the geometry is MEASURED off the source — the
+   * board's grid counted in omniwatchBoardScan, the title plate's edges found in the frame —
+   * the template is no longer a rescue, it is an overwrite: it put the banner at half its
+   * real height and divided a board evenly that is not evenly divided.
+   *
+   * It stays available for a caller that has nothing better, and it is still what the
+   * template's own tests exercise. It is not what a measured blueprint gets.
+   */
+  snapTemplate?: boolean;
+};
+
 export type BlueprintCheck =
   | { ok: true; blueprint: Blueprint; notes: string[] }
   | { ok: false; error: string };
 
+/** How bright a hex is, 0..1. Used to tell a dark plate from a pale one without caring
+ *  about the hue the model invents. */
+function luminance(hexColour: string): number {
+  const h = hexColour.replace("#", "");
+  const full = h.length === 3 ? h.split("").map((c) => c + c).join("") : h.slice(0, 6);
+  const n = parseInt(full, 16);
+  const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+  return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+}
+
+/** Same colour up to the laziness of a model that writes #fff and #ffffff for one plate. */
+function sameColour(a: string, b: string): boolean {
+  const norm = (h: string) => {
+    const x = h.replace("#", "").toLowerCase();
+    return x.length === 3 ? x.split("").map((c) => c + c).join("") : x.slice(0, 6);
+  };
+  return norm(a) === norm(b);
+}
+
+/** Capture slips that survive the schema and still draw the wrong film.
+ *
+ *  Measured on the HypeKit tier-list benchmark: a caption over footage came back with
+ *  background "#000000" and no outline, so compose drew a black bar; a title banner that
+ *  reaches the frame edges came back inset at x=0.06; and the same cream plate was named
+ *  both as the region's paint and as the words' background, which stacked two plates.
+ *  Each rule below is one of those, named in notes so a silent "fix" cannot hide it. */
+function normalizeCapturedStyles(
+  regions: BlueprintRegion[],
+  tracks: BlueprintTrack[],
+  notes: string[],
+): BlueprintTrack[] {
+  const byId = new Map(regions.map((r) => [r.id, r]));
+  return tracks.map((t, i) => {
+    if (t.kind !== "text" || !t.style) return t;
+    const st = { ...t.style };
+    const region = byId.get(t.region);
+    const at = `tracks[${i}].style`;
+
+    // Region already paints the plate — repeating it on the words draws a second bar.
+    if (st.background && region?.paint?.fill && sameColour(st.background, region.paint.fill)) {
+      notes.push(`${at}.background dropped — same plate as region "${t.region}" paint`);
+      delete st.background;
+    }
+
+    // Dark plate under light words, no regional surface: that is almost always a stroke
+    // the model misnamed. A real black title card would be the REGION's paint.
+    if (st.background && !region?.paint?.fill) {
+      const bgDark = luminance(st.background) < 0.2;
+      const fgLight = !st.color || luminance(st.color) > 0.6;
+      if (bgDark && fgLight) {
+        if (!st.outline) st.outline = st.background;
+        notes.push(`${at}.background was a dark plate over footage — kept as outline, dropped the plate`);
+        delete st.background;
+      }
+    }
+
+    // Both named at once: keep the stroke, drop the plate (prompt already says this; models
+    // still emit both, and compose would draw the bar).
+    if (st.background && st.outline) {
+      notes.push(`${at} had both background and outline — kept outline, dropped the plate`);
+      delete st.background;
+    }
+
+    const next: BlueprintTrack = { ...t, style: Object.keys(st).length ? st : undefined };
+    if (!next.style) delete next.style;
+    return next;
+  });
+}
+
+/** Layout slips that leave a valid schema and a wrong film.
+ *
+ *  Measured on the HypeKit tier-list benchmark after prompt-only and Gemini-3.8-Flash
+ *  captures: captions slid under the tier board (lower z / overlapping y), a backdrop was
+ *  emitted full-frame under an opaque board, and the presenter figure was a floated portrait
+ *  with empty margins that then got their own generated room. Each rule below is one of
+ *  those, applied after the model speaks so every downstream path (verify, produce, clone)
+ *  inherits the same geometry. Grounding can still tighten rects further; this only enforces
+ *  invariants that do not need a detector. */
+function normalizeLayoutGeometry(regions: BlueprintRegion[], notes: string[]): BlueprintRegion[] {
+  const out = regions.map((r) => ({ ...r, rect: [...r.rect] as Rect }));
+  const byId = new Map(out.map((r) => [r.id, r]));
+
+  const isTierBoard = (r: BlueprintRegion) =>
+    r.role === "panel" || /tier[-_]?(list|board)|leaderboard|bingo/i.test(r.id) || /tier[-_]?(list|board)/i.test(r.label || "");
+  const isCaption = (r: BlueprintRegion) =>
+    r.role === "text" && (/caption/i.test(r.id) || /caption/i.test(r.label || ""));
+  const isFigure = (r: BlueprintRegion) =>
+    r.role === "figure" || /^(host|presenter)$/i.test(r.id) || /^(host|presenter)-(stage|figure|video)$/i.test(r.id);
+  const isBackdrop = (r: BlueprintRegion) =>
+    r.role === "backdrop" || /backdrop/i.test(r.id);
+
+  const boards = out.filter(isTierBoard).sort((a, b) => a.rect[2] * a.rect[3] - b.rect[2] * b.rect[3]);
+  const board = boards.length ? boards[boards.length - 1] : undefined; // largest panel-ish
+  // Prefer an explicit tier-board / tier-list id when present.
+  const boardPrefer = out.find((r) => /tier[-_]?(list|board)/i.test(r.id)) || board;
+
+  const captions = out.filter(isCaption);
+  if (boardPrefer) {
+    const tierTop = boardPrefer.rect[1];
+    for (const cap of captions) {
+      const [x, y, w, h] = cap.rect;
+      const bottom = y + h;
+      if (bottom > tierTop + 1e-4) {
+        // Keep height; slide up so the band ends at the board's top.
+        const ny = Math.max(0, tierTop - h);
+        notes.push(`region "${cap.id}" moved above "${boardPrefer.id}" — caption overlapped the board`);
+        cap.rect = [x, ny, w, Math.min(h, tierTop - ny)];
+      }
+      if (cap.z <= boardPrefer.z) {
+        notes.push(`region "${cap.id}" z raised above "${boardPrefer.id}" — caption must paint over the board`);
+        cap.z = boardPrefer.z + 1;
+      }
+    }
+  }
+
+  const figures = out.filter(isFigure);
+  const figure = figures[0];
+  if (figure && boardPrefer) {
+    const tierTop = boardPrefer.rect[1];
+    // Upper stage: from below a typical title band (~0.08–0.14) down to the board.
+    // If the figure is a floated portrait (width < 0.85 of frame) inside that stage,
+    // expand it to the stage so generate fills the host area HypeKit-style.
+    const [fx, fy, fw, fh] = figure.rect;
+    const stageTop = Math.min(fy, 0.14);
+    const stageH = Math.max(0.2, tierTop - stageTop);
+    if (fw < 0.85 || fy + fh < tierTop - 0.02) {
+      notes.push(`region "${figure.id}" expanded to upper stage above "${boardPrefer.id}" — floated host cannot fill the format`);
+      figure.rect = [0, stageTop, 1, stageH];
+    }
+  }
+
+  if (figure && boardPrefer) {
+    const tierTop = boardPrefer.rect[1];
+    for (const back of out.filter(isBackdrop)) {
+      const [x, y, w, h] = back.rect;
+      const full = w >= 0.99 && h >= 0.99 && x <= 0.01 && y <= 0.01;
+      const underBoard = y + h > tierTop + 0.05;
+      if (full || underBoard) {
+        const [fx, fy, fw, fh] = figure.rect;
+        notes.push(`region "${back.id}" clipped to figure stage — full-frame / under-board backdrop is not the set behind the host`);
+        back.rect = [fx, fy, fw, fh];
+        if (back.z >= figure.z) back.z = Math.max(0, figure.z - 1);
+      }
+    }
+  }
+
+  // Tier label text: prefer display face when the cell is a short single letter on paint.
+  // (style lives on tracks — handled in normalizeTierLabelFonts.)
+
+  return out;
+}
+
+/** Single-letter tier labels on a painted cell are heavy geometric faces in the wild
+ *  (Impact-class), not body sans. Capture often says "sans"; snap the shape. */
+function normalizeTierLabelFonts(
+  regions: BlueprintRegion[],
+  tracks: BlueprintTrack[],
+  notes: string[],
+): BlueprintTrack[] {
+  const byId = new Map(regions.map((r) => [r.id, r]));
+  return tracks.map((t, i) => {
+    if (t.kind !== "text") return t;
+    const region = byId.get(t.region);
+    if (!region) return t;
+    const looksLabel = /tier.*label|label.*tier|^[sabcd]-label$/i.test(t.region)
+      || (/^[SABCD]$/.test((t.items[0]?.value || "").trim()) && !!region.paint?.fill);
+    if (!looksLabel) return t;
+    const st = { ...(t.style || {}) };
+    let changed = false;
+    if (!st.font || st.font === "sans" || st.font === "sans-condensed") {
+      st.font = "display";
+      changed = true;
+    }
+    if (st.weight == null || st.weight < 800) {
+      st.weight = 900;
+      changed = true;
+    }
+    // Label letter should fill a good fraction of the cell height (~0.55 of cell →
+    // size ≈ 0.55 * cell.h of canvas). If missing or tiny, set from the cell.
+    const cellH = region.rect[3];
+    const want = Math.round(cellH * 0.38 * 1000) / 1000; // Hypit letters are small in the cell, not filling it
+    if (st.size == null || st.size < want * 0.9) {
+      st.size = want;
+      changed = true;
+    }
+    if (!changed) return t;
+    notes.push(`tracks[${i}].style snapped for tier label "${t.region}" — display/${st.weight}/size ${st.size}`);
+    return { ...t, style: st };
+  });
+}
+
+/** A painted title/caption BANNER that nearly spans the frame but sits inset is almost
+ *  always a full-bleed strip with invented side margins. Snap it to the edges; the vertical
+ *  placement (Dynamic Island gap) is left alone — that one is real. */
+
+/** Tier-list 9:16 template — geometry source of truth (Hypit-style authored layout).
+ *  VL/Omni may guess content; this snaps structure so we never ship crushed C/D rows,
+ *  fat banners with letterbox, or floated hosts. Steal-like-an-artist: inspired by
+ *  Hypit ranking-football proportions, not their code. */
+function applyTierList9x16Template(regions: BlueprintRegion[], notes: string[]): BlueprintRegion[] {
+  const out = regions.map((r) => ({ ...r, rect: [...r.rect] as Rect }));
+  const hasTier = out.some((r) =>
+    /tier[-_]?(list|board)|leaderboard/i.test(r.id) || r.role === "panel" && /tier|board|list/i.test(r.id + (r.label || "")),
+  );
+  if (!hasTier) return out;
+
+  // Safe-area: short-form leaves a gap under status bar / Dynamic Island so the title stays readable.
+  const SAFE_TOP = 0.045;
+  const BANNER_H = 0.052;
+  const BOARD_TOP = 0.56;
+  const BOARD_H = 0.44;
+  const LABEL_W = 0.14;
+  const ROW_H = BOARD_H / 5;
+  const CAP_H = 0.055;
+  const CREAM = "#fff8e7";
+
+  const byId = new Map(out.map((r) => [r.id, r]));
+  const find = (...preds: ((r: BlueprintRegion) => boolean)[]) => out.find((r) => preds.every((p) => p(r)));
+
+  // Title banner: thin, full-bleed, flush to top (kills kaszeta above text).
+  const banner =
+    find((r) => /banner|title/i.test(r.id)) ||
+    find((r) => r.role === "text" && !!r.paint?.fill && r.rect[2] >= 0.7 && r.rect[1] < 0.2);
+  if (banner) {
+    const [,, , oh] = banner.rect;
+    if (banner.rect[1] > 0.005 || Math.abs(banner.rect[2] - 1) > 0.01 || oh > BANNER_H + 0.02) {
+      notes.push(`region "${banner.id}" snapped to TierList9x16 banner [0,0,1,${BANNER_H}] — thin full-bleed title`);
+    }
+    banner.rect = [0, SAFE_TOP, 1, BANNER_H];
+    banner.z = Math.max(banner.z, 5);
+    banner.paint = { fill: CREAM, radius: banner.paint?.radius };
+    notes.push(`region "${banner.id}" cream safe-area banner — gap above for status bar / Dynamic Island`);
+  }
+
+  // Presenter / host: upper stage under banner, above board — cover-friendly 9:16 fill zone.
+  const figure =
+    find((r) => r.role === "figure") ||
+    find((r) => /^(host|presenter)(-stage|-figure|-video)?$/i.test(r.id));
+  if (figure) {
+    const stageTop = SAFE_TOP + BANNER_H;
+    const stageH = BOARD_TOP - stageTop;
+    notes.push(`region "${figure.id}" snapped to TierList9x16 host stage [0,${stageTop},1,${stageH}] — TikTok cover zone`);
+    figure.rect = [0, stageTop, 1, stageH];
+    figure.z = Math.min(figure.z, 1);
+  }
+
+  // Tier board + 5 equal rows (S–D). Labels left, slots right.
+  const board =
+    find((r) => /tier[-_]?(list|board)/i.test(r.id)) ||
+    find((r) => r.role === "panel");
+  if (board) {
+    board.rect = [0, BOARD_TOP, 1, BOARD_H];
+    board.z = Math.max(board.z, 2);
+    // Authored surface: dark board; thumbs sit on top (contain) — never generate a photo of a table.
+    board.paint = { ...(board.paint || {}), fill: board.paint?.fill && board.paint.fill.toLowerCase() !== "#ffffff" ? board.paint.fill : "#1a1a1a" };
+    notes.push(`region "${board.id}" snapped to TierList9x16 board [0,${BOARD_TOP},1,${BOARD_H}]`);
+  }
+
+  const tiers = ["s", "a", "b", "c", "d"] as const;
+  for (let i = 0; i < tiers.length; i++) {
+    const t = tiers[i];
+    const y = BOARD_TOP + i * ROW_H;
+    const lab =
+      byId.get(`${t}-label`) ||
+      byId.get(`tier-${t}-label`) ||
+      find((r) => new RegExp(`^tier[-_]?${t}[-_]?label$`, "i").test(r.id));
+    const slot =
+      byId.get(`${t}-slot`) ||
+      byId.get(`tier-${t}-slot`) ||
+      find((r) => new RegExp(`^tier[-_]?${t}[-_]?slot$`, "i").test(r.id));
+    if (lab) {
+      lab.rect = [0, y, LABEL_W, ROW_H];
+      lab.z = Math.max(lab.z, 3);
+    }
+    if (slot) {
+      slot.rect = [LABEL_W, y, 1 - LABEL_W, ROW_H];
+      slot.z = Math.max(slot.z, 3);
+      // Keep role as-is if already valid; only author the dark slot surface for thumbs.
+      if (board) {
+        slot.parent = board.id;
+        slot.at = { row: i + 1, col: 2 };
+        if (slot.role !== "cell") slot.role = "cell";
+      }
+      slot.paint = { fill: "#1a1a1a", border: { color: "#000000", width: 0.012 } };
+    }
+  }
+  notes.push("tier rows S–D equalized to TierList9x16 (5× equal height) — no crushed C/D");
+
+  // Caption band just above the board, near-full width.
+  const cap =
+    find((r) => /caption/i.test(r.id)) ||
+    find((r) => r.role === "text" && !/banner|title|label/i.test(r.id) && r.rect[1] > 0.3);
+  if (cap) {
+    const cy = BOARD_TOP - CAP_H;
+    cap.rect = [0.08, cy, 0.84, CAP_H];
+    cap.z = Math.max(cap.z, (board?.z ?? 2) + 1);
+    notes.push(`region "${cap.id}" snapped to TierList9x16 caption above board`);
+  }
+
+  // Floating insets (Ronaldo/Messi cards): force near-square with soft corners via paint.radius.
+  for (const r of out) {
+    if (!/portrait|inset|floating|cr7|messi/i.test(r.id)) continue;
+    const [x, y, w, h] = r.rect;
+    const side = Math.min(w, h, 0.22);
+    // keep left-anchored beside host
+    r.rect = [x, y, side, side];
+    r.paint = { ...(r.paint || {}), fill: r.paint?.fill || "#ffffff", radius: 0.12 };
+    notes.push(`region "${r.id}" snapped to square floating inset — Hypit card is 1:1 rounded`);
+  }
+
+  // Drop full-frame junk overlays that compete with the HTML board.
+  for (const r of out) {
+    if (/board-overlay|insert-overlay/i.test(r.id)) {
+      // Park off-canvas so compose can skip empty rects; produce should not generate for these.
+      r.rect = [0, 0, 0.01, 0.01];
+      notes.push(`region "${r.id}" parked — tier board is HTML-composed, not a generated overlay`);
+    }
+  }
+
+  return out;
+}
+
+
+/** Captions over footage: outline ok, solid highlight plate is usually a capture hallucination
+ *  (Hypit karaoke is stroke/weight, not a cyan band). Drop highlight → keep color as tint only
+ *  via underline/color; wipe style.background on caption tracks. */
+function normalizeCaptionChrome(
+  regions: BlueprintRegion[], tracks: BlueprintTrack[], notes: string[],
+): BlueprintTrack[] {
+  const capIds = new Set(
+    regions.filter((r) => /caption/i.test(r.id) || /caption/i.test(r.label || "")).map((r) => r.id),
+  );
+  if (!capIds.size) return tracks;
+  return tracks.map((t) => {
+    if (!capIds.has(t.region) || t.kind !== "text" || !t.style) return t;
+    const st = { ...t.style };
+    let changed = false;
+    if (st.background) {
+      notes.push(`track "${t.region}" dropped caption plate background — stroke/outline only over footage`);
+      delete st.background;
+      changed = true;
+    }
+    // Keep emphasis.highlight — Hypit punchlines use a solid plate on the words.
+    // Only a track-level style.background (full caption band) is the bad "backdrop".
+    if (!st.outline && st.color && st.color.toLowerCase() !== "#000000") {
+      st.outline = "#000000";
+      changed = true;
+    }
+    return changed ? { ...t, style: st } : t;
+  });
+}
+
+
+/** Title banner: cream plate is on the REGION paint; words themselves have no plate. */
+function normalizeTitleChrome(
+  regions: BlueprintRegion[], tracks: BlueprintTrack[], notes: string[],
+): BlueprintTrack[] {
+  const titleIds = new Set(
+    regions.filter((r) => /banner|title/i.test(r.id)).map((r) => r.id),
+  );
+  if (!titleIds.size) return tracks;
+  return tracks.map((t) => {
+    if (!titleIds.has(t.region) || t.kind !== "text" || !t.style) return t;
+    const st = { ...t.style };
+    let changed = false;
+    if (st.background) {
+      notes.push(`track "${t.region}" dropped title word-plate — cream lives on region.paint`);
+      delete st.background;
+      changed = true;
+    }
+    return changed ? { ...t, style: st } : t;
+  });
+}
+
+function normalizeBannerRects(regions: BlueprintRegion[], notes: string[]): BlueprintRegion[] {
+  return regions.map((r) => {
+    if (r.role !== "text" || !r.paint?.fill) return r;
+    const [x, y, w, h] = r.rect;
+    if (w >= 0.8 && x > 0.02 && x + w < 0.98) {
+      notes.push(`region "${r.id}" rect snapped to full width — painted text banner had invented side margins`);
+      return { ...r, rect: [0, y, 1, h] };
+    }
+    return r;
+  });
+}
+
 /** Never throws: a blueprint that came back malformed is a reason to say what is wrong,
  *  not a 500 from halfway through a render. */
-export function validateBlueprint(raw: unknown): BlueprintCheck {
+export function validateBlueprint(raw: unknown, opts: ValidateOpts = {}): BlueprintCheck {
   const notes: string[] = [];
   if (!isObj(raw)) return { ok: false, error: "the blueprint must be a JSON object" };
   if (raw.version !== BLUEPRINT_VERSION) return { ok: false, error: `version must be "${BLUEPRINT_VERSION}"` };
@@ -540,7 +1011,91 @@ export function validateBlueprint(raw: unknown): BlueprintCheck {
         if (b === null || b < 1 || !Number.isInteger(b)) return { ok: false, error: `${atk}.beat must be a whole number from 1 up` };
         beat = b;
       }
-      items.push({ start, end, value: value.slice(0, MAX_VALUE), ...(beat ? { beat } : {}) });
+      let rect: Rect | undefined;
+      if (!unset(it.rect)) {
+        const bad = badRect(it.rect);
+        if (bad) return { ok: false, error: `${atk}.rect ${bad}` };
+        rect = (it.rect as number[]).slice(0, 4) as Rect;
+      }
+      // Optional, defaulting to today's behaviour — see IR-CONTRACT-V2 §3. A malformed
+      // value is refused the same way a malformed rect is: something that would render
+      // wrongly (or that `omniwatchStage` could not even attempt) is worth stopping for,
+      // not silently approximating.
+      let hold: Hold | undefined;
+      if (!unset(it.hold)) {
+        if (!(HOLD_KINDS as readonly string[]).includes(String(it.hold))) {
+          return { ok: false, error: `${atk}.hold must be one of ${HOLD_KINDS.join(", ")}` };
+        }
+        hold = it.hold as Hold;
+      }
+      let waitsAt: string | undefined;
+      if (!unset(it.waitsAt)) {
+        if (typeof it.waitsAt !== "string") return { ok: false, error: `${atk}.waitsAt must be a region id` };
+        const w = it.waitsAt.trim();
+        if (!/^[a-z0-9_-]{1,40}$/.test(w)) {
+          return { ok: false, error: `${atk}.waitsAt must look like a region id (lowercase letters, digits, _ or -)` };
+        }
+        waitsAt = w;
+      }
+      // landsAt, from IR-CONTRACT-V2 §3's own gap. Refused outside [start, end] rather than
+      // clamped into range — a landing time that was not actually inside the item's own
+      // window was not measured from anything, and clamping it would draw a number nobody
+      // ever produced, exactly the shortcut the contract names and forbids.
+      let landsAt: number | undefined;
+      if (!unset(it.landsAt)) {
+        const l = num(it.landsAt);
+        if (l === null) return { ok: false, error: `${atk}.landsAt must be a second` };
+        if (l < start || l > end) {
+          return { ok: false, error: `${atk}.landsAt must fall between start and end` };
+        }
+        landsAt = l;
+      }
+      // Movement, from IR-CONTRACT-V2 §2. The schema's whole job here is to settle the SHAPE
+      // of the answer; the numbers inside it are clamped by `omniwatchMotion`, which is the
+      // one place that knows the ranges.
+      //
+      // Two forms are accepted on purpose. Our capture prompt asks Omni for a bare name —
+      // "arrival": "pop" — because a single word from a fixed list is the most reliable thing
+      // a model produces, while a measured or hand-authored blueprint carries the whole
+      // object. The bare name is widened here, so everything downstream sees one shape and
+      // nobody has to remember which producer it came from.
+      const readMove = (v: unknown, where: string): { ok: true; move?: Record<string, unknown> } | { ok: false; error: string } => {
+        if (unset(v)) return { ok: true };
+        if (typeof v === "string") {
+          const shape = v.trim();
+          if (!(MOVE_SHAPES as readonly string[]).includes(shape)) {
+            return { ok: false, error: `${where} must be one of ${MOVE_SHAPES.join(", ")}` };
+          }
+          return { ok: true, move: { shape } };
+        }
+        if (typeof v !== "object" || Array.isArray(v)) {
+          return { ok: false, error: `${where} must be a name from ${MOVE_SHAPES.join(", ")}, or an object carrying one` };
+        }
+        const raw = v as Record<string, unknown>;
+        if (!(MOVE_SHAPES as readonly string[]).includes(String(raw.shape))) {
+          return { ok: false, error: `${where}.shape must be one of ${MOVE_SHAPES.join(", ")}` };
+        }
+        // Only the four fields the contract names survive, so a model cannot smuggle a
+        // property into the renderer by inventing a key.
+        return { ok: true, move: {
+          shape: String(raw.shape),
+          ...(Number.isFinite(raw.seconds) ? { seconds: Number(raw.seconds) } : {}),
+          ...(Number.isFinite(raw.amount) ? { amount: Number(raw.amount) } : {}),
+          ...(typeof raw.ease === "string" ? { ease: raw.ease } : {}),
+        } };
+      };
+      const arrivalRead = readMove(it.arrival, `${atk}.arrival`);
+      if (!arrivalRead.ok) return { ok: false, error: arrivalRead.error };
+      const departureRead = readMove(it.departure, `${atk}.departure`);
+      if (!departureRead.ok) return { ok: false, error: departureRead.error };
+      items.push({
+        start, end, value: value.slice(0, MAX_VALUE),
+        ...(beat ? { beat } : {}), ...(rect ? { rect } : {}),
+        ...(hold ? { hold } : {}), ...(waitsAt ? { waitsAt } : {}),
+        ...(landsAt !== undefined ? { landsAt } : {}),
+        ...(arrivalRead.move ? { arrival: arrivalRead.move } : {}),
+        ...(departureRead.move ? { departure: departureRead.move } : {}),
+      });
     }
     items.sort((a, b) => a.start - b.start);
     tracks.push({
@@ -563,7 +1118,17 @@ export function validateBlueprint(raw: unknown): BlueprintCheck {
     return { ok: false, error: `region "${idle.id}" has no track, no paint and nothing inside it — every region must carry something` };
   }
 
-  return { ok: true, notes, blueprint: { version: BLUEPRINT_VERSION, canvas: { width, height, fps, seconds }, regions, tracks } };
+  let regionsOut = regions;
+  let tracksOut = tracks;
+  if (opts.preserveGeometry) {
+    notes.push("validate: preserveGeometry — region rects kept from measure/source (no TierList template snap)");
+    tracksOut = normalizeCapturedStyles(regionsOut, tracks, notes);
+  } else {
+    const normalized = normalizeLayoutGeometry(normalizeBannerRects(regions, notes), notes);
+    regionsOut = opts.snapTemplate ? applyTierList9x16Template(normalized, notes) : normalized;
+    tracksOut = normalizeTitleChrome(regionsOut, normalizeCaptionChrome(regionsOut, normalizeTierLabelFonts(regionsOut, normalizeCapturedStyles(regionsOut, tracks, notes), notes), notes), notes);
+  }
+  return { ok: true, notes, blueprint: { version: BLUEPRINT_VERSION, canvas: { width, height, fps, seconds }, regions: regionsOut, tracks: tracksOut } };
 }
 
 /** The schema as the model is told it, kept beside the validator so the two cannot drift:
@@ -590,7 +1155,9 @@ export const BLUEPRINT_SCHEMA_PROMPT = `Return ONE JSON object and nothing else 
                             "align": "left" | "center" | "right",
                             "emphasis": { "style": "highlight" | "underline" | "color",
                                           "color": "#rrggbb" } },   // text tracks only
-                 "items": [ { "start": <s>, "end": <s>, "value": "<what>", "beat": <n, only if part of the repeating unit> } ] } ]
+                 "items": [ { "start": <s>, "end": <s>, "value": "<what>", "beat": <n, only if part of the repeating unit>,
+                              "hold": "from-start" | "on-cue",   // only if the item waits before it lands
+                              "waitsAt": "<region id it waits at, only with hold on-cue>" } ] } ]
 }
 
 role is exactly one of: ${REGION_ROLES.join(" | ")}
@@ -637,6 +1204,35 @@ RULES
   read on screen. Do not describe mood, quality, or intent.
 - If the video has no region of some kind, leave it out. Never invent one to look complete.
 
+LAYOUT HARD CONSTRAINTS — forced by a measured HypeKit tier-list failure, not taste
+- A tier BOARD is a DARK panel (#111–#222). Each row holds SMALL square thumbnails sitting
+  on that panel — never one image stretched across the whole row. Slot regions are cells
+  under the board; prompts describe a single square thumb, not a panorama of fruit/faces.
+- Captions over footage: outline/stroke. Do NOT invent a solid cyan/coloured plate behind
+  the whole caption line. A sparse per-word highlight is optional; a full-band backdrop is wrong.
+- Captions that change over a presenter MUST sit in the gap ABOVE the bottom board
+  (tier list, leaderboard, bingo). Require:
+  caption.rect[1] + caption.rect[3] <= board.rect[1]
+  If your first measurement violates that, you measured wrong — move the caption up.
+  Never leave readable words under an opaque panel.
+- When a caption and a board would still share pixels, give the caption a HIGHER z than
+  the board. A caption with lower z than the board is how words disappear in the render.
+- backdrop is the set BEHIND the figure, not a second full-frame film under the whole
+  composition. If a figure owns the upper stage and a board owns the lower half,
+  backdrop.rect matches the upper stage (same y/h band as the figure's stage), never
+  [0, 0, 1, 1]. A full-bleed backdrop under an opaque board wastes a generate slot and
+  shows as a weird movie under the host.
+- A talking-head / presenter above a bottom board: the figure region is that upper stage
+  (near the full width of the stage). Do not shrink it to a floated portrait with large
+  empty margins that then get their own generated backdrop, unless the source clearly
+  shows a small PiP bubble.
+- Every coloured tier/label cell MUST carry paint.fill (the row colour as hex) AND a
+  text style with measured font, weight, size (fraction of canvas height), and color.
+  Leaving style empty is how S/A/B letters come out in the wrong face and size.
+- Timed overlays that flash over the board (meme card, comparison graphic) are separate
+  overlay regions with higher z and short items — not a permanent region covering the
+  board for the whole runtime unless the source holds it that long.
+
 COLOUR AND TYPE — without these the layout is right and the video is wrong
 - "paint" records the area's OWN surface: the colour of a tier row, the white strip a title
   sits on, the rounded white card around an inset portrait. If an area is just a window onto
@@ -652,7 +1248,11 @@ COLOUR AND TYPE — without these the layout is right and the video is wrong
   background is a solid PLATE the words sit on, visible in the gaps between letters and
   beyond the last one. An outline only ever touches the letters. If the words sit over
   footage with a dark edge around each letter, that is an outline and there is NO
-  background. Giving both when the video has only a stroke draws a bar across the frame.
+  background — do NOT invent a black (or any) plate to fake a stroke. Giving both when
+  the video has only a stroke draws a bar across the frame.
+- If the REGION already has "paint.fill" that is the plate the words sit on (a cream
+  title banner, a white card), put the colour on the region and leave style.background
+  out. Repeating it on the words draws a second plate.
 - "font" is the SHAPE of the lettering as you can see it, not a font you are guessing the
   name of. Heavy and geometric is "display"; ordinary is "sans"; narrow is
   "sans-condensed"; soft-cornered is "sans-rounded".
@@ -660,6 +1260,9 @@ COLOUR AND TYPE — without these the layout is right and the video is wrong
   leaves a margin above the first element for the phone's own clock, status bar and camera
   cutout, so a title strip usually does NOT start at y 0. If there is a gap above it, the
   rect starts below 0 — say where it really starts.
+- A painted banner that reaches the left and right edges of the frame has x ≈ 0 and
+  width ≈ 1. Do not invent side margins for a full-bleed strip; the only common inset is
+  the gap ABOVE it for the status bar.
 
 WHERE EACH SLOT'S CONTENT COMES FROM — "fill"
 - "draw"     the renderer makes it from this blueprint: words, colours, a coloured row, a
@@ -675,6 +1278,15 @@ WHERE EACH SLOT'S CONTENT COMES FROM — "fill"
              genuine article, because a generated lookalike would be wrong.
 - Text and colour tracks are always "draw". If you leave "fill" out, pictures are assumed to
   be generated, which is usually not what a structural area needs.
+
+WHEN AN ITEM WAITS BEFORE IT LANDS — "hold" and "waitsAt"
+- Leave both out unless the source clearly does this: the item is on screen the whole time it
+  is relevant, no different from today.
+- "hold": "on-cue" means the item is not in its place from the start — it waits somewhere
+  else, then moves into place and stays. A tier list where the subject's icon first sits
+  beside the presenter and only lands in its row once the verdict is said is exactly this.
+- "waitsAt" names the id of the region it waits at first — where it is BEFORE it lands, not
+  where it ends up. The item's own region/rect is still where it ends up.
 
 THE REPEATING UNIT — this is what makes the video a FORMAT rather than one video
 - Most short-form videos run a small structure several times: one ranked subject, one tip,

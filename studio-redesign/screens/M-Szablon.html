@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<title>Akceptacja szablonu — telefon</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500&amp;family=Geist+Mono:wght@400;500&amp;family=Newsreader:opsz,wght@6..72,300;6..72,400&amp;display=swap">
+<style>
+body{margin:0;background:#FAF9F6;color:#111111;font-family:'Geist',system-ui,sans-serif;font-size:14px;line-height:1.45;letter-spacing:-0.005em;-webkit-font-smoothing:antialiased}
+*{box-sizing:border-box}
+a{color:#111111}a:hover{color:#0007CB}
+h1,h2,h3,p{margin:0}
+b,strong{font-weight:500}
+.d{font-family:'Geist',system-ui,sans-serif;font-weight:300;letter-spacing:-0.035em}
+.m{font-family:'Geist Mono',ui-monospace,monospace;font-variant-numeric:tabular-nums;letter-spacing:0}
+.mut{color:#585858}
+.lbl{font-family:'Geist Mono',ui-monospace,monospace;font-size:11px;font-weight:400;letter-spacing:.1em;text-transform:uppercase;color:#585858}
+.serif{font-family:'Newsreader',Georgia,serif;font-weight:300;letter-spacing:-0.01em}
+.card{background:#FFFFFF;border:1px solid #DEDBD6;border-radius:4px}
+.chip{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 8px;border-radius:4px;font-family:'Geist Mono',ui-monospace,monospace;font-size:11px;font-weight:400;letter-spacing:.08em;text-transform:uppercase;white-space:nowrap;border:1px solid transparent}
+.c-you{background:#0007CB;color:#FFFFFF}
+.c-ok{background:transparent;color:#2F6B4F;border-color:#BCD3C4}
+.c-bad{background:#F6E3DF;color:#A3261B}
+.c-run{background:transparent;color:#111111;border-color:#D3CEC6}
+.c-pay{background:#F3E9D2;color:#6B4A0E}
+.c-free{background:#F1EEE9;color:#585858}
+.dot{width:6px;height:6px;border-radius:50%;background:currentColor;display:inline-block}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;padding:0 16px;border-radius:4px;font:400 14px/1 'Geist',sans-serif;border:1px solid transparent;cursor:pointer;text-decoration:none;white-space:nowrap}
+.b-pri{background:#000000;color:#FFFFFF}.b-pri:hover{background:#111111;color:#FFFFFF}
+.b-sec{background:#FFFFFF;color:#111111;border-color:#111111}
+.b-dng{background:transparent;color:#A3261B;border-color:#E3C4BE}
+.ico{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+.nav{padding:20px 2px;margin:0 10px;text-decoration:none;color:#888888;font-weight:400}.nav.on{color:#111111;box-shadow:inset 0 -2px 0 #111111}
+.field{height:44px;border:1px solid #DEDBD6;border-radius:4px;background:#FFFFFF;padding:0 14px;font:inherit;color:#111111;width:100%}
+.seg{display:flex;border:1px solid #DEDBD6;border-radius:4px;background:#FFFFFF;overflow:hidden}.seg label{flex:1;display:flex;align-items:center;justify-content:center;height:42px;font-size:13px;color:#585858;cursor:pointer;white-space:nowrap;padding:0 8px;border-left:1px solid #DEDBD6}.seg label:first-child{border-left:0}.seg .on{background:#111111;color:#FFFFFF}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+summary{cursor:pointer;list-style:none}summary::-webkit-details-marker{display:none}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+@keyframes shim{0%{background-position:200% 0}100%{background-position:-200% 0}}
+.live{animation:pulse 1.4s ease-in-out infinite}
+.shim{background:linear-gradient(90deg,#111111 0%,#111111 40%,#B8B8B8 50%,#111111 60%,#111111 100%);background-size:200% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;animation:shim 2.2s linear infinite}
+.pick{flex:1;display:flex;flex-direction:column;gap:2px;padding:10px 12px;border:1.5px solid #D3CEC6;border-radius:4px;background:#fff;font-size:13px;min-height:56px}
+.pick.on{border-color:#111111;background:#F1EEE9}
+.acc{border-top:1px solid #DEDBD6}
+.acc summary{display:flex;align-items:center;justify-content:space-between;min-height:56px;font-weight:500;padding:0 16px}
+.slot{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:11px 0;border-top:1px solid #F1EEE9;font-size:13.5px}
+</style>
+</head>
+<body>
+<div style="width: 390px; height: 2140px; background: #FAF9F6; position: relative">
+<header style="height: 56px; display: flex; align-items: center; gap: 8px; padding: 0 8px; border-bottom: 1px solid #DEDBD6">
+<a href="M-Start.html" aria-label="Wróć do projektów" style="width: 44px; height: 44px; display: flex; align-items: center; justify-content: center"><svg class="ico" style="width: 22px; height: 22px" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"></path></svg></a>
+<span style="font-weight: 500">Ranking piłkarzy</span>
+</header>
+<main style="padding: 16px 16px 120px; display: flex; flex-direction: column; gap: 16px">
+<section style="display: flex; flex-direction: column; gap: 8px">
+<div style="display: flex; gap: 6px; flex-wrap: wrap"><span class="chip c-you"><span class="dot"></span>Czeka na Ciebie</span><span class="chip c-bad">Brak zgody agentów</span></div>
+<p style="font-size: 16px">Reżyser i krytyk po 3 rundach nie zgodzili się, <b>jak duży ma być prezenter</b>. Resztę uzgodnili.</p>
+<p class="m mut" style="font-size: 12px">3 rundy · 4 min · 0,11 z 3,00 USD</p>
+</section>
+
+<section style="background: #F1EEE9; color: #111111; border-radius: 4px; padding: 12px; display: flex; flex-direction: column; gap: 10px">
+<div style="display: flex; gap: 8px">
+<figure style="margin: 0; display: flex; flex-direction: column; gap: 6px; flex: 1"><figcaption style="font-size: 12px; font-weight: 500">Wzorzec</figcaption><img src="img/rank-wzorzec.jpg" alt="Wzorzec" style="width: 100%; height: 300px; object-fit: cover; border-radius: 4px; display: block"></figure>
+<figure style="margin: 0; display: flex; flex-direction: column; gap: 6px; flex: 1"><figcaption style="font-size: 12px; font-weight: 500">Twój szablon</figcaption>
+<div style="position: relative"><img src="img/rank-podglad.jpg" alt="Podgląd szablonu" style="width: 100%; height: 300px; object-fit: cover; border-radius: 4px; display: block"><span style="position: absolute; left: 4px; top: 32px; right: 4px; height: 126px; border: 2px solid #0007CB; border-radius: 4px"></span></div></figure>
+</div>
+<button type="button" class="btn b-pri"><svg class="ico" viewBox="0 0 24 24" style="fill: currentColor; stroke: none"><path d="M7 4l13 8-13 8z"></path></svg>Odtwórz oba razem</button>
+<p style="font-size: 12px; color: #585858; text-align: center">Obróć telefon, aby zobaczyć większe</p>
+</section>
+
+<section class="card" style="padding: 16px; display: flex; flex-direction: column; gap: 12px; border: 1px solid #111111">
+<h2 class="d" style="font-size: 20px">Jak duży ma być prezenter?</h2>
+<p style="font-size: 13.5px"><b>Krytyk:</b> cała górna połowa, jak we wzorcu.<br><b>Reżyser:</b> małe okienko w rogu.</p>
+<div style="display: flex; gap: 8px">
+<label class="pick on"><input class="sr" type="radio" name="s" checked=""><b>Jak krytyk</b><span class="mut">duży</span></label>
+<label class="pick"><input class="sr" type="radio" name="s"><b>Zostaw</b><span class="mut">małe okienko</span></label>
+</div>
+<label for="mu" style="font-weight: 500; font-size: 13.5px">Uwaga dla agentów <span class="mut" style="font-weight: 400">(opcjonalnie)</span></label>
+<textarea id="mu" rows="2" placeholder="np. napisy niżej" style="border: 1px solid #D3CEC6; border-radius: 4px; padding: 10px; font: inherit; background: #fff"></textarea>
+</section>
+
+<section class="card" style="padding: 16px; display: flex; flex-direction: column; gap: 8px">
+<div style="display: flex; justify-content: space-between; align-items: baseline"><b>Koszt każdego filmu</b><span class="d" style="font-size: 20px">~0,85 USD</span></div>
+<div class="slot" style="border-top: 0"><span><span class="chip c-pay">płatne</span> Prezenter</span><span class="m">0,67</span></div>
+<div class="slot"><span><span class="chip c-pay">płatne</span> Głos</span><span class="m">0,18</span></div>
+<div class="slot"><span><span class="chip c-free">grosze</span> Napisy, tabela, obraz</span><span class="m mut">0,00</span></div>
+<p class="mut" style="font-size: 12px">przy filmie 40 s</p>
+</section>
+
+<section class="card" style="overflow: hidden">
+<details class="acc" open="" style="border-top: 0"><summary>Miejsca do wypełnienia<span class="mut" style="font-weight: 400">6 ▴</span></summary>
+<div style="padding: 0 16px 12px">
+<div class="slot"><span><b>Prezenter</b> <span class="mut">awatar AI</span></span><span class="chip c-pay">płatne</span></div>
+<div class="slot"><span><b>Głos lektora</b></span><span class="chip c-pay">płatne</span></div>
+<div class="slot"><span><b>Napisy</b> ×6</span><span class="chip c-free">bez opłat</span></div>
+<div class="slot"><span><b>Tabela rankingu</b></span><span class="chip c-free">bez opłat</span></div>
+<div class="slot"><span><b>Obraz</b> ×3 · <b>Tytuł</b></span><span class="chip c-free">bez opłat</span></div>
+</div>
+</details>
+<details class="acc"><summary>Styl napisów<span style="font: 900 15px 'Helvetica Neue', Arial, sans-serif; background: #3A3E4A; color: #fff; padding: 4px 8px; border-radius: 4px">Bro has <span style="color: #00A6D6">more</span></span></summary></details>
+<details class="acc"><summary>Konstrukcja opowieści<span class="mut" style="font-weight: 400; font-size: 13px">hak → tabela → ×5 → puenta</span></summary></details>
+<details class="acc"><summary>Detale ze wzorca<span style="display: flex; gap: 4px"><span class="chip c-ok">4</span><span class="chip" style="background: #F1EEE9; color: #111111">2</span><span class="chip c-bad">2</span></span></summary></details>
+<details class="acc"><summary>Jak agenci doszli do podglądu<span class="mut" style="font-weight: 400">3 rundy ▾</span></summary></details>
+</section>
+</main>
+<div style="position: absolute; left: 0; bottom: 0; width: 390px; padding: 12px 16px 28px; background: #FFFFFF; border-top: 1px solid #DEDBD6; display: flex; gap: 8px">
+<button type="button" class="btn b-sec" style="flex: 1">Odrzuć</button>
+<button type="button" class="btn b-pri" style="flex: 2"><svg class="ico" viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"></path></svg>Zatwierdź</button>
+</div>
+</div>
+</body>
+</html>

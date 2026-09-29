@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<title>Jak to działa — telefon</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500&amp;family=Geist+Mono:wght@400;500&amp;family=Newsreader:opsz,wght@6..72,300;6..72,400&amp;display=swap">
+<style>
+body{margin:0;background:#FAF9F6;color:#111111;font-family:'Geist',system-ui,sans-serif;font-size:14px;line-height:1.45;letter-spacing:-0.005em;-webkit-font-smoothing:antialiased}
+*{box-sizing:border-box}
+a{color:#111111}a:hover{color:#0007CB}
+h1,h2,h3,p{margin:0}
+b,strong{font-weight:500}
+.d{font-family:'Geist',system-ui,sans-serif;font-weight:300;letter-spacing:-0.035em}
+.m{font-family:'Geist Mono',ui-monospace,monospace;font-variant-numeric:tabular-nums;letter-spacing:0}
+.mut{color:#585858}
+.lbl{font-family:'Geist Mono',ui-monospace,monospace;font-size:11px;font-weight:400;letter-spacing:.1em;text-transform:uppercase;color:#585858}
+.serif{font-family:'Newsreader',Georgia,serif;font-weight:300;letter-spacing:-0.01em}
+.card{background:#FFFFFF;border:1px solid #DEDBD6;border-radius:4px}
+.chip{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 8px;border-radius:4px;font-family:'Geist Mono',ui-monospace,monospace;font-size:11px;font-weight:400;letter-spacing:.08em;text-transform:uppercase;white-space:nowrap;border:1px solid transparent}
+.c-you{background:#0007CB;color:#FFFFFF}
+.c-ok{background:transparent;color:#2F6B4F;border-color:#BCD3C4}
+.c-bad{background:#F6E3DF;color:#A3261B}
+.c-run{background:transparent;color:#111111;border-color:#D3CEC6}
+.c-pay{background:#F3E9D2;color:#6B4A0E}
+.c-free{background:#F1EEE9;color:#585858}
+.dot{width:6px;height:6px;border-radius:50%;background:currentColor;display:inline-block}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;padding:0 16px;border-radius:4px;font:400 14px/1 'Geist',sans-serif;border:1px solid transparent;cursor:pointer;text-decoration:none;white-space:nowrap}
+.b-pri{background:#000000;color:#FFFFFF}.b-pri:hover{background:#111111;color:#FFFFFF}
+.b-sec{background:#FFFFFF;color:#111111;border-color:#111111}
+.b-dng{background:transparent;color:#A3261B;border-color:#E3C4BE}
+.ico{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+.nav{padding:20px 2px;margin:0 10px;text-decoration:none;color:#888888;font-weight:400}.nav.on{color:#111111;box-shadow:inset 0 -2px 0 #111111}
+.field{height:44px;border:1px solid #DEDBD6;border-radius:4px;background:#FFFFFF;padding:0 14px;font:inherit;color:#111111;width:100%}
+.seg{display:flex;border:1px solid #DEDBD6;border-radius:4px;background:#FFFFFF;overflow:hidden}.seg label{flex:1;display:flex;align-items:center;justify-content:center;height:42px;font-size:13px;color:#585858;cursor:pointer;white-space:nowrap;padding:0 8px;border-left:1px solid #DEDBD6}.seg label:first-child{border-left:0}.seg .on{background:#111111;color:#FFFFFF}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+summary{cursor:pointer;list-style:none}summary::-webkit-details-marker{display:none}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+@keyframes shim{0%{background-position:200% 0}100%{background-position:-200% 0}}
+.live{animation:pulse 1.4s ease-in-out infinite}
+.shim{background:linear-gradient(90deg,#111111 0%,#111111 40%,#B8B8B8 50%,#111111 60%,#111111 100%);background-size:200% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;animation:shim 2.2s linear infinite}
+.av{width:28px;height:28px;border-radius:4px;display:inline-flex;align-items:center;justify-content:center;font-family:'Geist Mono',monospace;font-size:10px;flex-shrink:0;background:#111111;color:#FFFFFF}
+.av.me{background:#0007CB}
+.tl{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
+.tl li{display:grid;grid-template-columns:28px minmax(0,1fr);gap:14px;padding-bottom:20px;position:relative}
+.tl li::before{content:"";position:absolute;left:13.5px;top:30px;bottom:0;width:1px;background:#D3CEC6}
+.tl li:last-child::before{display:none}
+.tl h4{margin:0 0 4px;font-size:16px;font-weight:500}
+.tl p{font-size:14px;color:#414141}
+.tl .ft{font-family:'Geist Mono',monospace;font-size:11.5px;color:#585858;margin-top:6px}
+.rl{display:grid;grid-template-columns:28px minmax(0,1fr);gap:12px;padding:14px 0;border-top:1px solid #DEDBD6}
+.rl p{font-size:13.5px;color:#414141}
+</style>
+</head>
+<body>
+<div style="width: 390px; height: 3600px; background: #FAF9F6">
+<header style="height: 56px; display: flex; align-items: center; gap: 8px; padding: 0 8px; border-bottom: 1px solid #DEDBD6">
+<a href="M-Start.html" aria-label="Wróć" style="width: 44px; height: 44px; display: flex; align-items: center; justify-content: center"><svg class="ico" style="width: 22px; height: 22px" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"></path></svg></a>
+<span>Jak to działa</span>
+</header>
+<main style="padding: 32px 16px 48px; display: flex; flex-direction: column; gap: 40px">
+<section style="display: flex; flex-direction: column; gap: 16px">
+<span class="lbl">2 minuty czytania</span>
+<h1 class="d" style="font-size: 44px; line-height: 0.98; letter-spacing: -0.04em">Ty jesteś producentem. Agenci są ekipą.</h1>
+<p class="serif" style="font-size: 17px; line-height: 1.5; color: #414141">Studio najpierw raz uczy się stylu filmu, który lubisz — to jest szablon. Potem robi z niego tyle filmów, ile chcesz. Ty wchodzisz do gry tylko 3 razy, a za płatne rzeczy nie płacisz bez pytania.</p>
+</section>
+
+<section style="background: #F1EEE9; border-radius: 4px; padding: 20px; display: flex; flex-direction: column; gap: 16px">
+<span class="lbl" style="color: #111111">Twoje 3 decyzje</span>
+<div style="display: flex; gap: 12px"><span class="av me">1</span><div><b>Zatwierdzasz szablon</b><p style="font-size: 13.5px; color: #414141">wzorzec i podgląd obok siebie</p></div></div>
+<div style="display: flex; gap: 12px"><span class="av me">2</span><div><b>Zatwierdzasz treść i koszt</b><p style="font-size: 13.5px; color: #414141">dopiero wtedy coś płacisz</p></div></div>
+<div style="display: flex; gap: 12px"><span class="av me">3</span><div><b>Odbierasz film</b><p style="font-size: 13.5px; color: #414141">pobierasz MP4 albo prosisz o poprawkę</p></div></div>
+</section>
+
+<section style="display: flex; flex-direction: column; gap: 16px">
+<h2 class="d" style="font-size: 30px">Etap A · Szablon</h2>
+<span class="m mut" style="font-size: 12px; margin-top: -8px">raz na styl · 2–10 min · 0,03–0,05 USD</span>
+<ol class="tl">
+<li><span class="av" style="background: #FFFFFF; color: #111111; border: 1px solid #111111">TY</span><div><h4>Wrzucasz wzorzec</h4><p>Plik albo link. Wybierasz kadr, odbiorcę i czy chcesz prezentera AI.</p></div></li>
+<li><span class="av">AN</span><div><h4>Analitycy rozbierają wzorzec</h4><p>Pięciu agentów: kadr, napisy, montaż, opowieść, detale.</p><div class="ft">grosze</div></div></li>
+<li><span class="av">RE</span><div><h4>Reżyser buduje, krytyk sprawdza</h4><p>Reżyser projektuje szablon, krytyk porównuje ze wzorcem. Do 3 rund.</p><div class="ft">0,03–0,05 USD</div></div></li>
+<li><span class="av me">1</span><div><h4 style="color: #0007CB">Zatwierdzasz szablon</h4><p>Jeśli się nie zgodzili — rozstrzygasz jedno konkretne pytanie.</p></div></li>
+<li><span class="av" style="background: #F1EEE9; color: #111111">✓</span><div><h4>Zapisany szablon</h4><p>Używasz go przy każdym kolejnym filmie.</p></div></li>
+</ol>
+</section>
+
+<section style="display: flex; flex-direction: column; gap: 16px">
+<h2 class="d" style="font-size: 30px">Etap B · Film</h2>
+<span class="m mut" style="font-size: 12px; margin-top: -8px">za każdym razem · ok. 0,85 USD za 40 s</span>
+<ol class="tl">
+<li><span class="av" style="background: #FFFFFF; color: #111111; border: 1px solid #111111">TY</span><div><h4>Dajesz materiał</h4><p>Szablon + nagranie: demo, podcast, rozmowa.</p></div></li>
+<li><span class="av">SC</span><div><h4>Scenarzysta pisze, redaktor sprawdza</h4><p>Każde zdanie musi mieć dowód w Twoim materiale.</p><div class="ft">grosze</div></div></li>
+<li><span class="av me">2</span><div><h4 style="color: #0007CB">Zatwierdzasz treść i koszt</h4><p>Widzisz scenariusz i cenę. Bez „tak” nic płatnego się nie dzieje.</p></div></li>
+<li><span class="av" style="background: #6B4A0E">LE</span><div><h4>Nagranie, montaż, kontrola</h4><p>Lektor, prezenter AI, montażysta i kontrola. Krytyk wystawia ocenę.</p><div class="ft" style="color: #6B4A0E">płatne</div></div></li>
+<li><span class="av me">3</span><div><h4 style="color: #0007CB">Odbierasz film</h4><p>Pobierasz MP4 albo prosisz o poprawkę.</p></div></li>
+</ol>
+<div style="padding: 14px 16px; border: 1px solid #E3C4BE; background: #FBF1EE; border-radius: 4px; font-size: 14px"><b>Coś nie przeszło kontroli?</b> Agent się zatrzymuje i daje Ci 3 wyjścia: popraw, zaakceptuj mimo to, porzuć.</div>
+</section>
+
+<section style="display: flex; flex-direction: column; gap: 8px">
+<h2 class="d" style="font-size: 30px; margin-bottom: 8px">Kto jest kim</h2>
+<div class="rl"><span class="av me">TY</span><div><b>Ty — producent</b><p>Dajesz wzorzec i materiał, podejmujesz 3 decyzje.</p></div></div>
+<div class="rl"><span class="av">AN</span><div><b>Analitycy</b><p>Opisują, co widać we wzorcu. Nic nie tworzą.</p></div></div>
+<div class="rl"><span class="av">RE</span><div><b>Reżyser</b><p>Projektuje szablon: układ, napisy, opowieść.</p></div></div>
+<div class="rl"><span class="av">KR</span><div><b>Krytyk</b><p>Porównuje ze wzorcem i mówi, co nie gra. Ocenia też gotowy film.</p></div></div>
+<div class="rl"><span class="av">SC</span><div><b>Scenarzysta</b><p>Pisze tekst lektora z Twojego materiału.</p></div></div>
+<div class="rl"><span class="av">RD</span><div><b>Redaktor</b><p>Skraca i szuka dowodów dla każdego zdania.</p></div></div>
+<div class="rl"><span class="av" style="background: #6B4A0E">LE</span><div><b>Lektor <span class="chip c-pay" style="height: 20px; font-size: 10px">płatne</span></b><p>Czyta scenariusz sztucznym głosem.</p></div></div>
+<div class="rl"><span class="av" style="background: #6B4A0E">PR</span><div><b>Prezenter AI <span class="chip c-pay" style="height: 20px; font-size: 10px">płatne</span></b><p>Awatar mówiący do kamery. Tylko jeśli go wybrałeś.</p></div></div>
+<div class="rl"><span class="av">MN</span><div><b>Montażysta</b><p>Składa film i ogląda każde cięcie.</p></div></div>
+<div class="rl" style="border-bottom: 1px solid #DEDBD6"><span class="av">KO</span><div><b>Kontrola</b><p>Sprawdza technikę. Gdy coś nie gra — zatrzymuje film.</p></div></div>
+</section>
+
+<section style="background: #F1EEE9; border-radius: 4px; padding: 20px; display: flex; flex-direction: column; gap: 12px">
+<h2 class="d" style="font-size: 26px">Dlaczego w parach</h2>
+<p class="serif" style="font-size: 16px; color: #414141">Jeden tworzy, drugi sprawdza. Dogadują się między sobą. Jeśli po 3 rundach dalej się nie zgadzają, dostajesz jedno pytanie z dwiema odpowiedziami.</p>
+<p class="m" style="font-size: 12px">RE ↔ KR · SC ↔ RD · MN ↔ KO</p>
+</section>
+
+<a href="M-Start.html" class="btn b-pri">Zbuduj pierwszy szablon</a>
+</main>
+</div>
+</body>
+</html>

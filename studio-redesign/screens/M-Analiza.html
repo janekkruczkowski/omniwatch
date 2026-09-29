@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<title>Analiza wzorca — telefon</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500&amp;family=Geist+Mono:wght@400;500&amp;family=Newsreader:opsz,wght@6..72,300;6..72,400&amp;display=swap">
+<style>
+body{margin:0;background:#FAF9F6;color:#111111;font-family:'Geist',system-ui,sans-serif;font-size:14px;line-height:1.45;letter-spacing:-0.005em;-webkit-font-smoothing:antialiased}
+*{box-sizing:border-box}
+a{color:#111111}
+h1,h2,h3,p{margin:0}
+b,strong{font-weight:500}
+.d{font-family:'Geist',system-ui,sans-serif;font-weight:300;letter-spacing:-0.035em}
+.m{font-family:'Geist Mono',ui-monospace,monospace;font-variant-numeric:tabular-nums}
+.mut{color:#585858}
+.lbl{font-family:'Geist Mono',ui-monospace,monospace;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#585858}
+.serif{font-family:'Newsreader',Georgia,serif;font-weight:300}
+.card{background:#FFFFFF;border:1px solid #DEDBD6;border-radius:4px}
+.chip{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 7px;border-radius:4px;font-family:'Geist Mono',ui-monospace,monospace;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;white-space:nowrap;border:1px solid transparent}
+.c-ok{color:#2F6B4F;border-color:#BCD3C4}
+.c-run{color:#111111;border-color:#D3CEC6}
+.c-free{background:#F1EEE9;color:#585858}
+.dot{width:6px;height:6px;border-radius:50%;background:currentColor;display:inline-block}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:48px;padding:0 16px;border-radius:4px;font:400 15px/1 'Geist',sans-serif;border:1px solid transparent;cursor:pointer}
+.b-pri{background:#000000;color:#FFFFFF}
+.b-dng{background:transparent;color:#A3261B;border-color:#E3C4BE}
+.ico{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+.field{height:48px;border:1px solid #DEDBD6;border-radius:4px;background:#FFFFFF;padding:0 12px;font:inherit;width:100%}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+@keyframes shim{0%{background-position:200% 0}100%{background-position:-200% 0}}
+.live{animation:pulse 1.4s ease-in-out infinite}
+.shim{background:linear-gradient(90deg,#111111 0%,#111111 40%,#B8B8B8 50%,#111111 60%,#111111 100%);background-size:200% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;animation:shim 2.2s linear infinite}
+.av{width:30px;height:30px;border-radius:4px;display:flex;align-items:center;justify-content:center;font-family:'Geist Mono',monospace;font-size:10.5px;flex-shrink:0}
+.row{display:grid;grid-template-columns:30px minmax(0,1fr) auto;gap:12px;align-items:start;padding:14px 16px;border-top:1px solid #F1EEE9}
+.box{position:absolute;border:1px solid #FFFFFF;outline:1px solid rgba(0,0,0,.35)}
+</style>
+</head>
+<body>
+<div style="width: 390px; height: 1500px; background: #FAF9F6">
+<header style="height: 56px; display: flex; align-items: center; gap: 8px; padding: 0 8px; border-bottom: 1px solid #DEDBD6">
+<a href="M-Start.html" aria-label="Wróć do projektów" style="width: 44px; height: 44px; display: flex; align-items: center; justify-content: center"><svg class="ico" style="width: 22px; height: 22px" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"></path></svg></a>
+<span>Ranking z TikToka</span>
+</header>
+<main style="padding: 20px 16px 40px; display: flex; flex-direction: column; gap: 20px">
+<section style="display: flex; flex-direction: column; gap: 10px">
+<div style="display: flex; justify-content: space-between; align-items: center"><span class="chip c-run"><span class="dot live"></span>W toku</span><span class="lbl">Krok 2 z 5</span></div>
+<h1 class="d" style="font-size: 34px; line-height: 1.05">Agenci rozbierają wzorzec na części</h1>
+<p class="serif" style="font-size: 16px; color: #414141">Pięciu analityków ogląda film jednocześnie. Zawołamy Cię do gotowego podglądu.</p>
+<div style="display: flex; gap: 24px; border-top: 1px solid #DEDBD6; padding-top: 12px">
+<div style="display: flex; flex-direction: column"><span class="lbl">Gotowe</span><span class="d" style="font-size: 26px">3 / 5</span></div>
+<div style="display: flex; flex-direction: column"><span class="lbl">Czas</span><span class="d" style="font-size: 26px">1:12</span></div>
+<div style="display: flex; flex-direction: column"><span class="lbl">Wydano</span><span class="d" style="font-size: 26px">0,02</span></div>
+</div>
+</section>
+
+<section style="background: #F1EEE9; border-radius: 4px; padding: 12px; display: flex; gap: 12px">
+<div style="position: relative; width: 150px; height: 267px; flex-shrink: 0">
+<img src="img/rank-wzorzec.jpg" alt="Wzorzec" style="width: 150px; height: 267px; object-fit: cover; border-radius: 4px; display: block">
+<div class="box" style="left: 3px; top: 11px; width: 144px; height: 19px"></div>
+<div class="box" style="left: 12px; top: 63px; width: 34px; height: 35px"></div>
+<div class="box" style="left: 52px; top: 45px; width: 90px; height: 95px"></div>
+<div class="box" style="left: 35px; top: 135px; width: 80px; height: 11px; border-color: #0007CB; outline-color: #0007CB"></div>
+<div class="box" style="left: 2px; top: 156px; width: 146px; height: 108px"></div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 8px; font-size: 13px">
+<span class="lbl" style="color: #111111">Znalezione</span>
+<span>Tytuł</span><span>Okienko z twarzą</span><span>Osoba mówiąca</span><span style="color: #0007CB">Napisy</span><span>Tabela S–D</span>
+<span class="m mut" style="font-size: 11.5px; margin-top: auto">cięcia: 11 z ~16</span>
+</div>
+</section>
+
+<section class="card" style="overflow: hidden">
+<div style="padding: 14px 16px; display: flex; justify-content: space-between"><b>Analitycy</b><span class="lbl">równolegle</span></div>
+<div class="row"><span class="av" style="background: #111111; color: #FFFFFF">KA</span><div><b>Kadr i układ</b><p class="mut" style="font-size: 13px">5 stref, tabela w dolnej połowie</p></div><span class="chip c-ok">Gotowe</span></div>
+<div class="row"><span class="av" style="background: #111111; color: #FFFFFF">NA</span><div><b>Styl napisów</b><p class="mut" style="font-size: 13px">gruby, biały, obrys, 3 słowa</p></div><span class="chip c-ok">Gotowe</span></div>
+<div class="row"><span class="av" style="background: #111111; color: #FFFFFF">DE</span><div><b>Spis detali</b><p class="mut" style="font-size: 13px">5 detali, w tym okienko ×7</p></div><span class="chip c-ok">Gotowe</span></div>
+<div class="row"><span class="av" style="border: 1px solid #111111">MO</span><div style="display: flex; flex-direction: column; gap: 6px"><b>Rytm montażu</b><p class="shim" style="font-size: 13px">Liczę cięcia… 11 z ~16</p><div style="height: 3px; background: #F1EEE9"><div style="width: 69%; height: 3px; background: #111111"></div></div></div><span class="chip c-run"><span class="dot live"></span>Pracuje</span></div>
+<div class="row"><span class="av" style="border: 1px solid #111111">OP</span><div><b>Opowieść</b><p class="shim" style="font-size: 13px">Hak i kontekst gotowe, dowody…</p></div><span class="chip c-run"><span class="dot live"></span>Pracuje</span></div>
+<div class="row" style="background: #FAF9F6"><span class="av" style="border: 1px dashed #B8B8B8; color: #888888">RE</span><div><b style="color: #585858">Reżyser</b><p class="mut" style="font-size: 13px">zacznie, gdy skończą wszyscy</p></div><span class="chip c-free">Czeka</span></div>
+</section>
+
+<section class="card" style="padding: 16px; display: flex; flex-direction: column; gap: 12px">
+<div style="display: flex; justify-content: space-between"><b style="display: flex; align-items: center; gap: 8px"><span class="dot live" style="color: #0007CB"></span>Na żywo</b><span class="m mut" style="font-size: 11px">10:36:40</span></div>
+<p style="font-size: 13.5px"><b>Opowieść:</b> Hak to tytuł i pierwszy werdykt w ciągu 2 s.</p>
+<p style="font-size: 13.5px"><b>Montaż:</b> Cięcia co ~1,2 s, szybciej przy werdyktach.</p>
+<label for="mn" class="lbl" style="margin-top: 4px">Uwaga dla reżysera</label>
+<div style="display: flex; gap: 8px"><input id="mn" class="field" placeholder="np. duży prezenter"><button type="submit" class="btn b-pri" aria-label="Wyślij uwagę"><svg class="ico" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"></path></svg></button></div>
+</section>
+
+<button type="button" class="btn b-dng">Zatrzymaj</button>
+</main>
+</div>
+</body>
+</html>

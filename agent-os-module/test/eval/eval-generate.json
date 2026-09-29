@@ -1,0 +1,475 @@
+[
+  {
+    "name": "ranking-football--swap-topic",
+    "scored": true,
+    "sourceId": "3acd67c83aff434a",
+    "mp4": "/Users/janek/.agentic-os/video-projects/eval-generate--ranking-football--swap-topic/renders/eval-generate--ranking-football--swap-topic.mp4",
+    "source": {
+      "regionCount": 15,
+      "boardRows": 5,
+      "caption": [
+        0.03999999999999998,
+        0.5276388888888888,
+        0.92,
+        0.04472222222222222
+      ],
+      "presenter": [
+        0,
+        0,
+        1,
+        0.55
+      ],
+      "layers": [
+        "figure",
+        "panel",
+        "cell",
+        "cell",
+        "cell",
+        "cell",
+        "cell",
+        "cell",
+        "cell",
+        "cell",
+        "cell",
+        "cell",
+        "figure",
+        "text",
+        "text"
+      ],
+      "tracks": {},
+      "spans": 8
+    },
+    "clone": {
+      "regionCount": 15,
+      "boardRows": 5,
+      "caption": [
+        0.03722222222222221,
+        0.5286388888888888,
+        0.92,
+        0.042722222222222224
+      ],
+      "presenter": [
+        0,
+        0,
+        1,
+        0.55
+      ],
+      "layers": [
+        "figure",
+        "panel",
+        "cell",
+        "cell",
+        "cell",
+        "cell",
+        "cell",
+        "cell",
+        "cell",
+        "cell",
+        "cell",
+        "cell",
+        "figure",
+        "text",
+        "text"
+      ],
+      "tracks": {},
+      "spans": 8
+    },
+    "failed": []
+  },
+  {
+    "name": "ranking-football--swap-effect",
+    "scored": true,
+    "sourceId": "3acd67c83aff434a",
+    "mp4": "/Users/janek/.agentic-os/video-projects/eval-generate--ranking-football--swap-effect/renders/eval-generate--ranking-football--swap-effect.mp4",
+    "source": {
+      "regionCount": 15,
+      "boardRows": 5,
+      "caption": [
+        0.03999999999999998,
+        0.5276388888888888,
+        0.92,
+        0.04472222222222222
+      ],
+      "presenter": [
+        0,
+        0,
+        1,
+        0.55
+      ],
+      "layers": [
+        "figure",
+        "panel",
+        "cell",
+        "cell",
+        "cell",
+        "cell",
+        "cell",
+        "cell",
+        "cell",
+        "cell",
+        "cell",
+        "cell",
+        "figure",
+        "text",
+        "text"
+      ],
+      "tracks": {},
+      "spans": 8
+    },
+    "clone": {
+      "regionCount": 15,
+      "boardRows": 5,
+      "caption": [
+        0.03722222222222221,
+        0.5286388888888888,
+        0.92,
+        0.042722222222222224
+      ],
+      "presenter": [
+        0,
+        0,
+        1,
+        0.55
+      ],
+      "layers": [
+        "figure",
+        "panel",
+        "cell",
+        "cell",
+        "cell",
+        "cell",
+        "cell",
+        "cell",
+        "cell",
+        "cell",
+        "cell",
+        "cell",
+        "figure",
+        "text",
+        "text"
+      ],
+      "tracks": {},
+      "spans": 8
+    },
+    "failed": []
+  },
+  {
+    "name": "podcast--swap-app",
+    "scored": true,
+    "sourceId": "22df72b848314eb6",
+    "mp4": "/Users/janek/.agentic-os/video-projects/eval-generate--podcast--swap-app/renders/eval-generate--podcast--swap-app.mp4",
+    "source": {
+      "regionCount": 2,
+      "boardRows": 0,
+      "caption": [
+        0.07263888888888886,
+        0.4714539930555556,
+        0.92,
+        0.06099826388888889
+      ],
+      "presenter": [
+        0,
+        0,
+        1,
+        0.7
+      ],
+      "layers": [
+        "figure",
+        "text"
+      ],
+      "tracks": {},
+      "spans": 0
+    },
+    "clone": {
+      "regionCount": 3,
+      "boardRows": 0,
+      "caption": [
+        0.07124999999999998,
+        0.46563975694444437,
+        0.92,
+        0.07418923611111111
+      ],
+      "presenter": [
+        0,
+        0,
+        1,
+        0.7
+      ],
+      "layers": [
+        "figure",
+        "figure",
+        "text"
+      ],
+      "tracks": {},
+      "spans": 0
+    },
+    "failed": [
+      "layer stacking order changed: source [figure, text] vs render [figure, figure, text]"
+    ]
+  },
+  {
+    "name": "podcast--swap-host",
+    "scored": true,
+    "sourceId": "22df72b848314eb6",
+    "mp4": "/Users/janek/.agentic-os/video-projects/eval-generate--podcast--swap-host/renders/eval-generate--podcast--swap-host.mp4",
+    "source": {
+      "regionCount": 2,
+      "boardRows": 0,
+      "caption": [
+        0.07263888888888886,
+        0.4694539930555556,
+        0.92,
+        0.0649982638888889
+      ],
+      "presenter": [
+        0,
+        0,
+        1,
+        0.7
+      ],
+      "layers": [
+        "figure",
+        "text"
+      ],
+      "tracks": {},
+      "spans": 0
+    },
+    "clone": {
+      "regionCount": 2,
+      "boardRows": 0,
+      "caption": [
+        0.07124999999999998,
+        0.46448784722222214,
+        0.92,
+        0.07727430555555556
+      ],
+      "presenter": [
+        0,
+        0,
+        1,
+        0.7
+      ],
+      "layers": [
+        "figure",
+        "text"
+      ],
+      "tracks": {},
+      "spans": 0
+    },
+    "failed": []
+  },
+  {
+    "name": "podcast--swap-item",
+    "scored": true,
+    "sourceId": "22df72b848314eb6",
+    "mp4": "/Users/janek/.agentic-os/video-projects/eval-generate--podcast--swap-item/renders/eval-generate--podcast--swap-item.mp4",
+    "source": {
+      "regionCount": 2,
+      "boardRows": 0,
+      "caption": [
+        0.0733333333333333,
+        0.4714539930555556,
+        0.92,
+        0.06099826388888889
+      ],
+      "presenter": [
+        0,
+        0,
+        1,
+        0.7
+      ],
+      "layers": [
+        "figure",
+        "text"
+      ],
+      "tracks": {},
+      "spans": 0
+    },
+    "clone": {
+      "regionCount": 2,
+      "boardRows": 0,
+      "caption": [
+        0.07124999999999998,
+        0.46463975694444437,
+        0.92,
+        0.07618923611111111
+      ],
+      "presenter": [
+        0,
+        0,
+        1,
+        0.7
+      ],
+      "layers": [
+        "figure",
+        "text"
+      ],
+      "tracks": {},
+      "spans": 0
+    },
+    "failed": []
+  },
+  {
+    "name": "interview--swap-host",
+    "scored": true,
+    "sourceId": "666ad535323144fb",
+    "mp4": "/Users/janek/.agentic-os/video-projects/eval-generate--interview--swap-host/renders/eval-generate--interview--swap-host.mp4",
+    "source": {
+      "regionCount": 2,
+      "boardRows": 0,
+      "caption": [
+        0.08000000000000002,
+        0.4548524305555556,
+        0.92,
+        0.09029513888888889
+      ],
+      "presenter": [
+        0,
+        0,
+        1,
+        0.7
+      ],
+      "layers": [
+        "figure",
+        "text"
+      ],
+      "tracks": {},
+      "spans": 0
+    },
+    "clone": {
+      "regionCount": 3,
+      "boardRows": 0,
+      "caption": [
+        0.06152777777777779,
+        0.4389290364583333,
+        0.92,
+        0.11823567708333335
+      ],
+      "presenter": [
+        0,
+        0,
+        1,
+        0.7
+      ],
+      "layers": [
+        "figure",
+        "figure",
+        "text"
+      ],
+      "tracks": {},
+      "spans": 0
+    },
+    "failed": [
+      "layer stacking order changed: source [figure, text] vs render [figure, figure, text]"
+    ]
+  },
+  {
+    "name": "interview--swap-lang",
+    "scored": true,
+    "sourceId": "666ad535323144fb",
+    "mp4": "/Users/janek/.agentic-os/video-projects/eval-generate--interview--swap-lang/renders/eval-generate--interview--swap-lang.mp4",
+    "source": {
+      "regionCount": 3,
+      "boardRows": 0,
+      "caption": [
+        0.381,
+        0.211,
+        0.20099999999999996,
+        0.032
+      ],
+      "presenter": [
+        0,
+        0,
+        1,
+        0.7
+      ],
+      "layers": [
+        "figure",
+        "figure",
+        "text"
+      ],
+      "tracks": {},
+      "spans": 0
+    },
+    "clone": {
+      "regionCount": 2,
+      "boardRows": 0,
+      "caption": [
+        0.12,
+        0.48200000000000004,
+        0.76,
+        0.057999999999999996
+      ],
+      "presenter": [
+        0,
+        0,
+        1,
+        0.7
+      ],
+      "layers": [
+        "figure",
+        "text"
+      ],
+      "tracks": {},
+      "spans": 0
+    },
+    "failed": [
+      "caption band moved: drift 1.117 > 0.08 (source [0.381,0.211,0.201,0.032], render [0.12,0.482,0.76,0.058])",
+      "layer stacking order changed: source [figure, figure, text] vs render [figure, text]"
+    ]
+  },
+  {
+    "name": "interview--swap-ride",
+    "scored": true,
+    "sourceId": "666ad535323144fb",
+    "mp4": "/Users/janek/.agentic-os/video-projects/eval-generate--interview--swap-ride/renders/eval-generate--interview--swap-ride.mp4",
+    "source": {
+      "regionCount": 3,
+      "boardRows": 0,
+      "caption": [
+        0.02124999999999999,
+        0.20643836805555554,
+        0.92,
+        0.03946701388888889
+      ],
+      "presenter": [
+        0,
+        0,
+        1,
+        0.7
+      ],
+      "layers": [
+        "figure",
+        "figure",
+        "text"
+      ],
+      "tracks": {},
+      "spans": 0
+    },
+    "clone": {
+      "regionCount": 2,
+      "boardRows": 0,
+      "caption": [
+        0.021249999999999936,
+        0.20225,
+        0.92,
+        0.0470625
+      ],
+      "presenter": [
+        0,
+        0,
+        1,
+        0.7
+      ],
+      "layers": [
+        "figure",
+        "text"
+      ],
+      "tracks": {},
+      "spans": 0
+    },
+    "failed": [
+      "layer stacking order changed: source [figure, figure, text] vs render [figure, text]"
+    ]
+  }
+]

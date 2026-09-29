@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<title>Gotowy film — telefon</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500&amp;family=Geist+Mono:wght@400;500&amp;family=Newsreader:opsz,wght@6..72,300;6..72,400&amp;display=swap">
+<style>
+body{margin:0;background:#FAF9F6;color:#111111;font-family:'Geist',system-ui,sans-serif;font-size:14px;line-height:1.45;letter-spacing:-0.005em;-webkit-font-smoothing:antialiased}
+*{box-sizing:border-box}
+a{color:#111111}a:hover{color:#0007CB}
+h1,h2,h3,p{margin:0}
+b,strong{font-weight:500}
+.d{font-family:'Geist',system-ui,sans-serif;font-weight:300;letter-spacing:-0.035em}
+.m{font-family:'Geist Mono',ui-monospace,monospace;font-variant-numeric:tabular-nums;letter-spacing:0}
+.mut{color:#585858}
+.lbl{font-family:'Geist Mono',ui-monospace,monospace;font-size:11px;font-weight:400;letter-spacing:.1em;text-transform:uppercase;color:#585858}
+.serif{font-family:'Newsreader',Georgia,serif;font-weight:300;letter-spacing:-0.01em}
+.card{background:#FFFFFF;border:1px solid #DEDBD6;border-radius:4px}
+.chip{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 8px;border-radius:4px;font-family:'Geist Mono',ui-monospace,monospace;font-size:11px;font-weight:400;letter-spacing:.08em;text-transform:uppercase;white-space:nowrap;border:1px solid transparent}
+.c-you{background:#0007CB;color:#FFFFFF}
+.c-ok{background:transparent;color:#2F6B4F;border-color:#BCD3C4}
+.c-bad{background:#F6E3DF;color:#A3261B}
+.c-run{background:transparent;color:#111111;border-color:#D3CEC6}
+.c-pay{background:#F3E9D2;color:#6B4A0E}
+.c-free{background:#F1EEE9;color:#585858}
+.dot{width:6px;height:6px;border-radius:50%;background:currentColor;display:inline-block}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;padding:0 16px;border-radius:4px;font:400 14px/1 'Geist',sans-serif;border:1px solid transparent;cursor:pointer;text-decoration:none;white-space:nowrap}
+.b-pri{background:#000000;color:#FFFFFF}.b-pri:hover{background:#111111;color:#FFFFFF}
+.b-sec{background:#FFFFFF;color:#111111;border-color:#111111}
+.b-dng{background:transparent;color:#A3261B;border-color:#E3C4BE}
+.ico{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+.nav{padding:20px 2px;margin:0 10px;text-decoration:none;color:#888888;font-weight:400}.nav.on{color:#111111;box-shadow:inset 0 -2px 0 #111111}
+.field{height:44px;border:1px solid #DEDBD6;border-radius:4px;background:#FFFFFF;padding:0 14px;font:inherit;color:#111111;width:100%}
+.seg{display:flex;border:1px solid #DEDBD6;border-radius:4px;background:#FFFFFF;overflow:hidden}.seg label{flex:1;display:flex;align-items:center;justify-content:center;height:42px;font-size:13px;color:#585858;cursor:pointer;white-space:nowrap;padding:0 8px;border-left:1px solid #DEDBD6}.seg label:first-child{border-left:0}.seg .on{background:#111111;color:#FFFFFF}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+summary{cursor:pointer;list-style:none}summary::-webkit-details-marker{display:none}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+@keyframes shim{0%{background-position:200% 0}100%{background-position:-200% 0}}
+.live{animation:pulse 1.4s ease-in-out infinite}
+.shim{background:linear-gradient(90deg,#111111 0%,#111111 40%,#B8B8B8 50%,#111111 60%,#111111 100%);background-size:200% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;animation:shim 2.2s linear infinite}
+.v{display:grid;grid-template-columns:20px minmax(0,1fr);gap:8px;font-size:13.5px}
+.fx{display:grid;grid-template-columns:64px 64px minmax(0,1fr);gap:8px;align-items:center;padding:12px 0;border-top:1px solid #F1EEE9}
+.fx img{width:64px;height:114px;object-fit:cover;border-radius:4px;display:block}
+</style>
+</head>
+<body>
+<div style="width: 390px; height: 1720px; background: #FAF9F6">
+<header style="height: 56px; display: flex; align-items: center; gap: 8px; padding: 0 8px; border-bottom: 1px solid #DEDBD6">
+<a href="M-Start.html" aria-label="Wróć do projektów" style="width: 44px; height: 44px; display: flex; align-items: center; justify-content: center"><svg class="ico" style="width: 22px; height: 22px" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"></path></svg></a>
+<span style="font-weight: 500">Qwen demo — wersja 1</span>
+</header>
+<main style="padding: 16px 16px 40px; display: flex; flex-direction: column; gap: 16px">
+<div style="background: #F1EEE9; border-radius: 4px; padding: 10px; position: relative">
+<img src="img/film-0.jpg" alt="Gotowy film" style="width: 338px; height: 601px; object-fit: cover; border-radius: 4px; display: block">
+<button type="button" aria-label="Odtwórz film" style="position: absolute; left: 147px; top: 278px; width: 64px; height: 64px; border-radius: 50%; border: 0; background: rgba(244,241,234,.92); display: flex; align-items: center; justify-content: center"><svg class="ico" style="width: 24px; height: 24px; fill: #111111; stroke: none" viewBox="0 0 24 24"><path d="M7 4l13 8-13 8z"></path></svg></button>
+</div>
+<a href="#" class="btn b-pri"><svg class="ico" viewBox="0 0 24 24"><path d="M12 4v12M6 10l6 6 6-6M4 20h16"></path></svg>Pobierz MP4 · 18 MB</a>
+<section class="card" style="padding: 16px; display: flex; flex-direction: column; gap: 10px">
+<div style="display: flex; justify-content: space-between; align-items: center"><div style="display: flex; flex-direction: column"><span class="lbl">Werdykt krytyka</span><b class="d" style="font-size: 20px; color: #2F6B4F">Gotowy do publikacji</b></div><span class="d" style="font-size: 30px">8<span class="mut" style="font-size: 15px">/10</span></span></div>
+<div class="v"><svg class="ico" style="color: #2F6B4F; width: 18px; height: 18px" viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"></path></svg><span>Hak w 2 s zatrzymuje wzrok.</span></div>
+<div class="v"><svg class="ico" style="color: #2F6B4F; width: 18px; height: 18px" viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"></path></svg><span>Napisy grube, jak we wzorcu.</span></div>
+<div class="v"><svg class="ico" style="color: #8A6A1E; width: 18px; height: 18px" viewBox="0 0 24 24"><path d="M12 3l10 18H2z"></path><path d="M12 10v4M12 17.5v.5"></path></svg><span>Cennik w 0:20 mały na telefonie.</span></div>
+</section>
+<section class="card" style="padding: 16px; display: flex; flex-direction: column">
+<b style="padding-bottom: 8px">Co poprawił montażysta</b>
+<div class="fx"><img src="img/przed-1.jpg" alt="Przed"><img src="img/po-1.jpg" alt="Po"><p style="font-size: 13px; padding-left: 4px"><span class="m mut" style="font-size: 11px">0:04</span><br>Prezenter powiększony do okna.</p></div>
+<div class="fx"><img src="img/przed-4.jpg" alt="Przed"><img src="img/po-4.jpg" alt="Po"><p style="font-size: 13px; padding-left: 4px"><span class="m mut" style="font-size: 11px">0:14</span><br>Slajd wyżej, napis go nie tnie.</p></div>
+</section>
+<section class="card" style="padding: 16px; display: flex; justify-content: space-between; align-items: center">
+<span><b>Koszt</b> <span class="mut" style="font-size: 13px">prezenter 0,57 · głos 0,15</span></span><span class="m" style="font-weight: 500">0,79 USD</span>
+</section>
+<a href="M-Tresc.html" class="btn b-sec">Nowy film z tego szablonu</a>
+</main>
+</div>
+</body>
+</html>

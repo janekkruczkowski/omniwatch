@@ -1,0 +1,150 @@
+{
+  "note": "Ground truth read from another project's authored source, for SCORING ONLY. Their words live here so our own extraction can be compared against them; nothing in this file is rendered, shipped, or used as our content.",
+  "source": "examples/ranking-football/swap-effect.svml",
+  "segments": [
+    {
+      "id": "messi",
+      "cues": [
+        "Messi is the bottom.",
+        "Five foot seven,",
+        "no muscles,",
+        "no speed,",
+        "just vibes.",
+        "Man walks around",
+        "the pitch like",
+        "he's lost in IKEA .",
+        "Went to Miami",
+        "and turned the league",
+        "into a retirement home."
+      ],
+      "spans": [
+        {
+          "id": "pitch-pov",
+          "from": 13,
+          "to": 23
+        },
+        {
+          "id": "ikea-sign",
+          "from": 19,
+          "to": 23
+        },
+        {
+          "id": "retirement-room",
+          "from": 24,
+          "to": 34
+        }
+      ],
+      "words": [
+        "Messi",
+        "is",
+        "the",
+        "bottom.",
+        "Five",
+        "foot",
+        "seven,",
+        "no",
+        "muscles,",
+        "no",
+        "speed,",
+        "just",
+        "vibes.",
+        "Man",
+        "walks",
+        "around",
+        "the",
+        "pitch",
+        "like",
+        "he's",
+        "lost",
+        "in",
+        "IKEA",
+        ".",
+        "Went",
+        "to",
+        "Miami",
+        "and",
+        "turned",
+        "the",
+        "league",
+        "into",
+        "a",
+        "retirement",
+        "home."
+      ]
+    },
+    {
+      "id": "ronaldo",
+      "cues": [
+        "Ronaldo? Bro is",
+        "39 years old",
+        "and still jumps",
+        "higher than your rent.",
+        "Nine hundred goals,",
+        "a body built",
+        "in a laboratory,",
+        "and a jawline",
+        "that belongs",
+        "in a museum.",
+        "Absolutely the top one."
+      ],
+      "spans": [
+        {
+          "id": "rent-jump",
+          "from": 6,
+          "to": 12
+        },
+        {
+          "id": "nine-hundred-goals",
+          "from": 13,
+          "to": 29
+        },
+        {
+          "id": "laboratory-body",
+          "from": 16,
+          "to": 29
+        },
+        {
+          "id": "museum-jawline",
+          "from": 22,
+          "to": 29
+        }
+      ],
+      "words": [
+        "Ronaldo?",
+        "Bro",
+        "is",
+        "39",
+        "years",
+        "old",
+        "and",
+        "still",
+        "jumps",
+        "higher",
+        "than",
+        "your",
+        "rent.",
+        "Nine",
+        "hundred",
+        "goals,",
+        "a",
+        "body",
+        "built",
+        "in",
+        "a",
+        "laboratory,",
+        "and",
+        "a",
+        "jawline",
+        "that",
+        "belongs",
+        "in",
+        "a",
+        "museum.",
+        "Absolutely",
+        "the",
+        "top",
+        "one."
+      ]
+    }
+  ]
+}

@@ -1,0 +1,64 @@
+{
+  "version": "omniwatch.blueprint/1",
+  "canvas": {
+    "width": 720,
+    "height": 1280,
+    "fps": 30,
+    "seconds": 26
+  },
+  "regions": [
+    {
+      "id": "presenter-stage",
+      "role": "figure",
+      "rect": [
+        0,
+        0,
+        1,
+        0.7
+      ],
+      "z": 1
+    },
+    {
+      "id": "caption-area",
+      "role": "text",
+      "rect": [
+        0.05,
+        0.72,
+        0.9,
+        0.1
+      ],
+      "z": 8
+    }
+  ],
+  "tracks": [
+    {
+      "region": "presenter-stage",
+      "kind": "video",
+      "varies": "episode",
+      "fill": "cut",
+      "items": [
+        {
+          "start": 0,
+          "end": 26,
+          "value": "whoever is on screen"
+        }
+      ]
+    },
+    {
+      "region": "caption-area",
+      "kind": "text",
+      "varies": "episode",
+      "style": {
+        "color": "#FFFFFF",
+        "outline": "#000000"
+      },
+      "items": [
+        {
+          "start": 0,
+          "end": 2,
+          "value": "a line of the narration"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "status": "dispatched",
+  "timestamp": "2026-09-22T17:35:59.179918+00:00",
+  "agent": "/root/studio_autonomous_delivery",
+  "agent_type": "router_opencode_go_deepseek_v4_1_flash",
+  "model": "opencode-go/deepseek-v4.1-flash",
+  "reasoning": "max (fixed profile)",
+  "max_active_workers": 4,
+  "additional_api_budget_usd": 25,
+  "approval": "Akceptuję plan i limit API 25 USD",
+  "workspace": "/Users/janek/Documents/Codex/2026-09-20/przejmij-prace-od-claude-nad-omni/studio-autonomous",
+  "workspace_status": "to_be_prepared_by_coordinator",
+  "scope": "D1-D12, E0-E5, local POC; design deferred",
+  "delivery_complete": false
+}

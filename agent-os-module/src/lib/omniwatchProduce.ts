@@ -18,6 +18,7 @@ import {
 import { kieStill, videoClip, nearestStillAspect, VIDEO_ASPECTS, MAX_PROMPT,
   type StillModel, type VideoModel, type Aspect } from "@/lib/omniwatchBroll";
 import { buildClone, type CloneOut } from "@/lib/omniwatchClone";
+import { promptForItem } from "@/lib/omniwatchPrompt";
 
 /** How many providers to keep busy at once. Enough to matter on a layout with a dozen
  *  pictures, low enough not to trip a rate limit. */
@@ -51,7 +52,7 @@ function videoAspect(w: number, h: number, model: VideoModel): Aspect {
 }
 
 /** Every slot the blueprint asks a provider for — and only those. */
-export function jobsFor(bp: Blueprint, videoModel: VideoModel): SlotJob[] {
+export function jobsFor(bp: Blueprint, videoModel: VideoModel, swapCast = false): SlotJob[] {
   const W = bp.canvas.width, H = bp.canvas.height;
   const rect = new Map(bp.regions.map((r) => [r.id, r.rect]));
   const out: SlotJob[] = [];
@@ -63,9 +64,16 @@ export function jobsFor(bp: Blueprint, videoModel: VideoModel): SlotJob[] {
     t.items.forEach((it, i) => {
       out.push({
         slot: `${t.region}:${i}`, region: t.region, kind: t.kind, fill,
-        aspect: t.kind === "video" ? videoAspect(w, h, videoModel) : nearestStillAspect(w, h),
+        aspect: t.kind === "video"
+          ? videoAspect(w, h, videoModel)
+          : (/slot/i.test(t.region) ? "1:1" : nearestStillAspect(w, h)),
         seconds: Math.max(it.end - it.start, 0.04),
-        prompt: it.value.slice(0, MAX_PROMPT),
+        // What is in the picture comes from the film. How it is framed comes from the box
+        // it goes in — which is measured. The rule this replaced said "square product
+        // thumbnail card … no tier list UI" for any region whose id contained "slot",
+        // which asked a tier list's question of every format that would ever run through
+        // here.
+        prompt: promptForItem(bp, t, it, { swapCast }).slice(0, MAX_PROMPT),
       });
     });
   }
@@ -117,6 +125,11 @@ export interface ProduceOptions {
    *  regions that must be new is the difference between "cannot run at all" and "runs, and
    *  says plainly which parts are still the original". */
   onlyRegions?: string[];
+  /** Replace the source's named cast with unnamed people.
+   *
+   *  A reproduction wants the original's subjects and should leave this off. A swap — a new
+   *  episode in someone else's format — must not render their cast, and turns it on. */
+  swapCast?: boolean;
   /** Cheapest usable clips, for proving a path rather than shipping a film. */
   resolution?: "480p" | "720p";
 }
@@ -129,8 +142,8 @@ export interface ProduceResult {
 
 export async function produce(bp: Blueprint, o: ProduceOptions = {}): Promise<ProduceResult> {
   const videoModel = o.videoModel ?? "grok";
-  const stillModel = o.stillModel ?? "gpt-image-2.5";
-  let jobs = o.generate === false ? [] : jobsFor(bp, videoModel);
+  const stillModel = o.stillModel ?? "grok";
+  let jobs = o.generate === false ? [] : jobsFor(bp, videoModel, o.swapCast === true);
   if (o.onlyRegions?.length) {
     const want = new Set(o.onlyRegions);
     jobs = jobs.filter((j) => want.has(j.region));
@@ -157,10 +170,14 @@ export async function produce(bp: Blueprint, o: ProduceOptions = {}): Promise<Pr
   // A slot that will be cut from the source is not missing; it is coming from somewhere.
   const missing = o.cutSupplies ? [] : needed.filter((s) => !(s in assets));
 
+  // generate:false + a source is a GEOMETRY check, not a new film: reassemble the watched
+  // pixels region by region and do not redraw the title/captions on top of them. Using
+  // fill "assets" here put a full-frame backdrop cut under freshly drawn text and stacked
+  // "RANKING…" / captions on the presenter's face — measured on the HypeKit benchmark.
   const clone = await buildClone({
     blueprint: bp,
     sourceId: o.sourceId,
-    fill: "assets",
+    fill: o.generate === false && o.sourceId ? "trace" : "assets",
     assets,
     audio: o.audio,
     output: o.output,

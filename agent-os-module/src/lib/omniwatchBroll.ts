@@ -35,15 +35,14 @@ export const GROK_MIN_SECONDS = 6;
 
 /** The still models kie serves, by the name we ask for them under.
  *
- *  GPT Image 2.5 is the default because it is the model this project already generates
- *  with everywhere else — Agent OS's own studio uses it — and a module that quietly picked
- *  a different one would make two houses' pictures out of one brief. Flare and Sunburst are
- *  the same model at two latencies and cost the same; Sunburst holds finer detail, so it is
- *  there for a picture that fills half the frame. Nano Banana stays reachable as the cheap
- *  tier for the many small pictures a layout needs, but nothing defaults to it. */
-export type StillModel = "gpt-image-2.5" | "gpt-image-2.5-sunburst" | "nano-banana";
-export const STILL_MODELS: StillModel[] = ["gpt-image-2.5", "gpt-image-2.5-sunburst", "nano-banana"];
+ *  Grok Imagine is the default for stills: same house as the default video model, and
+ *  materially cheaper than GPT Image for the many layout pictures a format needs. GPT Image
+ *  2.5 (Flare / Sunburst) stays reachable when a slot needs it; Nano Banana remains the
+ *  rock-bottom tier for tiny throwaway graphics. */
+export type StillModel = "grok" | "gpt-image-2.5" | "gpt-image-2.5-sunburst" | "nano-banana";
+export const STILL_MODELS: StillModel[] = ["grok", "gpt-image-2.5", "gpt-image-2.5-sunburst", "nano-banana"];
 const STILL_MODEL_ID: Record<StillModel, string> = {
+  grok: "grok-imagine/text-to-image",
   "gpt-image-2.5": "gpt-image-2-5-flare-text-to-image",
   "gpt-image-2.5-sunburst": "gpt-image-2-5-sunburst-text-to-image",
   "nano-banana": "nano-banana-2",
@@ -232,9 +231,11 @@ export function wanClip(
  *  graphic — and paying video prices for something that never moves is waste. These are
  *  the slots a format leaves open, so this is the call that fills most of them. */
 export function kieStill(
-  prompt: string, aspect: StillAspect = "1:1", model: StillModel = "gpt-image-2.5",
+  prompt: string, aspect: StillAspect = "1:1", model: StillModel = "grok",
 ): Promise<ClipResult> {
-  const input: Record<string, unknown> = { prompt, aspect_ratio: aspect, resolution: "1K" };
+  const input: Record<string, unknown> = { prompt, aspect_ratio: aspect };
+  // GPT Image family wants an explicit resolution tier; Grok / Nano Banana do not.
+  if (model === "gpt-image-2.5" || model === "gpt-image-2.5-sunburst") input.resolution = "1K";
   if (model === "nano-banana") input.output_format = "png";
   return kieAsset(STILL_MODEL_ID[model], input, "image", STILL_WAIT_MS);
 }

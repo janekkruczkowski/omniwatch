@@ -1,0 +1,57 @@
+{
+  "//": "Which cached film each authored reference was made from, and what kind of case it is. `extract` = their script IS this film's script, so our extraction can be scored word for word. `generate` = same film, different intended script (a swapped topic or effect): scoring our extraction against it would only measure that the two scripts differ, which we already know. Those are targets for the generation gate, once there is one.",
+  "cases": {
+    "ranking-football--reference": {
+      "source": "3acd67c83aff434a",
+      "kind": "extract"
+    },
+    "ranking-football--reference-gpt": {
+      "source": "3acd67c83aff434a",
+      "kind": "extract"
+    },
+    "ranking-football--swap-host": {
+      "source": "3acd67c83aff434a",
+      "kind": "extract"
+    },
+    "ranking-football--swap-topic": {
+      "source": "3acd67c83aff434a",
+      "kind": "generate"
+    },
+    "ranking-football--swap-effect": {
+      "source": "3acd67c83aff434a",
+      "kind": "generate"
+    },
+    "podcast--reference": {
+      "source": "22df72b848314eb6",
+      "kind": "extract"
+    },
+    "podcast--swap-app": {
+      "source": "22df72b848314eb6",
+      "kind": "generate"
+    },
+    "podcast--swap-host": {
+      "source": "22df72b848314eb6",
+      "kind": "generate"
+    },
+    "podcast--swap-item": {
+      "source": "22df72b848314eb6",
+      "kind": "generate"
+    },
+    "interview--reference": {
+      "source": "666ad535323144fb",
+      "kind": "extract"
+    },
+    "interview--swap-host": {
+      "source": "666ad535323144fb",
+      "kind": "generate"
+    },
+    "interview--swap-lang": {
+      "source": "666ad535323144fb",
+      "kind": "generate"
+    },
+    "interview--swap-ride": {
+      "source": "666ad535323144fb",
+      "kind": "generate"
+    }
+  }
+}

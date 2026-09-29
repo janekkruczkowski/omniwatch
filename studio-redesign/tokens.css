@@ -1,0 +1,86 @@
+/* Studio — tokeny (Tailwind 4). Wklej do src/index.css (lub zaimportuj) w studio/web-app. */
+@import url("https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500&family=Geist+Mono:wght@400;500&family=Newsreader:opsz,wght@6..72,300;6..72,400&display=swap");
+
+@theme {
+  /* Neutralne */
+  --color-canvas: #FAF9F6;      /* tło strony */
+  --color-linen: #F1EEE9;       /* pod wideo, paski info, sekcje */
+  --color-stone: #D3CEC6;       /* obrysy przerywane, linie osi */
+  --color-hairline: #DEDBD6;    /* obrysy kart, dzielniki */
+  --color-card: #FFFFFF;
+  --color-ink: #111111;         /* tekst główny */
+  --color-iron: #414141;        /* tekst drugorzędny */
+  --color-graphite: #585858;    /* etykiety, pomocniczy */
+  --color-smoke: #888888;       /* wyłączony, nieaktywna nawigacja */
+  --color-silver: #B8B8B8;
+
+  /* Znaczenia */
+  --color-you: #0007CB;         /* Twoja kolej — akcent, nigdy wypełnienie przycisku */
+  --color-you-soft: #E6E7FA;
+  --color-pay: #6B4A0E;         /* płatne — tekst */
+  --color-pay-soft: #F3E9D2;    /* płatne — tło chipa */
+  --color-pay-bar: #B98A2E;     /* płatne — pasek */
+  --color-ok: #2F6B4F;
+  --color-ok-line: #BCD3C4;
+  --color-ok-soft: #E4EEE7;
+  --color-bad: #A3261B;
+  --color-bad-soft: #F6E3DF;
+  --color-bad-line: #E3C4BE;
+  --color-bad-bg: #FBF1EE;
+  --color-video: #3A3E4A;       /* tło próbek napisów */
+
+  /* Typografia */
+  --font-sans: "Geist", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, monospace;
+  --font-serif: "Newsreader", Georgia, serif;
+
+  --text-label: 11px;           /* mono, uppercase, tracking 0.1em */
+  --text-body-sm: 13.5px;
+  --text-body: 14px;
+  --text-body-lg: 16px;
+  --text-heading-sm: 20px;
+  --text-heading: 32px;
+  --text-title: 44px;
+  --text-display: 56px;
+  --text-display-lg: 80px;
+
+  --tracking-display: -0.035em;
+  --tracking-label: 0.1em;
+
+  /* Kształt */
+  --radius-sm: 4px;
+  --radius: 4px;
+  --radius-md: 4px;
+  --radius-lg: 4px;
+
+  /* Animacje */
+  --animate-pulse-dot: pulse-dot 1.4s ease-in-out infinite;
+  --animate-shimmer: shimmer 2.2s linear infinite;
+}
+
+@keyframes pulse-dot { 0%, 100% { opacity: 1 } 50% { opacity: .3 } }
+@keyframes shimmer { 0% { background-position: 200% 0 } 100% { background-position: -200% 0 } }
+
+@layer base {
+  body {
+    background: var(--color-canvas);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.45;
+    letter-spacing: -0.005em;
+    -webkit-font-smoothing: antialiased;
+  }
+  b, strong { font-weight: 500; }
+}
+
+@layer components {
+  .label { font-family: var(--font-mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--color-graphite); }
+  .display { font-weight: 300; letter-spacing: var(--tracking-display); }
+  .shimmer-text {
+    background: linear-gradient(90deg, #111 0%, #111 40%, #B8B8B8 50%, #111 60%, #111 100%);
+    background-size: 200% 100%;
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    animation: var(--animate-shimmer);
+  }
+}

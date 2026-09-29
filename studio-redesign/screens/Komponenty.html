@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<title>Komponenty</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500&amp;family=Geist+Mono:wght@400;500&amp;family=Newsreader:opsz,wght@6..72,300;6..72,400&amp;display=swap">
+<style>
+body{margin:0;background:#FAF9F6;color:#111111;font-family:'Geist',system-ui,sans-serif;font-size:14px;line-height:1.45;letter-spacing:-0.005em;-webkit-font-smoothing:antialiased}
+*{box-sizing:border-box}
+a{color:#111111}a:hover{color:#0007CB}
+h1,h2,h3,p{margin:0}
+b,strong{font-weight:500}
+.d{font-family:'Geist',system-ui,sans-serif;font-weight:300;letter-spacing:-0.035em}
+.m{font-family:'Geist Mono',ui-monospace,monospace;font-variant-numeric:tabular-nums;letter-spacing:0}
+.mut{color:#585858}
+.lbl{font-family:'Geist Mono',ui-monospace,monospace;font-size:11px;font-weight:400;letter-spacing:.1em;text-transform:uppercase;color:#585858}
+.serif{font-family:'Newsreader',Georgia,serif;font-weight:300;letter-spacing:-0.01em}
+.card{background:#FFFFFF;border:1px solid #DEDBD6;border-radius:4px}
+.chip{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 8px;border-radius:4px;font-family:'Geist Mono',ui-monospace,monospace;font-size:11px;font-weight:400;letter-spacing:.08em;text-transform:uppercase;white-space:nowrap;border:1px solid transparent}
+.c-you{background:#0007CB;color:#FFFFFF}
+.c-ok{background:transparent;color:#2F6B4F;border-color:#BCD3C4}
+.c-bad{background:#F6E3DF;color:#A3261B}
+.c-run{background:transparent;color:#111111;border-color:#D3CEC6}
+.c-pay{background:#F3E9D2;color:#6B4A0E}
+.c-free{background:#F1EEE9;color:#585858}
+.dot{width:6px;height:6px;border-radius:50%;background:currentColor;display:inline-block}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;padding:0 16px;border-radius:4px;font:400 14px/1 'Geist',sans-serif;border:1px solid transparent;cursor:pointer;text-decoration:none;white-space:nowrap}
+.b-pri{background:#000000;color:#FFFFFF}.b-pri:hover{background:#111111;color:#FFFFFF}
+.b-sec{background:#FFFFFF;color:#111111;border-color:#111111}
+.b-dng{background:transparent;color:#A3261B;border-color:#E3C4BE}
+.ico{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+.nav{padding:20px 2px;margin:0 10px;text-decoration:none;color:#888888;font-weight:400}.nav.on{color:#111111;box-shadow:inset 0 -2px 0 #111111}
+.field{height:44px;border:1px solid #DEDBD6;border-radius:4px;background:#FFFFFF;padding:0 14px;font:inherit;color:#111111;width:100%}
+.seg{display:flex;border:1px solid #DEDBD6;border-radius:4px;background:#FFFFFF;overflow:hidden}.seg label{flex:1;display:flex;align-items:center;justify-content:center;height:42px;font-size:13px;color:#585858;cursor:pointer;white-space:nowrap;padding:0 8px;border-left:1px solid #DEDBD6}.seg label:first-child{border-left:0}.seg .on{background:#111111;color:#FFFFFF}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+summary{cursor:pointer;list-style:none}summary::-webkit-details-marker{display:none}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+@keyframes shim{0%{background-position:200% 0}100%{background-position:-200% 0}}
+.live{animation:pulse 1.4s ease-in-out infinite}
+.shim{background:linear-gradient(90deg,#111111 0%,#111111 40%,#B8B8B8 50%,#111111 60%,#111111 100%);background-size:200% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;animation:shim 2.2s linear infinite}
+.sw{display:flex;flex-direction:column;gap:6px}
+.sw span.c{height:64px;border-radius:4px}
+.sc{padding:18px 20px;display:flex;flex-direction:column;gap:8px}
+.det{display:inline-flex;align-items:center;min-height:32px;padding:4px 12px;border-radius:4px;font-size:13px;font-weight:500}
+.gl{display:grid;grid-template-columns:1fr 24px 1fr;gap:8px;padding:8px 0;border-top:1px solid #F1EEE9;font-size:14px}
+.rn{display:grid;grid-template-columns:28px minmax(0,1fr);gap:12px;position:relative;padding-bottom:14px}
+.rn .n{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:500;font-size:12px;background:#F1EEE9}
+</style>
+</head>
+<body>
+<div style="width: 1440px; height: 1500px; background: #FAF9F6; padding: 56px 64px; display: flex; flex-direction: column; gap: 40px">
+<div style="display: flex; flex-direction: column; gap: 6px">
+<h1 class="d" style="font-size: 40px">Komponenty i zasady</h1>
+<p class="mut" style="font-size: 16px">Prawie wszystko jest czarno-kremowe. Kolor pojawia się tylko, gdy coś znaczy: fiolet = Twoja kolej, złoto = płacisz, zieleń = zgoda, czerwień = spór albo problem. Pulsująca kropka = agenci pracują.</p>
+</div>
+
+<section style="display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 16px">
+<div class="sw"><span class="c" style="background: #FAF9F6; border: 1px solid #DEDBD6"></span><b>Papier</b><span class="m mut" style="font-size: 12px">#FAF9F6 · tło</span></div>
+<div class="sw"><span class="c" style="background: #F1EEE9; border: 1px solid #DEDBD6"></span><b>Len</b><span class="m mut" style="font-size: 12px">#F1EEE9 · pod wideo</span></div>
+<div class="sw"><span class="c" style="background: #0007CB"></span><b>Twoja kolej</b><span class="m mut" style="font-size: 12px">#0007CB</span></div>
+<div class="sw"><span class="c" style="background: #B98A2E"></span><b>Płatne</b><span class="m mut" style="font-size: 12px">#B98A2E</span></div>
+<div class="sw"><span class="c" style="background: #2F6B4F"></span><b>Zgoda / gotowe</b><span class="m mut" style="font-size: 12px">#2F6B4F</span></div>
+<div class="sw"><span class="c" style="background: #A3261B"></span><b>Spór / problem</b><span class="m mut" style="font-size: 12px">#A3261B</span></div>
+<div class="sw"><span class="c" style="background: #111111"></span><b>Tekst i akcje</b><span class="m mut" style="font-size: 12px">#111111</span></div>
+</section>
+
+<section style="display: flex; flex-direction: column; gap: 14px">
+<h2 class="lbl">Karta stanu — 4 warianty</h2>
+<div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px">
+<div class="card sc"><div style="display: flex; gap: 6px; flex-wrap: wrap"><span class="chip c-you"><span class="dot"></span>Czeka na Ciebie</span></div><p style="font-size: 15px">Agenci <b>zgodzili się po 2 rundach</b>. Sprawdź i zdecyduj.</p><p class="m mut" style="font-size: 12px">wydano 0,11 USD</p></div>
+<div class="card sc"><div style="display: flex; gap: 6px; flex-wrap: wrap"><span class="chip c-you"><span class="dot"></span>Czeka na Ciebie</span><span class="chip c-bad">Brak zgody</span></div><p style="font-size: 15px">Po 3 rundach spór: <b>jak duży prezenter</b>. Rozstrzygnij.</p><p class="m mut" style="font-size: 12px">wydano 0,11 USD</p></div>
+<div class="card sc"><div style="display: flex; gap: 6px"><span class="chip c-run"><span class="dot"></span>W toku</span></div><p style="font-size: 15px">Montaż, runda 2. <b>Nic nie musisz robić.</b></p><p class="m mut" style="font-size: 12px">ok. 4 min · 1,04 USD</p></div>
+<div class="card sc" style="border: 1px solid #E3C4BE"><div style="display: flex; gap: 6px"><span class="chip c-bad"><span class="dot"></span>Zatrzymany</span></div><p style="font-size: 15px">Kontrola nie przeszła w <b>2 punktach</b>.</p><p class="m mut" style="font-size: 12px">wydano 0,64 USD</p></div>
+</div>
+</section>
+
+<section style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px">
+<div style="display: flex; flex-direction: column; gap: 14px">
+<h2 class="lbl">Stany projektu (z API → na ekranie)</h2>
+<div class="card" style="padding: 16px 20px; display: flex; flex-direction: column; gap: 8px">
+<div style="display: flex; justify-content: space-between; align-items: center"><span class="m mut" style="font-size: 12px">draft</span><span class="chip c-free">Szkic</span></div>
+<div style="display: flex; justify-content: space-between; align-items: center"><span class="m mut" style="font-size: 12px">queued</span><span class="chip c-free">W kolejce</span></div>
+<div style="display: flex; justify-content: space-between; align-items: center"><span class="m mut" style="font-size: 12px">running</span><span class="chip c-run"><span class="dot"></span>W toku</span></div>
+<div style="display: flex; justify-content: space-between; align-items: center"><span class="m mut" style="font-size: 12px">awaiting_approval</span><span class="chip c-you"><span class="dot"></span>Czeka na Ciebie</span></div>
+<div style="display: flex; justify-content: space-between; align-items: center"><span class="m mut" style="font-size: 12px">needs_attention</span><span class="chip c-bad"><span class="dot"></span>Zatrzymany</span></div>
+<div style="display: flex; justify-content: space-between; align-items: center"><span class="m mut" style="font-size: 12px">completed</span><span class="chip c-ok"><span class="dot"></span>Gotowy</span></div>
+<div style="display: flex; justify-content: space-between; align-items: center"><span class="m mut" style="font-size: 12px">failed</span><span class="chip c-bad">Błąd</span></div>
+<div style="display: flex; justify-content: space-between; align-items: center"><span class="m mut" style="font-size: 12px">cancelled</span><span class="chip c-free">Porzucony</span></div>
+</div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 14px">
+<h2 class="lbl">Chipy detali i kosztu</h2>
+<div class="card" style="padding: 20px; display: flex; flex-direction: column; gap: 12px">
+<span class="det" style="background: #E4EEE7; color: #2F6B4F; align-self: flex-start">Zostaje · tabela S–D</span>
+<span class="det" style="background: #F1EEE9; color: #414141; align-self: flex-start">Zmienione · osoba → awatar AI</span>
+<span class="det" style="background: #F6E3DF; color: #8A2217; align-self: flex-start">Pominięte · wycinki memów</span>
+<div style="display: flex; gap: 8px; border-top: 1px solid #F1EEE9; padding-top: 12px"><span class="chip c-pay">płatne · 0,67</span><span class="chip c-free">grosze</span><span class="chip c-free">bez opłat</span></div>
+<p class="mut" style="font-size: 12.5px">Płatne zawsze z kwotą. Grosze bez kwoty, chyba że ktoś rozwinie szczegóły.</p>
+</div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 14px">
+<h2 class="lbl">Słownik — zamiast żargonu</h2>
+<div class="card" style="padding: 12px 20px">
+<div class="gl" style="border-top: 0"><span class="m mut">slot</span><span>→</span><b>miejsce</b></div>
+<div class="gl"><span class="m mut">gate</span><span>→</span><b>decyzja</b></div>
+<div class="gl"><span class="m mut">QA</span><span>→</span><b>kontrola</b></div>
+<div class="gl"><span class="m mut">evidence</span><span>→</span><b>dowód</b></div>
+<div class="gl"><span class="m mut">render</span><span>→</span><b>składanie filmu</b></div>
+<div class="gl"><span class="m mut">intent</span><span>→</span><b>zamysł</b></div>
+<div class="gl"><span class="m mut">rationale</span><span>→</span><b>dlaczego tak</b></div>
+</div>
+</div>
+</section>
+
+<section style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px">
+<div style="display: flex; flex-direction: column; gap: 14px">
+<h2 class="lbl">Oś rund agentów</h2>
+<div class="card" style="padding: 20px">
+<div class="rn"><span class="n">1</span><div><p style="font-size: 13.5px"><b>Krytyk:</b> prezenter za mały.</p><p style="font-size: 13.5px"><b>Reżyser zmienił:</b> styl napisów.</p></div></div>
+<div class="rn"><span class="n">2</span><div><p style="font-size: 13.5px"><b>Krytyk:</b> wciąż za mały.</p><p style="font-size: 13.5px"><b>Reżyser:</b> bez zmian.</p></div></div>
+<div class="rn" style="padding-bottom: 0"><span class="n" style="background: #F6E3DF; color: #A3261B">3</span><div><p style="font-size: 13.5px; color: #A3261B"><b>Koniec:</b> limit rozmowy. Spór do Ciebie.</p><p class="mut" style="font-size: 12px">oryginał (EN) ▾</p></div></div>
+</div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 14px">
+<h2 class="lbl">Karta decyzji</h2>
+<div class="card" style="padding: 20px; display: flex; flex-direction: column; gap: 10px; border: 1px solid #111111">
+<b class="d" style="font-size: 20px">Twoja decyzja</b>
+<button type="button" class="btn b-pri">Zatwierdź</button>
+<button type="button" class="btn b-sec">Odrzuć z uwagą</button>
+<p class="mut" style="font-size: 12.5px">Zawsze: co się stanie po kliknięciu i ile to kosztuje.</p>
+</div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 14px">
+<h2 class="lbl">Porównanie wideo</h2>
+<div style="background: #F1EEE9; border-radius: 4px; padding: 16px; display: flex; flex-direction: column; gap: 10px">
+<div style="display: flex; gap: 10px; justify-content: center"><img src="img/rank-wzorzec.jpg" alt="" style="width: 110px; height: 196px; object-fit: cover; border-radius: 4px"><img src="img/rank-podglad.jpg" alt="" style="width: 110px; height: 196px; object-fit: cover; border-radius: 4px"></div>
+<p style="color: #585858; font-size: 12.5px; text-align: center">Jeden przycisk odtwarza oba. Fioletowe znaczniki = te same chwile.</p>
+</div>
+</div>
+</section>
+</div>
+</body>
+</html>

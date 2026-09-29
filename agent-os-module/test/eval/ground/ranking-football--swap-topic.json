@@ -1,0 +1,205 @@
+{
+  "note": "Ground truth read from another project's authored source, for SCORING ONLY. Their words live here so our own extraction can be compared against them; nothing in this file is rendered, shipped, or used as our content.",
+  "source": "examples/ranking-football/swap-topic.svml",
+  "segments": [
+    {
+      "id": "elon",
+      "cues": [
+        "Elon is D tier.",
+        "Man bought Twitter",
+        "for 44 billion dollars",
+        "just to change",
+        "the name.",
+        "Sends rockets",
+        "to Mars,",
+        "but can't send a tweet",
+        "without crashing",
+        "the stock market.",
+        "Richest guy",
+        "on Earth,",
+        "but somehow",
+        "still can't buy",
+        "a good haircut."
+      ],
+      "spans": [
+        {
+          "id": "money-rain",
+          "from": 4,
+          "to": 15
+        },
+        {
+          "id": "twitter-x",
+          "from": 11,
+          "to": 15
+        },
+        {
+          "id": "mars-rocket",
+          "from": 16,
+          "to": 29
+        },
+        {
+          "id": "market-crash",
+          "from": 21,
+          "to": 29
+        },
+        {
+          "id": "richest-chair",
+          "from": 30,
+          "to": 41
+        },
+        {
+          "id": "haircut-x",
+          "from": 36,
+          "to": 41
+        }
+      ],
+      "words": [
+        "Elon",
+        "is",
+        "D",
+        "tier.",
+        "Man",
+        "bought",
+        "Twitter",
+        "for",
+        "44",
+        "billion",
+        "dollars",
+        "just",
+        "to",
+        "change",
+        "the",
+        "name.",
+        "Sends",
+        "rockets",
+        "to",
+        "Mars,",
+        "but",
+        "can't",
+        "send",
+        "a",
+        "tweet",
+        "without",
+        "crashing",
+        "the",
+        "stock",
+        "market.",
+        "Richest",
+        "guy",
+        "on",
+        "Earth,",
+        "but",
+        "somehow",
+        "still",
+        "can't",
+        "buy",
+        "a",
+        "good",
+        "haircut."
+      ]
+    },
+    {
+      "id": "sam",
+      "cues": [
+        "Sam Altman?",
+        "Guy got fired",
+        "on a Friday,",
+        "the entire company",
+        "threatened to quit,",
+        "and he was back",
+        "in the chair",
+        "by Monday.",
+        "Elon sued him,",
+        "Google fears him,",
+        "Congress grilled him,",
+        "and he's still here.",
+        "I have to",
+        "put him in",
+        "S tier."
+      ],
+      "spans": [
+        {
+          "id": "fired-friday",
+          "from": 2,
+          "to": 22
+        },
+        {
+          "id": "company-quit",
+          "from": 8,
+          "to": 22
+        },
+        {
+          "id": "back-monday",
+          "from": 15,
+          "to": 22
+        },
+        {
+          "id": "elon-lawsuit",
+          "from": 23,
+          "to": 35
+        },
+        {
+          "id": "google-fears",
+          "from": 26,
+          "to": 35
+        },
+        {
+          "id": "congress-grilled",
+          "from": 29,
+          "to": 35
+        },
+        {
+          "id": "still-here",
+          "from": 32,
+          "to": 35
+        }
+      ],
+      "words": [
+        "Sam",
+        "Altman?",
+        "Guy",
+        "got",
+        "fired",
+        "on",
+        "a",
+        "Friday,",
+        "the",
+        "entire",
+        "company",
+        "threatened",
+        "to",
+        "quit,",
+        "and",
+        "he",
+        "was",
+        "back",
+        "in",
+        "the",
+        "chair",
+        "by",
+        "Monday.",
+        "Elon",
+        "sued",
+        "him,",
+        "Google",
+        "fears",
+        "him,",
+        "Congress",
+        "grilled",
+        "him,",
+        "and",
+        "he's",
+        "still",
+        "here.",
+        "I",
+        "have",
+        "to",
+        "put",
+        "him",
+        "in",
+        "S",
+        "tier."
+      ]
+    }
+  ]
+}
