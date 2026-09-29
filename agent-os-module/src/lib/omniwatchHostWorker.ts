@@ -208,6 +208,12 @@ export async function runHostWorker(options: HostWorkerOptions): Promise<HostWor
       const uploaded = await uploadThroughHost(hostEngine.upload, part.localPath, key, resolveOptions);
       return uploaded.url;
     },
+    // R6: Gemini fallback for a part Qwen's content filter refuses (OMNIWATCH_FALLBACK_*,
+    // OPENROUTER_API_KEY); an oversized part is shrunk by the host's ffmpeg first.
+    env,
+    ...(typeof core.createFfmpegShrinker === "function"
+      ? { shrinkMedia: core.createFfmpegShrinker((cmd: string, args: string[]) => hostEngine.run(cmd, args)) }
+      : {}),
   });
 
   const memory = hostMemory.memory;

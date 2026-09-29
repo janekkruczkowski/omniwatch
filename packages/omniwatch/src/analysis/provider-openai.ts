@@ -5,19 +5,28 @@
  * purpose: a 5xx, a timeout, an abort or a stream that stops without a protocol end
  * may already have been billed, so the runtime decides, not the transport (D9).
  *
- * The single exception is a request the provider REJECTED before running the model:
- * HTTP 400 "The provided URL does not appear to be valid" for an oss:// media URL
- * (R2-03). Measured 2026-09-23: a temporary oss:// object that already served one
- * request is later refused this way (4 of 4 reuses after a success), in ~1 s, with no
- * usage, while a fresh upload of the same file is accepted. With `resolveMediaUrl`
- * the media is uploaded again and the request is sent once more; nothing was billed
- * for the refused one.
+ * Two exceptions are requests the provider REJECTED before running the model:
+ *
+ *   - HTTP 400 "The provided URL does not appear to be valid" for an oss:// media URL
+ *     (R2-03). Measured 2026-09-23: a temporary oss:// object that already served one
+ *     request is later refused this way (4 of 4 reuses after a success), in ~1 s, with
+ *     no usage, while a fresh upload of the same file is accepted. With
+ *     `resolveMediaUrl` the media is uploaded again and the request is sent once more;
+ *     nothing was billed for the refused one.
+ *   - HTTP 400 DataInspectionFailed (R6): DashScope's content inspection refuses a
+ *     harmless video before the model runs (not billed, deterministic for the same
+ *     bytes). The SAME call is handed straight to the Gemini fallback over OpenRouter
+ *     (`fallback-openrouter.ts`), which cannot read oss:// and therefore gets the local
+ *     bytes inline as base64 data URLs. Without a fallback key the refusal is reported
+ *     as `content_filtered`, naming the part and the missing configuration.
  *
  * Error classes:
  *   - `missing_config`    - no key or no base URL; thrown by preflight() before work;
  *   - `rate_limited`      - 429, the provider did not run the request;
  *   - `provider_rejected` - 4xx, and connection-level failures that provably never
  *                           reached the provider (DNS, refused, unreachable);
+ *   - `content_filtered`  - 400 DataInspectionFailed, the provider's filter refused the
+ *                           material itself (R6);
  *   - `outcome_unknown`   - 5xx, timeout, abort, reset after send, or a stream that
  *                           closed without a completion marker.
  *
@@ -39,13 +48,28 @@ import type {
   ModelCallResponse,
   ModelPort,
 } from "../contracts/ports.ts";
-import type { MediaPart, Usage } from "../contracts/types.ts";
+import type { MediaPart } from "../contracts/types.ts";
 import { fpsFor } from "../sources/media.ts";
+import {
+  callOpenRouterFallback,
+  fallbackNotConfiguredError,
+  fallbackSettingsFromEnv,
+  type FallbackSettings,
+} from "./fallback-openrouter.ts";
+import {
+  buildMessagePayload,
+  classifyHttpFailure,
+  CONTENT_FILTER,
+  errorCodeOf,
+  mapUsage,
+  NOT_SENT_CODES,
+  readCompletionStream,
+  signalResponseStarted,
+  transportDiagnostic,
+  type TimerPort,
+} from "./openai-transport.ts";
 
-export interface TimerPort {
-  setTimeout(fn: () => void, ms: number): unknown;
-  clearTimeout(handle: unknown): void;
-}
+export type { TimerPort } from "./openai-transport.ts";
 
 export interface OpenAiModelPortOptions {
   config: ConfigPort;
@@ -73,6 +97,22 @@ export interface OpenAiModelPortOptions {
   fpsForPart?: (part: MediaPart) => number;
   /** Host-side pricing (the core never hard-codes a price list). */
   costForUsage?: (tokens: { inputTokens: number | null; outputTokens: number | null }) => number | null;
+  /**
+   * OpenRouter key for the content-filter fallback (R6). Defaults to
+   * OMNIWATCH_FALLBACK_API_KEY, then OPENROUTER_API_KEY from the environment.
+   * Empty/null disables the fallback: the refusal is then reported as `content_filtered`.
+   */
+  openRouterApiKey?: string | null;
+  /** Fallback model/base; default from OMNIWATCH_FALLBACK_MODEL / OMNIWATCH_FALLBACK_API_BASE. */
+  fallback?: Partial<Omit<FallbackSettings, "apiKey">>;
+  /** Environment the fallback settings are read from; defaults to process.env. */
+  env?: NodeJS.ProcessEnv;
+  /** Reads a local part's bytes for the fallback's base64 data URL; injected in tests. */
+  readMediaBytes?: (localPath: string) => Promise<Uint8Array>;
+  /** Host re-encode (ffmpeg) of a part too big to inline for the fallback. */
+  shrinkMedia?: (part: MediaPart, maxBytes: number) => Promise<string | null>;
+  /** Inline media ceiling for the fallback request; default 18 MB of raw bytes. */
+  fallbackMaxInlineBytes?: number;
 }
 
 export interface OpenAiModelPort extends ModelPort {
@@ -84,6 +124,9 @@ export interface OpenAiModelPort extends ModelPort {
 const DEFAULT_TIMEOUT_MS = 600_000;
 const DEFAULT_IDLE_MS = 120_000;
 
+/** DashScope's refusal of a media URL it cannot (or can no longer) read. */
+const INVALID_MEDIA_URL = /does not appear to be valid|InvalidParameter[^"]*URL|url.{0,40}invalid/i;
+
 function missingConfig(message: string, actionLabel: string): OmniWatchError {
   return new OmniWatchError("missing_config", message, {
     action: { label: actionLabel, kind: "fix_config" },
@@ -92,32 +135,6 @@ function missingConfig(message: string, actionLabel: string): OmniWatchError {
 
 /** Accept `/v1`, `/compatible-mode/v1`, a bare host, or a full endpoint. */
 export { chatCompletionsUrl };
-
-function errorCodeOf(error: unknown): string {
-  const cause = (error as { cause?: { code?: string } } | undefined)?.cause;
-  if (cause && typeof cause.code === "string") return cause.code;
-  if (error && typeof error === "object" && typeof (error as { code?: unknown }).code === "string") {
-    return (error as { code: string }).code;
-  }
-  return "";
-}
-
-function transportDiagnostic(error: unknown, phase: "headers" | "stream", abortSource: string, elapsedMs: number): string {
-  const rawCode = errorCodeOf(error);
-  const code = /^[A-Z][A-Z0-9_]{0,39}$/.test(rawCode) ? rawCode : "none";
-  const name = error instanceof Error && ["AbortError", "TimeoutError", "TypeError"].includes(error.name)
-    ? error.name : "other";
-  return `phase=${phase} code=${code} name=${name} abort=${abortSource} elapsed_ms=${Math.max(0, Math.round(elapsedMs))}`;
-}
-
-/**
- * Codes that mean the bytes never left this machine in any form the provider could
- * have acted on. Everything else is treated as possibly delivered.
- */
-const NOT_SENT_CODES = new Set(["ENOTFOUND", "EAI_AGAIN", "ECONNREFUSED", "EHOSTUNREACH", "ENETUNREACH", "EADDRNOTAVAIL"]);
-
-/** DashScope's refusal of a media URL it cannot (or can no longer) read. */
-const INVALID_MEDIA_URL = /does not appear to be valid|InvalidParameter[^"]*URL|url.{0,40}invalid/i;
 
 /**
  * Reasoning control for the shared OpenAI-compatible endpoint, as request fields.
@@ -143,6 +160,13 @@ export function createOpenAiModelPort(options: OpenAiModelPortOptions): OpenAiMo
   };
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_MS;
+  // Read once, at construction, so a test can pin it and production reads the env.
+  const envFallback = fallbackSettingsFromEnv(options.env ?? process.env);
+  const fallbackSettings: FallbackSettings = {
+    model: options.fallback?.model ?? envFallback.model,
+    apiBase: options.fallback?.apiBase ?? envFallback.apiBase,
+    apiKey: options.openRouterApiKey === undefined ? envFallback.apiKey : options.openRouterApiKey,
+  };
 
   const endpoint = (): string => chatCompletionsUrl(config.apiBaseUrl() ?? "");
 
@@ -196,31 +220,10 @@ export function createOpenAiModelPort(options: OpenAiModelPortOptions): OpenAiMo
         fps: (options.fpsForPart ?? ((p: MediaPart) => p.fps ?? fpsFor(p.endSeconds)))(part),
       });
     }
-    // The system message carries the data/instruction boundary and must keep its role;
-    // only the user text is merged with the video parts.
-    const system = request.messages.filter((message) => message.role === "system").map((message) => message.text).join("\n\n");
-    const text = request.messages.filter((message) => message.role !== "system").map((message) => message.text).join("\n\n");
-    const payload: unknown[] = [];
-    if (system) payload.push({ role: "system", content: system });
-    payload.push({ role: "user", content: [...media, { type: "text", text }] });
-    return payload;
+    return buildMessagePayload(request.messages, media);
   }
 
-  function mapUsage(raw: unknown): Usage {
-    const record = (raw ?? {}) as Record<string, unknown>;
-    const input = typeof record.prompt_tokens === "number" ? record.prompt_tokens : null;
-    const output = typeof record.completion_tokens === "number" ? record.completion_tokens : null;
-    const reported = typeof record.cost === "number" ? record.cost : typeof record.total_cost === "number" ? record.total_cost : null;
-    const computed = options.costForUsage?.({ inputTokens: input, outputTokens: output }) ?? null;
-    const cost = reported ?? computed;
-    return {
-      inputTokens: input,
-      outputTokens: output,
-      costUsd: typeof cost === "number" && Number.isFinite(cost) ? cost : null,
-      // No usage at all means the cost is unknown, never zero.
-      costKnown: typeof cost === "number" && Number.isFinite(cost),
-    };
-  }
+  const mapUsageForHost = (raw: unknown) => mapUsage(raw, options.costForUsage);
 
   async function call(request: ModelCallRequest, _sink: AttemptSink): Promise<ModelCallResponse> {
     const key = config.apiKey();
@@ -245,15 +248,16 @@ export function createOpenAiModelPort(options: OpenAiModelPortOptions): OpenAiMo
       idle = timers.setTimeout(() => { abortSource = "idle"; controller.abort(); }, idleTimeoutMs);
     };
 
-    let response!: Response;
-    let rejectedDetail: string | null = null;
-    for (let round = 0; round < 2; round += 1) {
+    /**
+     * One request on the configured Qwen endpoint. `refresh` asks the host for a fresh
+     * upload of the media (R2-03); uploads happen before the clock starts, so
+     * `elapsed_ms` in a transport diagnostic is time on the wire, not upload time.
+     */
+    const send = async (refresh: boolean): Promise<Response> => {
       const body = {
         model: config.modelName,
         ...reasoningParams(config.modelName),
-        // Uploads happen here, before the clock below starts: `elapsed_ms` in a
-        // transport diagnostic is time on the wire, not upload time.
-        messages: await contentPayload(request, round > 0),
+        messages: await contentPayload(request, refresh),
         modalities: ["text"],
         stream: true,
         stream_options: { include_usage: true },
@@ -264,7 +268,7 @@ export function createOpenAiModelPort(options: OpenAiModelPortOptions): OpenAiMo
       if (timeoutMs) deadline = timers.setTimeout(() => { abortSource = "deadline"; controller.abort(); }, timeoutMs);
       armIdle();
       try {
-        response = await doFetch(endpoint(), {
+        return await doFetch(endpoint(), {
           method: "POST",
           headers: {
             Authorization: `Bearer ${key}`,
@@ -293,18 +297,54 @@ export function createOpenAiModelPort(options: OpenAiModelPortOptions): OpenAiMo
           ...(abortSource === "none" ? { transportPhase: "headers" as const } : {}),
         });
       }
-      if (response.status !== 400 || round > 0 || !request.mediaParts.length || !options.resolveMediaUrl) break;
-      rejectedDetail = await response.text().catch(() => "");
-      if (!INVALID_MEDIA_URL.test(rejectedDetail)) break;
-      // Refused before the model ran (R2-03): upload the media again and resend once.
+    };
+
+    let response!: Response;
+    let rejectedDetail: string | null = null;
+    // A single-use resend of a request the provider refused before running the model
+    // because it can no longer read an oss:// URL (R2-03): upload the media again.
+    let mediaResendUsed = false;
+    let refreshNext = false;
+    for (;;) {
+      const refresh = refreshNext;
+      refreshNext = false;
+      response = await send(refresh);
+      if (response.status !== 400) break;
+      const detail = await response.text().catch(() => "");
+      rejectedDetail = detail;
+      if (!mediaResendUsed && request.mediaParts.length && options.resolveMediaUrl && INVALID_MEDIA_URL.test(detail)) {
+        mediaResendUsed = true;
+        refreshNext = true;
+        rejectedDetail = null;
+        clearTimers();
+        continue;
+      }
+      break;
+    }
+
+    // Refused by DashScope's content inspection (R6): not billed, and the same bytes are
+    // refused again, so this very call goes to the Gemini fallback. Without a key the
+    // refusal stands, with a message that names the part and the missing setting.
+    if (response.status === 400 && rejectedDetail !== null && CONTENT_FILTER.test(rejectedDetail)) {
       clearTimers();
-      rejectedDetail = null;
+      const fallback = await callOpenRouterFallback(request, {
+        apiKey: fallbackSettings.apiKey,
+        model: fallbackSettings.model,
+        apiBase: fallbackSettings.apiBase,
+        fetchImpl: options.fetchImpl,
+        readMediaBytes: options.readMediaBytes,
+        shrinkMedia: options.shrinkMedia,
+        maxInlineBytes: options.fallbackMaxInlineBytes,
+        timers,
+        timeoutMs,
+        idleTimeoutMs,
+        maxOutputTokens: options.maxOutputTokens,
+      });
+      if (fallback) return fallback;
+      throw fallbackNotConfiguredError(request);
     }
-    try {
-      request.onResponseStarted?.();
-    } catch {
-      /* a scheduling hint must never break the call */
-    }
+
+    signalResponseStarted(request);
 
     // Headers arrived: from here on only inactivity ends the call. A long answer
     // that is still streaming must not be cut by the start-up budget (QA 2026-09-23).
@@ -316,96 +356,16 @@ export function createOpenAiModelPort(options: OpenAiModelPortOptions): OpenAiMo
     if (!response.ok) {
       clearTimers();
       const detail = rejectedDetail ?? await response.text().catch(() => "");
-      const safeDetail = detail.slice(0, 300);
-      if (response.status === 429) {
-        throw new OmniWatchError("rate_limited", `Model odrzucil tempo zapytan (429). ${safeDetail}`.trim(), {
-          action: { label: "sprobuj pozniej", kind: "check_operation" },
-        });
-      }
-      if (response.status >= 500) {
-        throw new OmniWatchError("outcome_unknown", `Model zwrocil blad ${response.status}; nie wiadomo, czy wywolanie zostalo rozliczone.`, {
-          action: { label: "sprawdz operacje", kind: "check_operation" },
-        });
-      }
-      throw new OmniWatchError("provider_rejected", `Model odrzucil zadanie (${response.status}). ${safeDetail}`.trim(), {
-        action: { label: "popraw dane wejsciowe", kind: "none" },
-      });
+      throw classifyHttpFailure(response.status, detail);
     }
 
-    if (!response.body) {
-      clearTimers();
-      throw new OmniWatchError("outcome_unknown", "Model nie zwrocil strumienia odpowiedzi.", {
-        action: { label: "sprawdz operacje", kind: "check_operation" },
-      });
-    }
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    let text = "";
-    let usage: Usage = { inputTokens: null, outputTokens: null, costUsd: null, costKnown: false };
-    let sawProtocolEnd = false;
-    let aborted = false;
-    let streamFailure = "";
-    let dataEvents = 0;
-    const consumeLine = (line: string): void => {
-      if (!line.startsWith("data:")) return;
-      const payload = line.slice(5).trim();
-      if (!payload) return;
-      dataEvents += 1;
-      if (payload === "[DONE]") {
-        sawProtocolEnd = true;
-        return;
-      }
-      let event: {
-        choices?: Array<{ delta?: { content?: string }; finish_reason?: string | null }>;
-        usage?: unknown;
-      };
-      try {
-        event = JSON.parse(payload);
-      } catch {
-        return;
-      }
-      const choice = event.choices?.[0];
-      const delta = choice?.delta?.content;
-      if (typeof delta === "string" && delta.length) text += delta;
-      if (choice && choice.finish_reason) sawProtocolEnd = true;
-      if (event.usage) usage = mapUsage(event.usage);
-    };
-
-    try {
-      for (;;) {
-        let chunk: { done: boolean; value?: Uint8Array };
-        try {
-          chunk = await reader.read();
-        } catch (error) {
-          aborted = true;
-          streamFailure = transportDiagnostic(error, "stream", abortSource, Date.now() - startedAt);
-          break;
-        }
-        if (chunk.done) break;
-        armIdle();
-        buffer += decoder.decode(chunk.value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
-        for (const line of lines) consumeLine(line);
-      }
-    } finally {
-      clearTimers();
-      try {
-        reader.releaseLock();
-      } catch {
-        /* the stream may already be closed */
-      }
-    }
-
-    // SSE senders may close immediately after their final data line without a
-    // trailing newline. That line is still a complete protocol marker/payload.
-    buffer += decoder.decode();
-    for (const line of buffer.split("\n")) consumeLine(line);
-    if (sawProtocolEnd) return { text, usage, completed: true };
-    if (aborted) return { text, usage, completed: false, failureDetail: streamFailure };
-    return { text, usage, completed: false, failureDetail: `phase=stream code=EOF data_events=${dataEvents} marker=missing` };
+    return readCompletionStream(response, {
+      onActivity: armIdle,
+      onSettled: clearTimers,
+      abortSource: () => abortSource,
+      startedAt: () => startedAt,
+      mapUsage: mapUsageForHost,
+    });
   }
 
   return {

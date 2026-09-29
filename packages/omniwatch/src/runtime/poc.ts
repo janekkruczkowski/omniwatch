@@ -707,7 +707,7 @@ export function createRuntimeWiring(options: RuntimeWiringOptions): RuntimeWirin
     })();
 
   const source = options.source ?? buildSource(file, config, logger);
-  const model = options.model ?? buildModel(file, config, logger);
+  const model = options.model ?? buildModel(file, config, logger, environment);
   const memory = options.memory ?? createLocalMemory({ root: config.memoryRoot });
 
   return {
@@ -741,7 +741,7 @@ function buildSource(file: RuntimeConfigFile, config: ConfigPort, logger: Logger
   throw missingConfig("Nieznany rodzaj zrodla w konfiguracji OmniWatch.");
 }
 
-function buildModel(file: RuntimeConfigFile, config: ConfigPort, logger: LoggerPort): ModelPort {
+function buildModel(file: RuntimeConfigFile, config: ConfigPort, logger: LoggerPort, environment: NodeJS.ProcessEnv): ModelPort {
   const model = file.model;
   if (!model || model.kind === "stub") {
     const stub = (model ?? { kind: "stub" }) as StubModelConfig;
@@ -750,6 +750,7 @@ function buildModel(file: RuntimeConfigFile, config: ConfigPort, logger: LoggerP
   if (model.kind === "openai") {
     return createOpenAiModelPort({
       config,
+      env: environment,
       timeoutMs: model.timeoutMs,
       idleTimeoutMs: model.idleTimeoutMs,
     });

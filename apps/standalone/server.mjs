@@ -1101,6 +1101,9 @@ export function createStandaloneServer(options = {}) {
       // URL, so the host adapter supplies that mapping (D5: host owns uploads).
       wiring.deps.model = createOpenAiModelPort({
         config: wiring.deps.config,
+        // R6: the Gemini fallback reads OMNIWATCH_FALLBACK_* / OPENROUTER_API_KEY from
+        // the same merged environment as the primary key.
+        env: config.effectiveEnv ?? env,
         resolveMediaUrl: async (part, resolveOptions) => {
           const uploaded = await media.uploadPart(part, wiring.deps.config, resolveOptions);
           return uploaded.url;

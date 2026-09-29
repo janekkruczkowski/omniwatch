@@ -104,6 +104,13 @@ function makeProvider(options = {}) {
     idleTimeoutMs: 0,
     resolveMediaUrl: options.resolveMediaUrl,
     costForUsage: options.costForUsage,
+    openRouterApiKey: options.openRouterApiKey,
+    readMediaBytes: options.readMediaBytes,
+    shrinkMedia: options.shrinkMedia,
+    fallbackMaxInlineBytes: options.fallbackMaxInlineBytes,
+    fallback: options.fallback,
+    // Hermetic: never pick up a real OPENROUTER_API_KEY from the developer's shell.
+    env: options.env ?? {},
   });
   return { port, fetches };
 }
@@ -299,6 +306,163 @@ test("media parts are sent as video_url when the host maps them, and endpoint sh
     chatCompletionsUrl("https://provider.example.invalid/v1/chat/completions"),
     "https://provider.example.invalid/v1/chat/completions",
   );
+});
+
+/* ------------------------------------------------- content filter (R6) ---- */
+
+// The exact refusal Qwen's DashScope inspection returns for a harmless video.
+const DATA_INSPECTION_BODY = JSON.stringify({
+  error: {
+    code: "data_inspection_failed",
+    message: "DataInspectionFailed: Input video data may contain inappropriate content.",
+  },
+});
+
+const MEDIA_PART = { index: 0, startSeconds: 0, endSeconds: 16, localPath: "/tmp/part0.mp4" };
+
+const qwenMediaUrl = (fetch) => fetch.body.messages
+  .find((message) => Array.isArray(message.content)).content[0].video_url.url;
+
+test("R6: the DashScope DataInspectionFailed body is recognised by code, type and message", async () => {
+  const realBody = JSON.stringify({ error: {
+    message: "<400> InternalError.Algo.DataInspectionFailed: Input video data may contain inappropriate content.",
+    type: "data_inspection_failed",
+    code: "data_inspection_failed",
+  } });
+  for (const body of [realBody, JSON.stringify({ error: { code: "data_inspection_failed" } }), "InternalError.Algo.DataInspectionFailed"]) {
+    const { port } = makeProvider({
+      resolveMediaUrl: async () => "oss://fixture/part0.mp4",
+      openRouterApiKey: null,
+      respond: async () => new Response(body, { status: 400 }),
+    });
+    await assert.rejects(
+      () => port.call(modelRequest({ mediaParts: [MEDIA_PART] }), makeSink()),
+      (error) => error instanceof OmniWatchError && error.errorClass === "content_filtered",
+    );
+  }
+  // An ordinary 400 stays provider_rejected.
+  const { port } = makeProvider({ respond: async () => new Response("{\"error\":{\"code\":\"InvalidParameter\"}}", { status: 400 }) });
+  await assert.rejects(
+    () => port.call(modelRequest(), makeSink()),
+    (error) => error instanceof OmniWatchError && error.errorClass === "provider_rejected",
+  );
+});
+
+test("R6: a refused part goes straight to Gemini 3.8 Flash over OpenRouter as a base64 video_url part", async () => {
+  const { port, fetches } = makeProvider({
+    resolveMediaUrl: async () => "oss://fixture/part0.mp4",
+    openRouterApiKey: "openrouter-test-key",
+    readMediaBytes: async () => new Uint8Array([0, 1, 2, 3]),
+    respond: async (url) => (url.includes("openrouter.ai")
+      ? sseResponse([
+        dataLine({ choices: [{ delta: { content: "## Answer\n[0:03] Synthetic screen: 7." } }] }),
+        dataLine({ choices: [{ delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 5000, completion_tokens: 300, cost: 0.0042 } }),
+        "data: [DONE]\n\n",
+      ])
+      : new Response(DATA_INSPECTION_BODY, { status: 400 })),
+  });
+  const request = modelRequest({ mediaParts: [MEDIA_PART] });
+  const response = await port.call(request, makeSink());
+
+  assert.equal(fetches.length, 2, "one refused Qwen request, then one fallback call");
+  assert.equal(fetches[0].url, "https://provider.example.invalid/v1/chat/completions");
+  assert.equal(qwenMediaUrl(fetches[0]), "oss://fixture/part0.mp4");
+
+  const fallback = fetches[1];
+  assert.equal(fallback.url, "https://openrouter.ai/api/v1/chat/completions");
+  assert.equal(fallback.body.model, "google/gemini-3.8-flash");
+  assert.equal(fallback.init.headers.Authorization, "Bearer openrouter-test-key");
+  // The same prompt: the system and user text are identical to the Qwen request.
+  assert.deepEqual(fallback.body.messages[0], fetches[0].body.messages[0]);
+  const parts = fallback.body.messages.find((message) => Array.isArray(message.content)).content;
+  assert.deepEqual(parts[0], { type: "video_url", video_url: { url: "data:video/mp4;base64,AAECAw==" } });
+  assert.equal(parts[1].type, "text");
+  assert.equal(parts[1].text, fetches[0].body.messages[1].content.at(-1).text);
+
+  assert.equal(response.completed, true);
+  assert.equal(response.text, "## Answer\n[0:03] Synthetic screen: 7.");
+  assert.equal(response.model, "google/gemini-3.8-flash", "the result records the model that actually answered");
+  assert.equal(response.usage.costUsd, 0.0042, "OpenRouter's reported cost is kept");
+  assert.equal(response.usage.costKnown, true);
+});
+
+test("R6: fallback model and base come from OMNIWATCH_FALLBACK_*; an older Gemini is never used", async () => {
+  const respond = async (url) => (url.includes("provider.example.invalid")
+    ? new Response(DATA_INSPECTION_BODY, { status: 400 })
+    : sseResponse(OK_CHUNKS));
+  const custom = makeProvider({
+    resolveMediaUrl: async () => "oss://fixture/part0.mp4",
+    readMediaBytes: async () => new Uint8Array([1]),
+    env: {
+      OMNIWATCH_FALLBACK_API_KEY: "k1",
+      OPENROUTER_API_KEY: "k2",
+      OMNIWATCH_FALLBACK_MODEL: "google/gemini-4.0-flash",
+      OMNIWATCH_FALLBACK_API_BASE: "https://router.example.invalid/api/v1",
+    },
+    respond,
+  });
+  await custom.port.call(modelRequest({ mediaParts: [MEDIA_PART] }), makeSink());
+  assert.equal(custom.fetches[1].url, "https://router.example.invalid/api/v1/chat/completions");
+  assert.equal(custom.fetches[1].body.model, "google/gemini-4.0-flash");
+  assert.equal(custom.fetches[1].init.headers.Authorization, "Bearer k1", "OMNIWATCH_FALLBACK_API_KEY wins");
+
+  const old = makeProvider({
+    resolveMediaUrl: async () => "oss://fixture/part0.mp4",
+    readMediaBytes: async () => new Uint8Array([1]),
+    env: { OPENROUTER_API_KEY: "k2", OMNIWATCH_FALLBACK_MODEL: "google/gemini-2.5-flash" },
+    respond,
+  });
+  await old.port.call(modelRequest({ mediaParts: [MEDIA_PART] }), makeSink());
+  assert.equal(old.fetches[1].body.model, "google/gemini-3.8-flash");
+  assert.equal(old.fetches[1].init.headers.Authorization, "Bearer k2");
+});
+
+test("R6: without a fallback key the refusal is content_filtered and names the part and the setting", async () => {
+  const { port, fetches } = makeProvider({
+    resolveMediaUrl: async () => "oss://fixture/part2.mp4",
+    respond: async () => new Response(DATA_INSPECTION_BODY, { status: 400 }),
+  });
+  await assert.rejects(
+    () => port.call(modelRequest({ partIndex: 2, mediaParts: [{ ...MEDIA_PART, index: 2 }] }), makeSink()),
+    (error) => error instanceof OmniWatchError &&
+      error.errorClass === "content_filtered" &&
+      /odrzucił część 3 filmu/.test(error.message) &&
+      /OPENROUTER_API_KEY/.test(error.message) &&
+      error.action?.kind === "fix_config",
+  );
+  assert.equal(fetches.length, 1, "no resend and no fallback request");
+});
+
+test("R6: a part too big to inline is shrunk by the host first; still too big fails clearly", async () => {
+  const fallbackOnly = (url) => url.includes("openrouter.ai") ? sseResponse(OK_CHUNKS) : new Response(DATA_INSPECTION_BODY, { status: 400 });
+  const shrunk = [];
+  const ok = makeProvider({
+    resolveMediaUrl: async () => "oss://fixture/part0.mp4",
+    openRouterApiKey: "openrouter-test-key",
+    fallbackMaxInlineBytes: 8,
+    readMediaBytes: async (path) => (path.endsWith(".small.mp4") ? new Uint8Array([9, 9]) : new Uint8Array(64)),
+    shrinkMedia: async (part, maxBytes) => { shrunk.push([part.index, maxBytes]); return "/tmp/part0.small.mp4"; },
+    respond: async (url) => fallbackOnly(url),
+  });
+  const response = await ok.port.call(modelRequest({ mediaParts: [MEDIA_PART] }), makeSink());
+  assert.equal(response.completed, true);
+  assert.deepEqual(shrunk, [[0, 8]]);
+  const parts = ok.fetches[1].body.messages.find((message) => Array.isArray(message.content)).content;
+  assert.equal(parts[0].video_url.url, "data:video/mp4;base64,CQk=", "the shrunk copy is what is sent");
+
+  const tooBig = makeProvider({
+    resolveMediaUrl: async () => "oss://fixture/part0.mp4",
+    openRouterApiKey: "openrouter-test-key",
+    fallbackMaxInlineBytes: 8,
+    readMediaBytes: async () => new Uint8Array(64),
+    shrinkMedia: async () => null,
+    respond: async (url) => fallbackOnly(url),
+  });
+  await assert.rejects(
+    () => tooBig.port.call(modelRequest({ mediaParts: [MEDIA_PART] }), makeSink()),
+    (error) => error instanceof OmniWatchError && error.errorClass === "content_filtered" && /za duża/.test(error.message),
+  );
+  assert.equal(tooBig.fetches.length, 1, "nothing oversized was sent to OpenRouter");
 });
 
 /* ---------------------------------------------------------------- engine ---- */

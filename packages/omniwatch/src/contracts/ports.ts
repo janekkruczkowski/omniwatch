@@ -59,6 +59,12 @@ export interface ModelCallResponse {
   completed: boolean;
   /** Safe transport diagnostics only; never a raw error message or request URL. */
   failureDetail?: string;
+  /**
+   * The model that actually answered, when it can differ from the configured one (R6:
+   * a Qwen content-filter refusal is answered by the Gemini fallback instead). Absent
+   * when the configured model answered, so an ordinary response serializes as before.
+   */
+  model?: string;
 }
 
 /**

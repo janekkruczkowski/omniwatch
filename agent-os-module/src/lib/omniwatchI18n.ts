@@ -120,6 +120,8 @@ const I18N: Record<string, Locale> = {
       "sourceWaitRetry": "YouTube is limiting downloads — retrying in {n} s",
       "sourceWaitRetryGeneric": "The site is limiting downloads — retrying in {n} s",
       "pendingQueued": "Waiting in line - another analysis is running…",
+      "retryFailed": "Try again →",
+      "retryFailedNote": "Finished parts are reused; only the missing ones are paid for.",
       "pendingStart": "Starting…",
       "scoutTitle": "Scout",
       "scoutLead": "Watches the channels you pick and analyses their new videos on a schedule — the same OmniWatch analysis, run for you. Default: a summary of each new video.",
@@ -274,6 +276,8 @@ const I18N: Record<string, Locale> = {
       "sourceWaitRetry": "YouTube ogranicza — ponawiam za {n} s",
       "sourceWaitRetryGeneric": "Serwis ogranicza pobieranie — ponawiam za {n} s",
       "pendingQueued": "Czekam w kolejce - trwa inna analiza…",
+      "retryFailed": "Spróbuj ponownie →",
+      "retryFailedNote": "Gotowe części zostaną użyte ponownie; zapłacisz tylko za brakujące.",
       "pendingStart": "Uruchamiam…",
       "scoutTitle": "Scout",
       "scoutLead": "Obserwuje wybrane kanały i cyklicznie analizuje ich nowe filmy — ta sama analiza OmniWatch, uruchamiana za Ciebie. Domyślnie: streszczenie każdego nowego filmu.",
@@ -428,6 +432,8 @@ const I18N: Record<string, Locale> = {
       "sourceWaitRetry": "YouTube drosselt Downloads — neuer Versuch in {n} s",
       "sourceWaitRetryGeneric": "Die Seite drosselt Downloads — neuer Versuch in {n} s",
       "pendingQueued": "Warte in der Warteschlange - eine andere Analyse läuft…",
+      "retryFailed": "Erneut versuchen →",
+      "retryFailedNote": "Fertige Teile werden wiederverwendet; bezahlt werden nur die fehlenden.",
       "pendingStart": "Starte…"
     }
   },
@@ -543,6 +549,8 @@ const I18N: Record<string, Locale> = {
       "sourceWaitRetry": "YouTube está limitando las descargas — reintento en {n} s",
       "sourceWaitRetryGeneric": "El sitio está limitando las descargas — reintento en {n} s",
       "pendingQueued": "En cola - hay otro análisis en curso…",
+      "retryFailed": "Reintentar →",
+      "retryFailedNote": "Las partes terminadas se reutilizan; solo se pagan las que faltan.",
       "pendingStart": "Iniciando…"
     }
   },
@@ -658,6 +666,8 @@ const I18N: Record<string, Locale> = {
       "sourceWaitRetry": "YouTube limite les téléchargements — nouvel essai dans {n} s",
       "sourceWaitRetryGeneric": "Le site limite les téléchargements — nouvel essai dans {n} s",
       "pendingQueued": "En file d'attente - une autre analyse est en cours…",
+      "retryFailed": "Réessayer →",
+      "retryFailedNote": "Les parties terminées sont réutilisées ; seules les manquantes sont payées.",
       "pendingStart": "Démarrage…"
     }
   }

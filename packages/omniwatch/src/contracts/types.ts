@@ -54,6 +54,7 @@ export const ERROR_CLASSES = [
   "source_unavailable",
   "rate_limited",
   "provider_rejected",
+  "content_filtered",
   "outcome_unknown",
   "storage_unavailable",
   "delivery_conflict",

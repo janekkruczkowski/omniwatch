@@ -532,6 +532,16 @@ export async function analyze(request: AnalysisRequest, deps: AnalysisDeps): Pro
     }
 
     await deps.attempts.response(attemptId, response);
+    if (response.model && response.model !== deps.model.modelName) {
+      // R6: the primary's content filter refused this part and the fallback answered.
+      // The journal already records the answering model; say it in the log and progress.
+      deps.logger.warn("omniwatch.analysis.fallback_model", { operationId, partIndex, model: response.model });
+      emit("running", "part_fallback", {
+        itemIndex: partIndex,
+        itemCount: parts.length,
+        message: `czesc ${partIndex + 1}/${parts.length}: filtr Qwen odrzucil material, odpowiedzial model zapasowy ${response.model}`,
+      });
+    }
     return { kind: "ok", response };
   };
 

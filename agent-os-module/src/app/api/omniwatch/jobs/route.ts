@@ -58,6 +58,7 @@ function handler(): Promise<JobsHandler> {
         // R5: the card's stage comes from the real progress events of this process.
         progress: (id) => panel.progress(id),
         retryUnknown: (id) => panel.retryUnknown(id),
+        retryFailed: (id) => panel.retryFailed(id),
         lookupMedia: (ref) => panel.lookupMedia(ref),
         // The film modes keep their own implementation; only the id resolution is shared.
         legacyFilm: {

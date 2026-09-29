@@ -58,7 +58,7 @@ interface Card {
   /** the durable operation behind this card, once the server admitted it */
   operationId?: string;
   /** the model call's outcome is unknown: only an explicit, warned retry may run it again */
-  retry?: { operationId: string; warning: string };
+  retry?: { operationId: string; warning: string; kind?: "unknown" | "failed" };
   /** R5: the raw tool output behind the friendly error, shown only under "details" */
   detail?: string;
 }
@@ -71,6 +71,8 @@ export interface WaitInfo { reason: string; seconds: number; remainingSeconds: n
 /** What the jobs endpoint says about a failed run (poll or admission). */
 interface FailureInfo {
   error?: string; retryable?: boolean; retryWarning?: string; operationId?: string; id?: string;
+  /** the run failed definitively; "try again" resumes it from its finished parts */
+  retryFailed?: boolean;
   sourceFailure?: SourceFailureInfo;
   /** true only when the server confirms no model call was ever started */
   noModelCalls?: boolean;
@@ -128,12 +130,19 @@ export function pendingText(step: string, wait: WaitInfo | null, parts: number, 
   }
 }
 
-/** Retry offer for a card, or nothing. Only an operation the server marks retryable
- *  (state outcome_unknown) gets one; any other failure is not a paid-call question. */
-export function retryOffer(info: FailureInfo, fallbackId?: string): Card["retry"] | undefined {
+/** Retry offer for a card, or nothing. An `outcome_unknown` operation gets the warned,
+ *  confirmed retry; a definitively failed one gets a plain "try again" that resumes from
+ *  its finished parts (nothing of unknown cost is repeated). */
+export function retryOffer(info: FailureInfo, fallbackId?: string, ui?: Record<string, string>): Card["retry"] | undefined {
   const operationId = info.operationId || info.id || fallbackId;
-  if (!info.retryable || !operationId) return undefined;
-  return { operationId, warning: info.retryWarning || "The model call has an unknown outcome; retrying may cost a second time." };
+  if (!operationId) return undefined;
+  if (info.retryable) {
+    return { operationId, kind: "unknown", warning: info.retryWarning || "The model call has an unknown outcome; retrying may cost a second time." };
+  }
+  if (info.retryFailed) {
+    return { operationId, kind: "failed", warning: ui?.retryFailedNote || "Finished parts are reused; only the missing ones are paid for." };
+  }
+  return undefined;
 }
 
 /** The body of an explicit retry: the operation id plus consent, nothing from the form. */
@@ -341,7 +350,7 @@ export default function OmniWatchView() {
         ...c,
         error: failureText(info, ui, message),
         detail: info.sourceFailure?.detail || undefined,
-        retry: retryOffer(info, operationId ?? c.operationId),
+        retry: retryOffer(info, operationId ?? c.operationId, ui),
       }));
     };
 
@@ -701,8 +710,9 @@ export default function OmniWatchView() {
                 pending={running && c.id === cardId.current ? pendingText(step, wait, parts, ui) : undefined}
                 source={c.src ?? null}
                 onRetry={running ? undefined : (r) => {
-                  // Consent is explicit: the warning is shown on the card and confirmed here.
-                  if (!window.confirm(r.warning)) return;
+                  // Consent is explicit for a call of unknown outcome: the warning is shown
+                  // on the card and confirmed here. A failed run repeats nothing unknown.
+                  if (r.kind !== "failed" && !window.confirm(r.warning)) return;
                   ask(c.q, c.src?.url, c.mode, r.operationId);
                 }}
               />
@@ -760,7 +770,9 @@ function Answer({ card, locale, onSeek, frame, running, pending, source, onRetry
                 className="pill pill-warn disabled:opacity-40"
                 style={{ cursor: onRetry ? "pointer" : "default" }}
               >
-                {ui.retryUnknown || "Retry (may cost again) →"}
+                {card.retry.kind === "failed"
+                  ? (ui.retryFailed || "Try again →")
+                  : (ui.retryUnknown || "Retry (may cost again) →")}
               </button>
             </div>
           )}

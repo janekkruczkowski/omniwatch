@@ -199,7 +199,7 @@ function engineDeps({ duration = 600, model, completedAttempts = [], concurrency
       async started() {},
       async response(id, response) {
         const intent = journal.find((entry) => entry.id === id);
-        journal.push({ ...intent, phase: "response", responseSummary: response.text, usage: response.usage, createdAt: "2026-09-23T12:00:00.000Z" });
+        journal.push({ ...intent, phase: "response", model: response.model ?? intent.model, responseSummary: response.text, usage: response.usage, createdAt: "2026-09-23T12:00:00.000Z" });
       },
       async unknown(id) {
         const intent = journal.find((entry) => entry.id === id);
@@ -636,4 +636,71 @@ test("LF2: a resend that is then rejected keeps the part unknown (the closed sen
   assert.deepEqual(outcome.unknownParts, [2]);
   assert.equal(calls.filter((index) => index === 2).length, 2);
   assert.match(outcome.outcomeMessage, /Ponowne wyslanie odrzucone/);
+});
+
+/* ------------------------------------------------ content filter (R6) --- */
+
+const DATA_INSPECTION_BODY = JSON.stringify({ error: {
+  message: "<400> InternalError.Algo.DataInspectionFailed: Input video data may contain inappropriate content.",
+  type: "data_inspection_failed",
+  code: "data_inspection_failed",
+} });
+
+function filterModel({ refusedPart, openRouterApiKey, requests }) {
+  return createOpenAiModelPort({
+    config: { modelName: "qwen3.8-omni-flash", apiKey: () => "k", apiBaseUrl: () => "https://p.invalid/v1", maxFramesPerPart: () => 240 },
+    resolveMediaUrl: async (part) => `oss://bucket/part${part.index}.mp4`,
+    readMediaBytes: async () => new Uint8Array([1, 2, 3]),
+    openRouterApiKey,
+    env: {},
+    timeoutMs: 0,
+    idleTimeoutMs: 0,
+    fetchImpl: async (url, init) => {
+      const body = JSON.parse(init.body);
+      const user = body.messages.find((message) => Array.isArray(message.content));
+      const media = user ? user.content[0].video_url.url : "";
+      requests.push({ url, model: body.model, media });
+      if (url.includes("openrouter.ai")) return sseResponse(DONE);
+      if (media === `oss://bucket/part${refusedPart}.mp4`) return new Response(DATA_INSPECTION_BODY, { status: 400 });
+      return sseResponse(DONE);
+    },
+  });
+}
+
+test("R6: one refused part is answered by Gemini, the others stay on Qwen, and the film is delivered", async () => {
+  const requests = [];
+  const model = filterModel({ refusedPart: 2, openRouterApiKey: "or-key", requests });
+  const { deps, journal, events, sourceRef } = engineDeps({ duration: 600, model });
+  const outcome = await analyze(request(sourceRef), deps);
+  assert.equal(outcome.errorClass, null);
+  const gemini = requests.filter((entry) => entry.url.includes("openrouter.ai"));
+  assert.equal(gemini.length, 1, "only the refused part goes to the fallback");
+  assert.equal(gemini[0].model, "google/gemini-3.8-flash");
+  assert.match(gemini[0].media, /^data:video\/mp4;base64,/);
+  const responses = journal.filter((entry) => entry.phase === "response");
+  assert.equal(responses.length, 6, "five parts and the merge are journaled");
+  assert.deepEqual(responses.filter((entry) => entry.model === "google/gemini-3.8-flash").map((entry) => entry.partIndex), [2]);
+  assert.ok(responses.filter((entry) => entry.partIndex !== 2).every((entry) => entry.model === "qwen3.8-omni-flash"));
+  assert.equal(events.filter((event) => event.stage === "part_fallback").length, 1);
+});
+
+test("R6: without a fallback key the film fails content_filtered; a retry with the key reuses finished parts", async () => {
+  const requests = [];
+  const first = engineDeps({ duration: 600, model: filterModel({ refusedPart: 2, openRouterApiKey: null, requests }), concurrency: 1 });
+  await assert.rejects(analyze(request(first.sourceRef), first.deps),
+    (error) => error.errorClass === "content_filtered" && /część 3/.test(error.message) && /OPENROUTER_API_KEY/.test(error.message));
+  const done = first.journal.filter((entry) => entry.phase === "response");
+  assert.deepEqual(done.map((entry) => entry.partIndex), [0, 1], "parts before the refusal are journaled");
+
+  const retryRequests = [];
+  const second = engineDeps({
+    duration: 600,
+    model: filterModel({ refusedPart: 2, openRouterApiKey: "or-key", requests: retryRequests }),
+    completedAttempts: done,
+    concurrency: 1,
+  });
+  const retried = await analyze(request(second.sourceRef), second.deps);
+  assert.equal(retried.errorClass, null);
+  assert.equal(second.events.filter((event) => event.stage === "call_reused").length, 2, "parts 1-2 are not paid again");
+  assert.equal(retryRequests.filter((entry) => entry.url.includes("openrouter.ai")).length, 1);
 });

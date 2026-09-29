@@ -464,6 +464,82 @@ test("FAIL-A: outcome_unknown is retried only by an explicit confirmed retry of 
   assert.equal((await postJob(handler, { retryOperation: "op_missing", confirmRetry: true })).status, 404);
 });
 
+function rejectedOnceModel(errorClass = "content_filtered") {
+  const calls = [];
+  return {
+    modelName: "stub-rejected-once",
+    calls,
+    async call(request) {
+      calls.push({ operationId: request.operationId });
+      if (calls.length === 1) {
+        throw new OmniWatchError(errorClass, "Filtr treści Qwen (DashScope, DataInspectionFailed) odrzucił część 1 filmu, a zapasowy model Gemini nie jest skonfigurowany.");
+      }
+      return {
+        text: "## Summary\n- [0:05] punkt po ponownej probie",
+        usage: { inputTokens: 10, outputTokens: 5, costUsd: 0.001, costKnown: true },
+        completed: true,
+      };
+    },
+  };
+}
+
+// One run only: with explicit ids the worker would otherwise pick the failed operation
+// up again in the same drain.
+const drainOnce = (h, ids) => runWorker({ deps: h.deps, operationIds: ids, maxOperations: 1, ownerToken: `test_${Math.random().toString(16).slice(2)}` });
+
+test("a failed run (provider_rejected / content_filtered) is not a dead end: 'try again' and a resubmission both run it again", async () => {
+  for (const errorClass of ["content_filtered", "provider_rejected"]) {
+    const model = rejectedOnceModel(errorClass);
+    const h = createHarness({ model, durationSeconds: 16 });
+    const { handler, ensured } = jobsPanel(h);
+    const url = "https://youtu.be/SYNTHETIC01";
+
+    const first = await (await postJob(handler, { url, q: "co tu jest", mode: "summary" })).json();
+    await drainOnce(h, [first.id]);
+    assert.equal(h.store.getOperation(first.id).state, "failed");
+
+    const poll = await (await getJob(handler, first.id)).json();
+    assert.equal(poll.state, "error");
+    assert.equal(poll.errorClass, errorClass);
+    assert.match(poll.error, /część 1/, "the card shows the clear reason");
+    assert.ok(!poll.retryable, "not a paid-call question");
+    assert.equal(poll.retryFailed, true, "the card offers a plain try-again");
+
+    // "Try again": no confirmation needed, same operation back to pending, worker ensured.
+    ensured.length = 0;
+    const retry = await postJob(handler, { retryOperation: first.id });
+    assert.equal(retry.status, 202);
+    const retried = await retry.json();
+    assert.equal(retried.state, "running");
+    assert.equal(retried.retried, true);
+    assert.deepEqual(ensured, [first.id]);
+    assert.equal(h.store.getOperation(first.id).state, "pending");
+    const pendingPoll = await (await getJob(handler, first.id)).json();
+    assert.equal(pendingPoll.state, "running", "the next poll no longer shows the old error");
+    await drain(h, [first.id]);
+    assert.equal((await (await getJob(handler, first.id)).json()).state, "done");
+    assert.equal(model.calls.length, 2);
+  }
+
+  // Sending the same request again after a failure also runs it (it used to answer
+  // with the stale failed operation, so the card showed the old error at once).
+  const model = rejectedOnceModel();
+  const h = createHarness({ model, durationSeconds: 16 });
+  const { handler, ensured } = jobsPanel(h);
+  const body = { url: "https://youtu.be/SYNTHETIC01", q: "co tu jest", mode: "summary" };
+  const first = await (await postJob(handler, body)).json();
+  await drainOnce(h, [first.id]);
+  assert.equal(h.store.getOperation(first.id).state, "failed");
+  ensured.length = 0;
+  const again = await (await postJob(handler, body)).json();
+  assert.equal(again.id, first.id);
+  assert.equal(again.state, "running");
+  assert.deepEqual(ensured, [first.id]);
+  assert.equal(h.store.getOperation(first.id).state, "pending");
+  await drain(h, [first.id]);
+  assert.equal((await (await getJob(handler, first.id)).json()).state, "done");
+});
+
 test("FAIL-A core: recovery keeps a confirmed retry admitted, but an interrupted retry is unknown again", async () => {
   const model = unknownOnceModel();
   const h = createHarness({ model, durationSeconds: 16 });
@@ -487,8 +563,9 @@ test("FAIL-A UI: an outcome_unknown card offers a warned retry that sends the op
   const view = readFileSync(join(MODULE, "src", "components", "OmniWatchView.tsx"), "utf8");
   assert.match(view, /export function retryBody\(operationId: string\) \{\n  return \{ retryOperation: operationId, confirmRetry: true \};/);
   assert.match(view, /retryOf \? \{ url: link, \.\.\.retryBody\(retryOf\) \}/, "a retry sends the id + consent, not the form");
-  assert.match(view, /if \(!info\.retryable \|\| !operationId\) return undefined;/, "only retryable failures get the button");
-  assert.match(view, /window\.confirm\(r\.warning\)/, "the provider-cost warning is confirmed before the call");
+  assert.match(view, /if \(info\.retryable\) \{\n    return \{ operationId, kind: "unknown"/, "an unknown outcome gets the warned retry");
+  assert.match(view, /if \(info\.retryFailed\) \{\n    return \{ operationId, kind: "failed"/, "a failed run gets a plain try-again");
+  assert.match(view, /if \(r\.kind !== "failed" && !window\.confirm\(r\.warning\)\) return;/, "the provider-cost warning is confirmed before a paid retry");
   assert.match(view, /\{card\.retry\.warning\}/, "the warning is visible on the card");
   assert.match(view, /fail\(d\.error \|\| "The run failed", d, started\.id\)/, "the poll passes retryability to the card");
 });

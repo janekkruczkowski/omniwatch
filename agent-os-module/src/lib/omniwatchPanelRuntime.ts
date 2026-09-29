@@ -17,7 +17,7 @@ import { mkdir, readFile, utimes, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 
-import { createOpenAiModelPort } from "../../../packages/omniwatch/src/analysis/index.ts";
+import { createFfmpegShrinker, createOpenAiModelPort } from "../../../packages/omniwatch/src/analysis/index.ts";
 import { chatCompletionsUrl, DEFAULT_DASHSCOPE_HOST } from "../../../packages/omniwatch/src/contracts/endpoints.ts";
 import { OmniWatchError } from "../../../packages/omniwatch/src/contracts/errors.ts";
 import { ANALYSIS_VERSION } from "../../../packages/omniwatch/src/contracts/types.ts";
@@ -252,6 +252,8 @@ export interface PanelRuntime {
   progress(operationId: string): LiveProgress | null;
   /** The user's confirmed retry of an `outcome_unknown` operation, resolved under ownership. */
   retryUnknown(operationId: string): Promise<Operation>;
+  /** "Try again" on a `failed` operation: back to pending, resumed from committed parts. */
+  retryFailed(operationId: string): Promise<Operation>;
   runScan(input: {
     collectionId: string;
     trigger: "manual" | "schedule" | "cli";
@@ -324,6 +326,14 @@ export function createPanelRuntime(options: { env?: NodeJS.ProcessEnv } = {}): P
       return uploaded.url;
     },
     costForUsage: ({ inputTokens, outputTokens }) => panelCostForUsage(inputTokens, outputTokens),
+    // R6: a part Qwen's content filter refuses goes to the Gemini fallback, inlined; a
+    // part too big to inline is re-encoded by the host's ffmpeg first. The fallback's
+    // model/base/key come from OMNIWATCH_FALLBACK_* / OPENROUTER_API_KEY in `env`.
+    env,
+    shrinkMedia: async (part, maxBytes) => {
+      const legacy = (await hostModules()).omniwatch;
+      return createFfmpegShrinker((cmd, args) => legacy.run(cmd, args))(part, maxBytes);
+    },
   });
 
   const deps: RuntimeDeps = { clock, logger, config, store, source, model, memory };
@@ -435,6 +445,7 @@ export function createPanelRuntime(options: { env?: NodeJS.ProcessEnv } = {}): P
     hasConsumer: (operationId) => consumer.hasConsumer(operationId),
     progress: (operationId) => consumer.progress(operationId),
     retryUnknown: (operationId) => consumer.retry(operationId),
+    retryFailed: (operationId) => consumer.retry(operationId),
     // A scan executes its analyses in this process, so it runs as the owner too: an
     // unowned scan would be "recovered" as orphaned by the next request.
     runScan: (input) =>
@@ -518,7 +529,10 @@ export interface PanelConsumer {
   recover(): Promise<WorkerOperationSummary[] | null>;
   /** Execute one admitted operation as the owner (no-op when it already runs here). */
   run(operationId: string): Promise<void>;
-  /** The user's confirmed retry of an `outcome_unknown` operation, decided as the owner. */
+  /**
+   * The user's retry, decided as the owner: a confirmed retry of an `outcome_unknown`
+   * operation, or "try again" on a `failed` one (resumes from its committed parts).
+   */
   retry(operationId: string): Promise<Operation>;
   /** Run other in-process work (a scan) as the owner; `fn` gets the owner token. */
   hold<T>(fn: (ownerToken: string) => Promise<T>): Promise<T>;
@@ -723,7 +737,12 @@ export function createPanelConsumer(options: PanelConsumerOptions): PanelConsume
         // Decided as the owner, AFTER the takeover recovery: the interrupted attempt is
         // still `started` in the journal, so a recovery pass run after this decision
         // would turn the confirmed retry straight back into outcome_unknown.
-        const operation = journal.resolveUnknownOutcome(operationId, "retry");
+        // A definitively failed operation (4xx, content filter, missing config) needs no
+        // cost decision: it is queued again and resumes from its committed parts.
+        const current = deps.store.getOperation(operationId);
+        const operation = current?.state === "failed"
+          ? journal.requeueFailed(operationId)
+          : journal.resolveUnknownOutcome(operationId, "retry");
         if (execute && !active.has(operationId)) launch(operationId);
         return operation;
       });

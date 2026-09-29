@@ -172,9 +172,16 @@ test("the form submits the mode that was clicked, and follow-ups are questions",
 
 test("FAIL-A: only a retryable (outcome_unknown) failure offers a retry, and it carries id + consent only", () => {
   const warning = "Wywołanie modelu ma nieznany wynik; ponowienie moze oznaczac drugi koszt u dostawcy.";
-  assert.deepEqual(view.retryOffer({ retryable: true, retryWarning: warning }, "op_1"), { operationId: "op_1", warning });
+  assert.deepEqual(view.retryOffer({ retryable: true, retryWarning: warning }, "op_1"), { operationId: "op_1", kind: "unknown", warning });
   assert.equal(view.retryOffer({ retryable: true, operationId: "op_2", retryWarning: warning }).operationId, "op_2");
   assert.equal(view.retryOffer({ error: "source_unavailable" }, "op_3"), undefined, "an ordinary failure has no paid retry");
   assert.equal(view.retryOffer({ retryable: true }), undefined, "no operation id, no retry");
   assert.deepEqual(view.retryBody("op_1"), { retryOperation: "op_1", confirmRetry: true });
+});
+
+test("a definitively failed run offers a plain 'try again' (no cost warning) that resumes the same operation", () => {
+  const offer = view.retryOffer({ retryFailed: true, error: "Filtr treści Qwen odrzucił część 3" }, "op_9",
+    { retryFailedNote: "Gotowe części zostaną użyte ponownie; zapłacisz tylko za brakujące." });
+  assert.deepEqual(offer, { operationId: "op_9", kind: "failed", warning: "Gotowe części zostaną użyte ponownie; zapłacisz tylko za brakujące." });
+  assert.equal(view.retryOffer({ retryFailed: true }), undefined, "no operation id, no retry");
 });

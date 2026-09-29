@@ -60,6 +60,9 @@ const SAFE_TO_RETRY: ReadonlySet<ErrorClass> = new Set<ErrorClass>([
   "missing_config",
   "invalid_input",
   "provider_rejected",
+  // The provider's inspection refused the material before the model ran (R6), so the
+  // call was not billed; a confirmed retry pays for its own attempt only.
+  "content_filtered",
 ]);
 
 export function isSafeProviderFailure(errorClass: ErrorClass): boolean {
@@ -191,6 +194,27 @@ export class OperationJournal {
     return this.requireOperation(operationId);
   }
 
+  /**
+   * The user's "try again" on a definitively FAILED operation. A failure is only ever
+   * recorded for a call that was provably not billed or never started (a 4xx, a
+   * content-filter refusal, missing config), so no cost warning is needed: the
+   * operation goes back to `pending` and the next run reuses every committed part and
+   * pays only for the missing ones. Anything not `failed` is left alone.
+   */
+  requeueFailed(operationId: string): Operation {
+    this.assertOwnership(operationId);
+    const operation = this.requireOperation(operationId);
+    if (operation.state !== "failed") {
+      throw new OmniWatchError(
+        "invalid_input",
+        `operacja ${operationId} nie jest w stanie failed (jest "${operation.state}")`,
+        { operationId },
+      );
+    }
+    this.store.setOperationState(operationId, "pending", { errorClass: null, errorMessage: null });
+    return this.requireOperation(operationId);
+  }
+
   /* ------------------------------------------------------------- attempts --- */
 
   newAttemptId(): string {
@@ -266,7 +290,9 @@ export class OperationJournal {
       response: async (attemptId, response) => {
         this.assertOwnership(operationId);
         this.writeAttempt(operationId, attemptId, "response", {
-          model,
+          // A response answered by another model (R6: the Gemini fallback after a Qwen
+          // content-filter refusal) records the model that actually answered.
+          model: response.model ?? model,
           responseSummary: response.text,
           usage: response.usage,
         });
@@ -379,7 +405,9 @@ export class OperationJournal {
     try {
       hooks.beforeResponseCommit?.(response);
       this.writeAttempt(operationId, attemptId, "response", {
-        model: model.modelName,
+        // The model that actually answered: the fallback provider may differ from the
+        // configured one (R6).
+        model: response.model ?? model.modelName,
         responseSummary: response.text,
         usage: response.usage,
       });

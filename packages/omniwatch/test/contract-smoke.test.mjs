@@ -39,7 +39,7 @@ function makeRequest(overrides = {}) {
 test("contract version is frozen and exported", () => {
   assert.equal(CONTRACT_VERSION, "1.0.0");
   assert.equal(ANALYSIS_VERSION, "analysis-v1");
-  assert.equal(ERROR_CLASSES.length, 11);
+  assert.equal(ERROR_CLASSES.length, 12);
 });
 
 test("legacy hash matches the released Python beta identity", () => {

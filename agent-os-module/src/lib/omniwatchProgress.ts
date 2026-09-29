@@ -43,6 +43,7 @@ export function stageForEvent(stage: string): CardStage | null {
     case "call_reused":
     case "part_done":
     case "part_retry":
+    case "part_fallback":
     case "part_unknown":
       return "watch";
     case "merge":

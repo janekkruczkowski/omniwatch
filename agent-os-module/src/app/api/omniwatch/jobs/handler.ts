@@ -110,6 +110,12 @@ export interface JobsHandlerDeps {
    */
   retryUnknown?(operationId: string): Operation | Promise<Operation>;
   /**
+   * "Try again" on a `failed` operation: back to `pending`, so the next run reuses its
+   * committed parts. Defaults to the shared journal over `store`; the panel decides it
+   * as the data-directory owner.
+   */
+  retryFailed?(operationId: string): Operation | Promise<Operation>;
+  /**
    * R2-04: take the data directory when no live process holds it and settle what a
    * dead process left behind (an unconfirmed call -> `outcome_unknown`). Never calls
    * the model. Optional so a handler without a runtime owner keeps its old behaviour.
@@ -201,6 +207,11 @@ export interface DurableJobView extends Job {
   retryable?: boolean;
   /** True for queued work without a consumer: re-sending the request runs it. */
   resubmit?: boolean;
+  /**
+   * The operation failed definitively (no call of unknown outcome): a plain "try again"
+   * resumes it from its committed parts, with no cost warning.
+   */
+  retryFailed?: boolean;
   /** R5: a classified download failure (reason + raw yt-dlp output for "details"). */
   sourceFailure?: SourceFailureView | null;
   /** R5: true when no model call was ever started for this operation (nothing billed). */
@@ -317,6 +328,7 @@ export async function readDurableJob(
     error: sourceFailure ? sourceFailure.message : (operation.errorMessage ?? undefined),
     errorClass: operation.errorClass ?? null,
     retryable: operation.state === "outcome_unknown",
+    ...(operation.state === "failed" ? { retryFailed: true } : {}),
     ...(sourceFailure ? { sourceFailure } : {}),
     ...(state === "error" ? { noModelCalls: attempts.length === 0 } : {}),
     analysisId,
@@ -481,6 +493,22 @@ export function createJobsHandler(deps: JobsHandlerDeps): JobsHandler {
       );
     }
 
+    // The same request failed before (a 4xx, a content-filter refusal, missing config):
+    // sending it again is the user's "try again". Queue it back to pending so the card
+    // polls a running operation (not the old error) and the run resumes from its
+    // committed parts. Without this the resubmission answered with the stale failure.
+    if (enqueued.operation.state === "failed") {
+      try {
+        enqueued = { operation: await requeueFailed(enqueued.operation.id), created: false };
+      } catch (error) {
+        const failure = error instanceof OmniWatchError ? error : null;
+        return json(
+          { error: failure?.errorClass ?? "storage_unavailable", message: failure?.message ?? String(error), id: enqueued.operation.id },
+          failure?.errorClass === "runtime_unavailable" ? 503 : 409,
+        );
+      }
+    }
+
     // The same request already being executed by a live process: answer with its id,
     // never start a second consumer of the same operation.
     const alreadyRunning =
@@ -505,7 +533,7 @@ export function createJobsHandler(deps: JobsHandlerDeps): JobsHandler {
       {
         id: enqueued.operation.id,
         operationId: enqueued.operation.id,
-        state: enqueued.operation.state === "pending" ? "running" : enqueued.operation.state,
+        state: enqueued.operation.state === "pending" || enqueued.operation.state === "running" ? "running" : enqueued.operation.state,
         created: enqueued.created,
         mode: mapped.mode,
         startedAt: now(),
@@ -521,9 +549,32 @@ export function createJobsHandler(deps: JobsHandlerDeps): JobsHandler {
    * the work) and makes sure a worker picks it up. A second confirmation after the
    * retry started is refused, so one click can never pay twice.
    */
+  async function requeueFailed(operationId: string): Promise<Operation> {
+    if (deps.retryFailed) return deps.retryFailed(operationId);
+    return new OperationJournal({ store: deps.store }).requeueFailed(operationId);
+  }
+
   async function retryUnknownOperation(operationId: string, isConfirmed: boolean): Promise<Response> {
     const operation = deps.store.getOperation(operationId);
     if (!operation) return json({ error: "invalid_input", message: `Operacja ${operationId} nie istnieje.` }, 404);
+    if (operation.state === "failed") {
+      // "Try again" after a definitive failure: nothing of unknown cost is repeated, so
+      // no confirmation is needed. Committed parts are reused; only missing ones are paid.
+      try {
+        await requeueFailed(operationId);
+        await deps.ensureWorker(operationId);
+      } catch (error) {
+        const failure = error instanceof OmniWatchError ? error : null;
+        return json(
+          { error: failure?.errorClass ?? "runtime_unavailable", message: failure?.message ?? String(error), id: operationId },
+          failure?.errorClass === "invalid_input" ? 409 : 503,
+        );
+      }
+      return json(
+        { id: operationId, operationId, state: "running", created: false, retried: true, mode: operation.request.mode, startedAt: now() },
+        202,
+      );
+    }
     if (operation.state !== "outcome_unknown") {
       return json(
         {
@@ -619,6 +670,7 @@ export function createJobsHandler(deps: JobsHandlerDeps): JobsHandler {
       ...(durable.unknownCostCalls ? { unknownCostCalls: durable.unknownCostCalls } : {}),
       ...(durable.retryable ? { retryable: true, retryWarning: UNKNOWN_RETRY_WARNING } : {}),
       ...(durable.resubmit ? { resubmit: true } : {}),
+      ...(durable.retryFailed ? { retryFailed: true } : {}),
       ...(durable.sourceFailure ? { sourceFailure: durable.sourceFailure } : {}),
       ...(typeof durable.noModelCalls === "boolean" ? { noModelCalls: durable.noModelCalls } : {}),
       ...(durable.wait ? { wait: durable.wait } : {}),

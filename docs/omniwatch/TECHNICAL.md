@@ -152,9 +152,23 @@ nie dowodzi zgodności dawnego promptu: stare pliki pozostają dostępne, bez wy
 brakujących parametrów i bez ponownego analizowania przy samej migracji.
 
 Klasy błędów: `invalid_input`, `missing_config`, `source_unavailable`, `rate_limited`,
-`provider_rejected`, `outcome_unknown`, `storage_unavailable`, `delivery_conflict`,
-`runtime_unavailable`, `budget_paused`, `incomplete_listing`. Każdy błąd ma komunikat,
+`provider_rejected`, `content_filtered`, `outcome_unknown`, `storage_unavailable`,
+`delivery_conflict`, `runtime_unavailable`, `budget_paused`, `incomplete_listing`.
+Każdy błąd ma komunikat,
 ID pracy i dozwoloną czynność odzyskania. Wyjątki nie są pochłaniane przez `.catch(() => {})`.
+
+R6 — fallback filtra treści: gdy DashScope odrzuca część filmu kodem
+`data_inspection_failed` (`DataInspectionFailed`), ta sama część (ten sam prompt) idzie
+od razu do Gemini przez OpenRouter jako `video_url` z data URL base64; pozostałe części
+zostają na Qwen. Konfiguracja: `OMNIWATCH_FALLBACK_API_KEY` (albo `OPENROUTER_API_KEY`),
+`OMNIWATCH_FALLBACK_MODEL` (domyślnie `google/gemini-3.8-flash`; starszy Gemini jest
+ignorowany), `OMNIWATCH_FALLBACK_API_BASE` (domyślnie `https://openrouter.ai/api/v1`).
+Część większa niż 18 MB jest najpierw zmniejszana ffmpegiem hosta (1 fps, 360p/240p).
+Dziennik prób zapisuje model, który faktycznie odpowiedział, a koszt to `usage.cost`
+z OpenRouter. Bez klucza operacja kończy się `content_filtered` z numerem części.
+Operacja `failed` ma w panelu przycisk „Spróbuj ponownie” (bez ostrzeżenia o koszcie):
+wraca do `pending` i wznawia się od zapisanych części; ponowne wysłanie tego samego
+zlecenia robi to samo.
 
 D9 usuwa automatyczne powtarzanie przerwanego streamu modelu z obecnego `streamOmni`.
 Ponawiać automatycznie można odczyt postępu i bezpieczne pobranie metadanych; dla płatnego
